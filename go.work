@@ -1,6 +1,9 @@
-go 1.23
+go 1.23.0
 
 use (
 	./pkg
+	./proto/gen
+	./services/auth
 	./services/gateway
+	./services/todo
 )

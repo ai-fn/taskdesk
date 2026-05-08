@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package auth.v1;
+
+option go_package = "github.com/fsociety/todo/proto/gen/auth/v1;authv1";
+
+// AuthService handles user registration, authentication, and token management.
+service AuthService {
+  rpc SignUp(SignUpRequest)         returns (SignUpResponse);
+  rpc Login(LoginRequest)          returns (LoginResponse);
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc Logout(LogoutRequest)        returns (LogoutResponse);
+  // GetJWKS returns the public keys used to verify access tokens.
+  // Called by the gateway on startup and periodically to refresh keys.
+  rpc GetJWKS(GetJWKSRequest)      returns (GetJWKSResponse);
+  // ValidateToken verifies an access token and returns the embedded claims.
+  // Gateway calls this on every authenticated request.
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+}
+
+// ── Sign up ──────────────────────────────────────────────────────────────────
+
+message SignUpRequest {
+  string email    = 1;
+  string password = 2;
+  string name     = 3;
+}
+
+message SignUpResponse {
+  string user_id      = 1;
+  string access_token = 2;
+  // refresh_token is returned here so the gateway can set the HttpOnly cookie.
+  string refresh_token = 3;
+}
+
+// ── Login ────────────────────────────────────────────────────────────────────
+
+message LoginRequest {
+  string email    = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string user_id       = 1;
+  string access_token  = 2;
+  string refresh_token = 3;
+}
+
+// ── Refresh ──────────────────────────────────────────────────────────────────
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+  string access_token  = 1;
+  string refresh_token = 2;
+}
+
+// ── Logout ───────────────────────────────────────────────────────────────────
+
+message LogoutRequest {
+  string refresh_token = 1;
+}
+
+message LogoutResponse {}
+
+// ── JWKS ─────────────────────────────────────────────────────────────────────
+
+message GetJWKSRequest {}
+
+// JWK is a JSON Web Key (RFC 7517) in protobuf form.
+message JWK {
+  string kty = 1; // Key type, e.g. "RSA" or "EC"
+  string kid = 2; // Key ID
+  string use = 3; // "sig"
+  string alg = 4; // e.g. "RS256"
+  // RSA public key fields
+  string n   = 5; // modulus  (base64url)
+  string e   = 6; // exponent (base64url)
+}
+
+message GetJWKSResponse {
+  repeated JWK keys = 1;
+}
+
+// ── Validate ─────────────────────────────────────────────────────────────────
+
+message ValidateTokenRequest {
+  string access_token = 1;
+}
+
+message ValidateTokenResponse {
+  string user_id = 1;
+  string email   = 2;
+}
