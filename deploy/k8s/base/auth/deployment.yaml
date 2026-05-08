@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+  namespace: todo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth
+  template:
+    metadata:
+      labels:
+        app: auth
+    spec:
+      containers:
+        - name: auth
+          image: todo/auth
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 50051
+          env:
+            - name: LISTEN_ADDR
+              value: ":50051"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secret
+                  key: DATABASE_URL
+            - name: JWT_KEY_FILE
+              value: /secrets/jwt_private.pem
+            - name: MIGRATIONS_DIR
+              value: "file:///migrations/auth"
+          volumeMounts:
+            - name: jwt-key
+              mountPath: /secrets
+              readOnly: true
+            - name: migrations
+              mountPath: /migrations/auth
+              readOnly: true
+          readinessProbe:
+            grpc:
+              port: 50051
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            grpc:
+              port: 50051
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: jwt-key
+          secret:
+            secretName: auth-jwt-key
+        - name: migrations
+          configMap:
+            name: auth-migrations

@@ -70,9 +70,11 @@ for img in "${IMAGES[@]}"; do
 done
 
 # 4. Apply manifests ---------------------------------------------------------
-bold "→ deploying Caddy + gateway (todo ns)"
+bold "→ deploying Caddy + gateway + auth + todo (todo ns)"
 kubectl apply -k "${ROOT}/deploy/k8s/base/caddy"
 kubectl apply -k "${ROOT}/deploy/k8s/base/gateway"
+kubectl apply -k "${ROOT}/deploy/k8s/base/auth"
+kubectl apply -k "${ROOT}/deploy/k8s/base/todo"
 
 bold "→ deploying Postgres + Redis + Mailpit (data ns)"
 kubectl apply -k "${ROOT}/deploy/k8s/base/postgres"
@@ -84,11 +86,18 @@ kubectl -n data wait --for=condition=ready pod -l app=postgres --timeout=2m || t
 kubectl -n data wait --for=condition=ready pod -l app=redis    --timeout=1m || true
 kubectl -n data wait --for=condition=ready pod -l app=mailpit  --timeout=1m || true
 
+bold "→ generating JWT key (idempotent)"
+"${ROOT}/scripts/gen-jwt-key.sh"
+
 bold "✓ cluster ready"
 echo
-echo "Phase 0 verify:"
-echo "  tilt up                       # build + deploy gateway with live reload"
+echo "Phase 1 verify:"
+echo "  source .envrc                 # set GODEBUG=netdns=cgo for Go DNS"
+echo "  /usr/local/bin/tilt up        # build + deploy all services"
 echo "  curl http://localhost:8080/healthz"
+echo "  curl -s -X POST http://localhost:8080/api/v1/auth/signup \\"
+echo "    -H 'Content-Type: application/json' \\"
+echo "    -d '{\"email\":\"test@example.com\",\"password\":\"secret123\",\"name\":\"Test\"}'"
 echo
 echo "When you start Phase 2 (Kafka):"
 echo "  ./scripts/install-kafka.sh"

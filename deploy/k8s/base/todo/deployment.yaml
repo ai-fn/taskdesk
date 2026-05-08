@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todo
+  namespace: todo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: todo
+  template:
+    metadata:
+      labels:
+        app: todo
+    spec:
+      containers:
+        - name: todo
+          image: todo/todo
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 50052
+          env:
+            - name: LISTEN_ADDR
+              value: ":50052"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: todo-secret
+                  key: DATABASE_URL
+            - name: MIGRATIONS_DIR
+              value: "file:///migrations/todo"
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations/todo
+              readOnly: true
+          readinessProbe:
+            grpc:
+              port: 50052
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            grpc:
+              port: 50052
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: migrations
+          configMap:
+            name: todo-migrations

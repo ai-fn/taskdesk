@@ -17,17 +17,19 @@ spec:
     spec:
       containers:
       - name: gateway
-        # Tilt rebuilds and substitutes this image; for `kubectl apply` outside
-        # Tilt, build manually with:
-        #   docker build -t todo/gateway:dev -f services/gateway/Dockerfile .
-        #   kind load docker-image todo/gateway:dev --name todo
-        image: todo/gateway:dev
+        # Tilt manages this image tag during live development.
+        # For manual builds: docker build -t todo/gateway -f services/gateway/Dockerfile .
+        image: todo/gateway
         imagePullPolicy: IfNotPresent
         env:
         - name: LISTEN_ADDR
           value: ":8080"
         - name: LOG_LEVEL
           value: "info"
+        - name: AUTH_ADDR
+          value: "auth.todo.svc.cluster.local:50051"
+        - name: TODO_ADDR
+          value: "todo.todo.svc.cluster.local:50052"
         ports:
         - name: http
           containerPort: 8080

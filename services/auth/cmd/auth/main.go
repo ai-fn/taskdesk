@@ -1,0 +1,91 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+
+	pkgconfig "github.com/fsociety/todo/pkg/config"
+	pkglogger "github.com/fsociety/todo/pkg/logger"
+	pkgpgx "github.com/fsociety/todo/pkg/pgx"
+	"github.com/fsociety/todo/pkg/tokens"
+	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
+	"github.com/fsociety/todo/services/auth/internal/server"
+	"github.com/fsociety/todo/services/auth/internal/store"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/reflection"
+)
+
+type Config struct {
+	ListenAddr    string `env:"LISTEN_ADDR"    default:":50051"`
+	MigrationsDir string `env:"MIGRATIONS_DIR" default:"file:///migrations/auth"`
+	JWTKeyFile    string `env:"JWT_KEY_FILE,required"`
+	pkgpgx.Config        // provides DSN (DATABASE_URL), MaxConns, etc.
+}
+
+func main() {
+	log := pkglogger.New("auth")
+
+	cfg, err := pkgconfig.Load[Config]()
+	if err != nil {
+		log.Error("load config", "err", err)
+		os.Exit(1)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	pool, err := pkgpgx.New(ctx, cfg.Config, log)
+	if err != nil {
+		log.Error("connect postgres", "err", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	if err := pkgpgx.Migrate(cfg.DSN, cfg.MigrationsDir, log); err != nil {
+		log.Error("run migrations", "err", err)
+		os.Exit(1)
+	}
+
+	maker, err := tokens.NewMakerFromFile(cfg.JWTKeyFile)
+	if err != nil {
+		log.Error("load JWT key", "err", err)
+		os.Exit(1)
+	}
+
+	svc := server.New(store.New(pool), maker, log)
+
+	grpcServer := grpc.NewServer()
+	authv1.RegisterAuthServiceServer(grpcServer, svc)
+	reflection.Register(grpcServer)
+
+	// Standard gRPC health protocol — required for K8s grpc probe.
+	healthSrv := health.NewServer()
+	grpc_health_v1.RegisterHealthServer(grpcServer, healthSrv)
+	healthSrv.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+
+	lis, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		log.Error("listen", "err", err)
+		os.Exit(1)
+	}
+
+	log.Info("auth-service starting", "addr", cfg.ListenAddr)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- grpcServer.Serve(lis) }()
+
+	select {
+	case <-ctx.Done():
+		log.Info("shutting down")
+		grpcServer.GracefulStop()
+	case err := <-errCh:
+		log.Error("serve", "err", fmt.Sprintf("%v", err))
+		os.Exit(1)
+	}
+}

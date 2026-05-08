@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package todo.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/fsociety/todo/proto/gen/todo/v1;todov1";
+
+service TodoService {
+  // Task CRUD
+  rpc CreateTask(CreateTaskRequest)   returns (CreateTaskResponse);
+  rpc GetTask(GetTaskRequest)         returns (GetTaskResponse);
+  rpc ListTasks(ListTasksRequest)     returns (ListTasksResponse);
+  rpc UpdateTask(UpdateTaskRequest)   returns (UpdateTaskResponse);
+  rpc DeleteTask(DeleteTaskRequest)   returns (DeleteTaskResponse);
+  rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
+}
+
+// ── Enums ────────────────────────────────────────────────────────────────────
+
+enum Priority {
+  PRIORITY_UNSPECIFIED = 0;
+  PRIORITY_LOW         = 1;
+  PRIORITY_MEDIUM      = 2;
+  PRIORITY_HIGH        = 3;
+  PRIORITY_URGENT      = 4;
+}
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_TODO        = 1;
+  STATUS_IN_PROGRESS = 2;
+  STATUS_DONE        = 3;
+}
+
+// ── Task message ─────────────────────────────────────────────────────────────
+
+message Task {
+  string   id          = 1;
+  string   user_id     = 2;
+  string   title       = 3;
+  string   description = 4;
+  Priority priority    = 5;
+  Status   status      = 6;
+  repeated string tags = 7;
+  google.protobuf.Timestamp due_at      = 8;
+  google.protobuf.Timestamp created_at  = 9;
+  google.protobuf.Timestamp updated_at  = 10;
+}
+
+// ── Create ───────────────────────────────────────────────────────────────────
+
+message CreateTaskRequest {
+  string   user_id     = 1;
+  string   title       = 2;
+  string   description = 3;
+  Priority priority    = 4;
+  repeated string tags = 5;
+  google.protobuf.Timestamp due_at = 6;
+}
+
+message CreateTaskResponse {
+  Task task = 1;
+}
+
+// ── Get ──────────────────────────────────────────────────────────────────────
+
+message GetTaskRequest {
+  string user_id = 1;
+  string task_id = 2;
+}
+
+message GetTaskResponse {
+  Task task = 1;
+}
+
+// ── List ─────────────────────────────────────────────────────────────────────
+
+message ListTasksRequest {
+  string user_id = 1;
+  // Optional filters
+  Status   status   = 2;
+  Priority priority = 3;
+  // Pagination
+  int32  page_size  = 4; // default 50, max 200
+  string page_token = 5; // opaque cursor (encoded last task ID + created_at)
+}
+
+message ListTasksResponse {
+  repeated Task tasks          = 1;
+  string        next_page_token = 2; // empty when no more pages
+}
+
+// ── Update ───────────────────────────────────────────────────────────────────
+
+// Only set fields that should change. Empty string = no change for strings.
+// Use update_mask to explicitly zero-out a field if needed.
+message UpdateTaskRequest {
+  string   user_id     = 1;
+  string   task_id     = 2;
+  string   title       = 3;
+  string   description = 4;
+  Priority priority    = 5;
+  Status   status      = 6;
+  repeated string tags = 7;
+  google.protobuf.Timestamp due_at = 8;
+  // Which fields to update. If empty, all non-zero fields are updated.
+  repeated string update_mask = 9;
+}
+
+message UpdateTaskResponse {
+  Task task = 1;
+}
+
+// ── Delete ───────────────────────────────────────────────────────────────────
+
+message DeleteTaskRequest {
+  string user_id = 1;
+  string task_id = 2;
+}
+
+message DeleteTaskResponse {}
+
+// ── Complete ─────────────────────────────────────────────────────────────────
+
+message CompleteTaskRequest {
+  string user_id = 1;
+  string task_id = 2;
+}
+
+message CompleteTaskResponse {
+  Task task = 1;
+}
