@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: todo
+  labels:
+    app: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+      - name: gateway
+        # Tilt rebuilds and substitutes this image; for `kubectl apply` outside
+        # Tilt, build manually with:
+        #   docker build -t todo/gateway:dev -f services/gateway/Dockerfile .
+        #   kind load docker-image todo/gateway:dev --name todo
+        image: todo/gateway:dev
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: LISTEN_ADDR
+          value: ":8080"
+        - name: LOG_LEVEL
+          value: "info"
+        ports:
+        - name: http
+          containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 1
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 25m
+            memory: 32Mi
+          limits:
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+          # readOnlyRootFilesystem omitted in base: Tilt's restart_process
+          # extension writes to /tmp. Add it back in the prod overlay (Phase 5)
+          # with an emptyDir tmpfs mount.

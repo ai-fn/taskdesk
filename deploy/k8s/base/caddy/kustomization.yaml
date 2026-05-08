@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: todo
+
+resources:
+- deployment.yaml
+- service.yaml
+
+# The Caddyfile lives at deploy/caddy/Caddyfile so it can be edited as a
+# real file (with syntax highlighting) instead of inline YAML. Kustomize
+# materializes it into a ConfigMap on apply.
+configMapGenerator:
+- name: caddy-config
+  files:
+  - Caddyfile
+
+# Without this, the generator appends a hash suffix and the Deployment's
+# volume reference (configMap.name: caddy-config) wouldn't match. The hash
+# is useful in production for rolling on config changes — we'll re-enable
+# it via a Phase 5 overlay.
+generatorOptions:
+  disableNameSuffixHash: true

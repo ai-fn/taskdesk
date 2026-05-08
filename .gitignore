@@ -1,0 +1,32 @@
+# Go
+/build/
+services/*/build/
+*.exe
+*.test
+*.out
+vendor/
+go.work.sum
+
+# Proto generated code
+proto/gen/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Tilt
+.tiltbuild/
+tilt_modules/
+
+# Secrets / local config
+*.local.yaml
+.env
+.env.*
+!.env.example
+
+# Node (web/)
+node_modules/
+dist/
+.vite/
