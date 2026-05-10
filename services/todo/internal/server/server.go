@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/fsociety/todo/pkg/events"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/todo/internal/domain"
 	"github.com/fsociety/todo/services/todo/internal/store"
@@ -53,7 +54,7 @@ func (s *Server) CreateTask(ctx context.Context, req *todov1.CreateTaskRequest) 
 		t.DueAt = &ts
 	}
 
-	if err := s.store.CreateTask(ctx, t); err != nil {
+	if err := s.store.CreateTaskWithEvent(ctx, t); err != nil {
 		s.log.Error("create task", "err", err)
 		return nil, status.Error(codes.Internal, "create task failed")
 	}
@@ -168,7 +169,12 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 	}
 	existing.UpdatedAt = time.Now().UTC()
 
-	updated, err := s.store.UpdateTask(ctx, existing)
+	evType := events.TypeTaskUpdated
+	if existing.Status == domain.StatusDone {
+		evType = events.TypeTaskCompleted
+	}
+
+	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, evType)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "task not found")
@@ -187,7 +193,7 @@ func (s *Server) DeleteTask(ctx context.Context, req *todov1.DeleteTaskRequest) 
 		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
 	}
 
-	if err := s.store.DeleteTask(ctx, req.UserId, req.TaskId); err != nil {
+	if err := s.store.DeleteTaskWithEvent(ctx, req.UserId, req.TaskId); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "task not found")
 		}

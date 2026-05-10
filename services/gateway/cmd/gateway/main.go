@@ -14,14 +14,16 @@ import (
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/gateway/internal/server"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Config struct {
-	ListenAddr  string `env:"LISTEN_ADDR"    default:":8080"`
-	AuthAddr    string `env:"AUTH_ADDR,required"`
-	TodoAddr    string `env:"TODO_ADDR,required"`
+	ListenAddr string `env:"LISTEN_ADDR"  default:":8080"`
+	AuthAddr   string `env:"AUTH_ADDR,required"`
+	TodoAddr   string `env:"TODO_ADDR,required"`
+	RedisAddr  string `env:"REDIS_ADDR"   default:"redis.data.svc.cluster.local:6379"`
 }
 
 func main() {
@@ -52,9 +54,12 @@ func main() {
 	authClient := authv1.NewAuthServiceClient(authConn)
 	todoClient := todov1.NewTodoServiceClient(todoConn)
 
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	defer rdb.Close()
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           server.New(log, authClient, todoClient),
+		Handler:           server.New(log, authClient, todoClient, rdb),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

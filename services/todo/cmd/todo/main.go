@@ -6,12 +6,15 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
+	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
 	pkgpgx "github.com/fsociety/todo/pkg/pgx"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
+	"github.com/fsociety/todo/services/todo/internal/outbox"
 	"github.com/fsociety/todo/services/todo/internal/server"
 	"github.com/fsociety/todo/services/todo/internal/store"
 	"google.golang.org/grpc"
@@ -23,7 +26,8 @@ import (
 type Config struct {
 	ListenAddr    string `env:"LISTEN_ADDR"    default:":50052"`
 	MigrationsDir string `env:"MIGRATIONS_DIR" default:"file:///migrations/todo"`
-	pkgpgx.Config         // provides DSN (DATABASE_URL), MaxConns, etc.
+	KafkaBrokers  string `env:"KAFKA_BROKERS"  default:"todo-kafka-bootstrap.data.svc.cluster.local:9092"`
+	pkgpgx.Config
 }
 
 func main() {
@@ -50,7 +54,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	svc := server.New(store.New(pool), log)
+	brokers := strings.Split(cfg.KafkaBrokers, ",")
+	producer, err := pkgkafka.NewProducer(brokers, log)
+	if err != nil {
+		log.Error("create kafka producer", "err", err)
+		os.Exit(1)
+	}
+	defer producer.Close()
+
+	st := store.New(pool)
+	pub := outbox.New(st, producer, log)
+	go pub.Run(ctx)
+
+	svc := server.New(st, log)
 
 	grpcServer := grpc.NewServer()
 	todov1.RegisterTodoServiceServer(grpcServer, svc)

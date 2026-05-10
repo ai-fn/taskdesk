@@ -114,6 +114,33 @@ docker_build_with_restart(
 )
 
 # ----------------------------------------------------------------------------
+# Notification service
+# ----------------------------------------------------------------------------
+local_resource(
+    'notification-compile',
+    cmd=GO_BUILD_FLAGS + ' go build -o build/notification ./cmd/notification',
+    dir='services/notification',
+    deps=[
+        'services/notification/cmd',
+        'services/notification/internal',
+        'services/notification/go.mod',
+        'pkg',
+    ],
+    labels=['notification'],
+)
+
+docker_build_with_restart(
+    'todo/notification',
+    context='.',
+    dockerfile_contents=go_image('todo/notification', 'services/notification/build/notification'),
+    entrypoint='/notification',
+    only=['services/notification/build/notification'],
+    live_update=[
+        sync('services/notification/build/notification', '/notification'),
+    ],
+)
+
+# ----------------------------------------------------------------------------
 # Web SPA
 # NOTE: Full Docker rebuild (~45-90s) on every src change — use `npm run dev`
 # (outside cluster) for active UI work. Tilt only for cluster smoke tests.
@@ -132,10 +159,12 @@ k8s_yaml(kustomize('deploy/k8s/base/caddy'))
 k8s_yaml(kustomize('deploy/k8s/base/gateway'))
 k8s_yaml(kustomize('deploy/k8s/base/auth'))
 k8s_yaml(kustomize('deploy/k8s/base/todo'))
+k8s_yaml(kustomize('deploy/k8s/base/notification'))
 k8s_yaml(kustomize('deploy/k8s/base/web'))
 
-k8s_resource('caddy',   labels=['edge'],    port_forwards=[])
-k8s_resource('gateway', labels=['gateway'], resource_deps=['gateway-compile'])
-k8s_resource('auth',    labels=['auth'],    resource_deps=['auth-compile'])
-k8s_resource('todo',    labels=['todo'],    resource_deps=['todo-compile'])
-k8s_resource('web',     labels=['web'])
+k8s_resource('caddy',        labels=['edge'],         port_forwards=[])
+k8s_resource('gateway',      labels=['gateway'],      resource_deps=['gateway-compile'])
+k8s_resource('auth',         labels=['auth'],         resource_deps=['auth-compile'])
+k8s_resource('todo',         labels=['todo'],         resource_deps=['todo-compile'])
+k8s_resource('notification', labels=['notification'], resource_deps=['notification-compile'])
+k8s_resource('web',          labels=['web'])
