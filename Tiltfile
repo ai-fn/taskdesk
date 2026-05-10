@@ -114,14 +114,28 @@ docker_build_with_restart(
 )
 
 # ----------------------------------------------------------------------------
+# Web SPA
+# NOTE: Full Docker rebuild (~45-90s) on every src change — use `npm run dev`
+# (outside cluster) for active UI work. Tilt only for cluster smoke tests.
+# ----------------------------------------------------------------------------
+docker_build(
+    'todo/web',
+    context='web',
+    dockerfile='web/Dockerfile',
+    ignore=['node_modules', 'dist', '.vite'],
+)
+
+# ----------------------------------------------------------------------------
 # Manifests
 # ----------------------------------------------------------------------------
 k8s_yaml(kustomize('deploy/k8s/base/caddy'))
 k8s_yaml(kustomize('deploy/k8s/base/gateway'))
 k8s_yaml(kustomize('deploy/k8s/base/auth'))
 k8s_yaml(kustomize('deploy/k8s/base/todo'))
+k8s_yaml(kustomize('deploy/k8s/base/web'))
 
 k8s_resource('caddy',   labels=['edge'],    port_forwards=[])
 k8s_resource('gateway', labels=['gateway'], resource_deps=['gateway-compile'])
 k8s_resource('auth',    labels=['auth'],    resource_deps=['auth-compile'])
 k8s_resource('todo',    labels=['todo'],    resource_deps=['todo-compile'])
+k8s_resource('web',     labels=['web'])

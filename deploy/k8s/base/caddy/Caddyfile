@@ -26,9 +26,16 @@
 		respond "ok" 200
 	}
 
-	# Everything else proxies to the gateway service.
-	reverse_proxy gateway.todo.svc.cluster.local:8080 {
-		header_up X-Forwarded-Proto {scheme}
-		header_up X-Real-IP {remote_host}
+	# API traffic → gateway service.
+	handle /api/v1/* {
+		reverse_proxy gateway.todo.svc.cluster.local:8080 {
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Everything else → the SPA (nginx serves index.html for all paths).
+	handle {
+		reverse_proxy web.todo.svc.cluster.local:80
 	}
 }
