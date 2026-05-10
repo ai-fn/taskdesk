@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification
+  namespace: todo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification
+  template:
+    metadata:
+      labels:
+        app: notification
+    spec:
+      containers:
+        - name: notification
+          image: todo/notification
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: KAFKA_BROKERS
+              value: "todo-kafka-bootstrap.data.svc.cluster.local:9092"
+            - name: KAFKA_GROUP
+              value: "notification-service"
+            - name: REDIS_ADDR
+              value: "redis.data.svc.cluster.local:6379"
+            - name: SMTP_ADDR
+              value: "mailpit.data.svc.cluster.local:1025"
+            - name: SMTP_FROM
+              value: "noreply@todo.local"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop: ["ALL"]

@@ -18,9 +18,9 @@ const (
 	ctxEmail  contextKey = "email"
 )
 
-// Authenticate validates the Bearer token in the Authorization header
-// by calling auth-service.ValidateToken. On success it stores user claims
-// in the request context; on failure it returns 401.
+// Authenticate validates the Bearer token from the Authorization header
+// or the ?token= query param (used by WebSocket clients which cannot set headers).
+// On success it stores user claims in the request context; on failure returns 401.
 func Authenticate(authClient authv1.AuthServiceClient) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,9 +62,10 @@ func EmailFromContext(ctx context.Context) string {
 }
 
 func extractBearer(r *http.Request) string {
+	// Prefer Authorization header; fall back to ?token= for WebSocket upgrades.
 	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, "Bearer ") {
-		return ""
+	if strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer ")
 	}
-	return strings.TrimPrefix(h, "Bearer ")
+	return r.URL.Query().Get("token")
 }

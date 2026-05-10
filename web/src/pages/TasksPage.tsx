@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { Task } from '@/types'
 import { TaskList } from '@/components/tasks/TaskList'
 import { TaskForm } from '@/components/tasks/TaskForm'
 import { Button } from '@/components/ui/Button'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
+import { ToastContainer, type ToastMessage } from '@/components/ui/Toast'
 import { useCreateTask, useUpdateTask } from '@/hooks/useTaskMutations'
+import { useNotifications, type TaskNotification } from '@/hooks/useNotifications'
 import axios from 'axios'
 
 type Modal = { type: 'create' } | { type: 'edit'; task: Task } | null
@@ -12,6 +14,20 @@ type Modal = { type: 'create' } | { type: 'edit'; task: Task } | null
 export function TasksPage() {
   const [modal, setModal] = useState<Modal>(null)
   const [formError, setFormError] = useState('')
+  const [toasts, setToasts] = useState<ToastMessage[]>([])
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id))
+  }, [])
+
+  const handleNotification = useCallback((n: TaskNotification) => {
+    const text = n.event_type === 'task.completed'
+      ? `✓ Completed: ${n.task_title}`
+      : n.task_title
+    setToasts((prev) => [...prev, { id: Date.now(), text }])
+  }, [])
+
+  useNotifications(handleNotification)
 
   const createTask = useCreateTask()
   const updateTask = useUpdateTask()
@@ -52,6 +68,7 @@ export function TasksPage() {
 
   return (
     <>
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">My tasks</h1>
         <Button onClick={() => { setFormError(''); setModal({ type: 'create' }) }}>

@@ -10,6 +10,7 @@ import (
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/redis/go-redis/v9"
 )
 
 // New returns the gateway's HTTP handler with all routes mounted.
@@ -17,6 +18,7 @@ func New(
 	log *slog.Logger,
 	authClient authv1.AuthServiceClient,
 	todoClient todov1.TodoServiceClient,
+	rdb *redis.Client,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -41,13 +43,17 @@ func New(
 	r.Route("/api/v1/tasks", func(r chi.Router) {
 		r.Use(middleware.Authenticate(authClient))
 
-		r.Get("/",                  todo.List)
-		r.Post("/",                 todo.Create)
-		r.Get("/{taskID}",          todo.Get)
-		r.Patch("/{taskID}",        todo.Update)
-		r.Delete("/{taskID}",       todo.Delete)
+		r.Get("/",                   todo.List)
+		r.Post("/",                  todo.Create)
+		r.Get("/{taskID}",           todo.Get)
+		r.Patch("/{taskID}",         todo.Update)
+		r.Delete("/{taskID}",        todo.Delete)
 		r.Post("/{taskID}/complete", todo.Complete)
 	})
+
+	// WebSocket: authenticated users subscribe to their real-time notifications.
+	ws := handler.NewWSHandler(rdb, log)
+	r.With(middleware.Authenticate(authClient)).Get("/api/v1/ws", ws.ServeHTTP)
 
 	return r
 }

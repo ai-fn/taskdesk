@@ -1,9 +1,10 @@
-go 1.23.0
+go 1.25.0
 
 use (
 	./pkg
 	./proto/gen
 	./services/auth
 	./services/gateway
+	./services/notification
 	./services/todo
 )
