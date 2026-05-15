@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
+	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	"github.com/fsociety/todo/services/notification/internal/consumer"
 	"github.com/fsociety/todo/services/notification/internal/mailer"
 	"github.com/redis/go-redis/v9"
@@ -49,6 +51,14 @@ func main() {
 
 	m := mailer.New(cfg.SMTPAddr, cfg.SMTPFrom)
 	h := consumer.New(m, rdb, log)
+
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", pkgmetrics.Handler())
+		if err := http.ListenAndServe(":9090", mux); err != nil {
+			log.Error("metrics server", "err", err)
+		}
+	}()
 
 	log.Info("notification-service starting",
 		"brokers", cfg.KafkaBrokers,

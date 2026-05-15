@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
+	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	pkgpgx "github.com/fsociety/todo/pkg/pgx"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
@@ -79,7 +81,10 @@ func main() {
 	st := store.New(pool)
 	svc := server.New(p, st, todoClient, producer, log)
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(pkgmetrics.UnaryServerInterceptor("ai", log)),
+		grpc.ChainStreamInterceptor(pkgmetrics.StreamServerInterceptor("ai", log)),
+	)
 	aiv1.RegisterAIServiceServer(grpcServer, svc)
 	reflection.Register(grpcServer)
 
@@ -92,6 +97,14 @@ func main() {
 		log.Error("listen", "err", err)
 		os.Exit(1)
 	}
+
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", pkgmetrics.Handler())
+		if err := http.ListenAndServe(":9090", mux); err != nil {
+			log.Error("metrics server", "err", err)
+		}
+	}()
 
 	log.Info("ai-service starting", "addr", cfg.ListenAddr)
 

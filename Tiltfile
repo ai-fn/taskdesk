@@ -214,6 +214,23 @@ k8s_yaml(kustomize('deploy/k8s/base/ai'))
 k8s_yaml(kustomize('deploy/k8s/base/scheduler'))
 k8s_yaml(kustomize('deploy/k8s/base/web'))
 
+# ----------------------------------------------------------------------------
+# Monitoring (Prometheus + Grafana) — monitoring namespace
+# ----------------------------------------------------------------------------
+k8s_yaml([
+    'infra/prometheus/namespace.yaml',
+    'infra/prometheus/rbac.yaml',
+    'infra/prometheus/configmap.yaml',
+    'infra/prometheus/deployment.yaml',
+    'infra/prometheus/service.yaml',
+    'infra/grafana/configmap.yaml',
+    'infra/grafana/dashboard-provider-cm.yaml',
+    'infra/grafana/dashboard-grpc-cm.yaml',
+    'infra/grafana/dashboard-http-cm.yaml',
+    'infra/grafana/deployment.yaml',
+    'infra/grafana/service.yaml',
+])
+
 k8s_resource('caddy',                 labels=['edge'],         port_forwards=[])
 k8s_resource('gateway',               labels=['gateway'],      resource_deps=['gateway-compile'])
 k8s_resource('auth',                  labels=['auth'],         resource_deps=['auth-compile'])
@@ -222,3 +239,5 @@ k8s_resource('notification',          labels=['notification'], resource_deps=['n
 k8s_resource('ai',                    labels=['ai'],           resource_deps=['ai-compile'])
 k8s_resource('daily-plan-scheduler',  labels=['ai'],           resource_deps=['scheduler-compile'])
 k8s_resource('web',                   labels=['web'])
+k8s_resource('prometheus',            labels=['monitoring'])
+k8s_resource('grafana',               labels=['monitoring'])

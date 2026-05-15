@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
+	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	pkgpgx "github.com/fsociety/todo/pkg/pgx"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/todo/internal/outbox"
@@ -68,7 +70,10 @@ func main() {
 
 	svc := server.New(st, log)
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(pkgmetrics.UnaryServerInterceptor("todo", log)),
+		grpc.ChainStreamInterceptor(pkgmetrics.StreamServerInterceptor("todo", log)),
+	)
 	todov1.RegisterTodoServiceServer(grpcServer, svc)
 	reflection.Register(grpcServer)
 
@@ -81,6 +86,14 @@ func main() {
 		log.Error("listen", "err", err)
 		os.Exit(1)
 	}
+
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", pkgmetrics.Handler())
+		if err := http.ListenAndServe(":9090", mux); err != nil {
+			log.Error("metrics server", "err", err)
+		}
+	}()
 
 	log.Info("todo-service starting", "addr", cfg.ListenAddr)
 

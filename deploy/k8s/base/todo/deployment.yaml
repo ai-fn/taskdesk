@@ -12,6 +12,10 @@ spec:
     metadata:
       labels:
         app: todo
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: todo
