@@ -23,7 +23,7 @@ export interface Task {
   priority: Priority
   status: Status
   tags?: string[]
-  due_at?: string       // RFC-3339 or absent when nil
+  due_at?: string   // RFC-3339, absent when nil
   created_at: string
   updated_at: string
 }
@@ -40,6 +40,26 @@ export interface AuthResponse {
 
 export interface ApiError {
   error: string
+}
+
+export interface PlanItem {
+  task_id: string
+  task_title: string
+  rank: number
+  rationale: string
+}
+
+export interface DailyPlan {
+  plan_id: string
+  user_id: string
+  ordered_task_ids: string[]
+  items: PlanItem[]
+  summary: string
+  generated_at: string
+}
+
+export interface GetLatestPlanResponse {
+  plan?: DailyPlan
 }
 
 export const PriorityLabel: Record<Priority, string> = {

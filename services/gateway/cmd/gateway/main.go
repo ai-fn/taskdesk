@@ -11,6 +11,7 @@ import (
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	"github.com/fsociety/todo/pkg/logger"
+	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/gateway/internal/server"
@@ -23,6 +24,7 @@ type Config struct {
 	ListenAddr string `env:"LISTEN_ADDR"  default:":8080"`
 	AuthAddr   string `env:"AUTH_ADDR,required"`
 	TodoAddr   string `env:"TODO_ADDR,required"`
+	AIAddr     string `env:"AI_ADDR"      default:"ai.todo.svc.cluster.local:50054"`
 	RedisAddr  string `env:"REDIS_ADDR"   default:"redis.data.svc.cluster.local:6379"`
 }
 
@@ -51,15 +53,23 @@ func main() {
 	}
 	defer todoConn.Close()
 
+	aiConn, err := grpc.NewClient(cfg.AIAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Error("dial ai-service", "err", err)
+		os.Exit(1)
+	}
+	defer aiConn.Close()
+
 	authClient := authv1.NewAuthServiceClient(authConn)
 	todoClient := todov1.NewTodoServiceClient(todoConn)
+	aiClient := aiv1.NewAIServiceClient(aiConn)
 
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	defer rdb.Close()
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           server.New(log, authClient, todoClient, rdb),
+		Handler:           server.New(log, authClient, todoClient, aiClient, rdb),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

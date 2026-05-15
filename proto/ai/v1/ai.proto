@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package ai.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/fsociety/todo/proto/gen/ai/v1;aiv1";
+
+// AIService generates AI-powered daily task plans using Claude.
+service AIService {
+  // GeneratePlan calls Claude, stores the result, and publishes it to Kafka.
+  rpc GeneratePlan(GeneratePlanRequest) returns (GeneratePlanResponse);
+  // GetLatestPlan retrieves the most recent daily plan for a user.
+  rpc GetLatestPlan(GetLatestPlanRequest) returns (GetLatestPlanResponse);
+}
+
+// ── GeneratePlan ──────────────────────────────────────────────────────────────
+
+message GeneratePlanRequest {
+  string user_id = 1;
+}
+
+message GeneratePlanResponse {
+  DailyPlan plan = 1;
+}
+
+// ── GetLatestPlan ─────────────────────────────────────────────────────────────
+
+message GetLatestPlanRequest {
+  string user_id = 1;
+}
+
+message GetLatestPlanResponse {
+  DailyPlan plan = 1; // empty if none generated yet
+}
+
+// ── DailyPlan ─────────────────────────────────────────────────────────────────
+
+message DailyPlan {
+  string plan_id   = 1;
+  string user_id   = 2;
+  // ordered_task_ids lists open tasks in the AI-suggested order.
+  repeated string ordered_task_ids = 3;
+  // items carries per-task rationale keyed by task_id.
+  repeated PlanItem items = 4;
+  string summary          = 5; // overall day summary from Claude
+  google.protobuf.Timestamp generated_at = 6;
+}
+
+message PlanItem {
+  string task_id   = 1;
+  string task_title = 2;
+  int32  rank      = 3; // 1 = highest priority
+  string rationale = 4; // Claude's one-line reason
+}

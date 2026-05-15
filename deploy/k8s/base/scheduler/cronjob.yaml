@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily-plan-scheduler
+  namespace: todo
+spec:
+  # Run at 06:00 UTC every day. Adjust per timezone if needed.
+  schedule: "0 6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: scheduler
+              image: todo/scheduler
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: AUTH_SERVICE_ADDR
+                  value: "auth.todo.svc.cluster.local:50051"
+                - name: AI_SERVICE_ADDR
+                  value: "ai.todo.svc.cluster.local:50054"
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                runAsUser: 65534
+                capabilities:
+                  drop: ["ALL"]

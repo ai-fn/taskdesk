@@ -111,6 +111,25 @@ func (s *Store) DeleteRefreshToken(ctx context.Context, tokenHash string) error 
 	return err
 }
 
+// ListUsers returns all users (id, email, name). Used by scheduler for fan-out.
+func (s *Store) ListUsers(ctx context.Context) ([]*domain.User, error) {
+	rows, err := s.db.Query(ctx, `SELECT id, email, name, password_hash, created_at, updated_at FROM auth.users ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*domain.User
+	for rows.Next() {
+		var u domain.User
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		users = append(users, &u)
+	}
+	return users, rows.Err()
+}
+
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"

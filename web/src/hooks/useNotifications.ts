@@ -1,11 +1,16 @@
 import { useEffect, useRef } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { getToken } from '@/api/client'
+import { planKeys } from '@/api/queryKeys'
 
 export interface TaskNotification {
-  event_type: string
-  task_title: string
-  user_id: string
-  occurred_at: string
+  event_type?: string
+  type?: string        // daily_plan_ready events use "type" instead of "event_type"
+  task_title?: string
+  user_id?: string
+  occurred_at?: string
+  plan_id?: string
+  summary?: string
 }
 
 type ToastFn = (n: TaskNotification) => void
@@ -15,6 +20,7 @@ type ToastFn = (n: TaskNotification) => void
 export function useNotifications(onToast: ToastFn) {
   const onToastRef = useRef(onToast)
   onToastRef.current = onToast
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     let ws: WebSocket | null = null
@@ -33,6 +39,11 @@ export function useNotifications(onToast: ToastFn) {
       ws.onmessage = (e) => {
         try {
           const n = JSON.parse(e.data) as TaskNotification
+          // When a new daily plan arrives, invalidate the plan query so the
+          // DailyPlanPanel re-fetches automatically.
+          if (n.type === 'daily_plan_ready') {
+            queryClient.invalidateQueries({ queryKey: planKeys.latest() })
+          }
           onToastRef.current(n)
         } catch {
           // ignore unparseable messages

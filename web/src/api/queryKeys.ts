@@ -3,3 +3,7 @@ export const taskKeys = {
   list: () => [...taskKeys.all, 'list'] as const,
   detail: (id: string) => [...taskKeys.all, 'detail', id] as const,
 }
+
+export const planKeys = {
+  latest: () => ['plan', 'latest'] as const,
+}

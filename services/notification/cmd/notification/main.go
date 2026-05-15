@@ -8,7 +8,6 @@ import (
 	"syscall"
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
-	"github.com/fsociety/todo/pkg/events"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
 	"github.com/fsociety/todo/services/notification/internal/consumer"
@@ -38,7 +37,7 @@ func main() {
 
 	brokers := strings.Split(cfg.KafkaBrokers, ",")
 
-	kafkaConsumer, err := pkgkafka.NewConsumer(brokers, cfg.KafkaGroup, []string{events.Topic}, log)
+	kafkaConsumer, err := pkgkafka.NewConsumer(brokers, cfg.KafkaGroup, consumer.Topics(), log)
 	if err != nil {
 		log.Error("create kafka consumer", "err", err)
 		os.Exit(1)

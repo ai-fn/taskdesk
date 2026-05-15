@@ -114,6 +114,56 @@ docker_build_with_restart(
 )
 
 # ----------------------------------------------------------------------------
+# AI service
+# ----------------------------------------------------------------------------
+local_resource(
+    'ai-compile',
+    cmd=GO_BUILD_FLAGS + ' go build -o build/ai ./cmd/ai',
+    dir='services/ai',
+    deps=[
+        'services/ai/cmd',
+        'services/ai/internal',
+        'services/ai/go.mod',
+        'pkg',
+        'proto/gen',
+    ],
+    labels=['ai'],
+)
+
+docker_build_with_restart(
+    'todo/ai',
+    context='.',
+    dockerfile_contents=go_image('todo/ai', 'services/ai/build/ai'),
+    entrypoint='/ai',
+    only=['services/ai/build/ai'],
+    live_update=[
+        sync('services/ai/build/ai', '/ai'),
+    ],
+)
+
+# ----------------------------------------------------------------------------
+# Scheduler (CronJob — built as a regular image; triggered manually in dev)
+# ----------------------------------------------------------------------------
+local_resource(
+    'scheduler-compile',
+    cmd=GO_BUILD_FLAGS + ' go build -o build/scheduler ./cmd/scheduler',
+    dir='services/scheduler',
+    deps=[
+        'services/scheduler/cmd',
+        'services/scheduler/go.mod',
+        'pkg',
+        'proto/gen',
+    ],
+    labels=['ai'],
+)
+
+docker_build(
+    'todo/scheduler',
+    context='.',
+    dockerfile_contents=go_image('todo/scheduler', 'services/scheduler/build/scheduler'),
+)
+
+# ----------------------------------------------------------------------------
 # Notification service
 # ----------------------------------------------------------------------------
 local_resource(
@@ -160,11 +210,15 @@ k8s_yaml(kustomize('deploy/k8s/base/gateway'))
 k8s_yaml(kustomize('deploy/k8s/base/auth'))
 k8s_yaml(kustomize('deploy/k8s/base/todo'))
 k8s_yaml(kustomize('deploy/k8s/base/notification'))
+k8s_yaml(kustomize('deploy/k8s/base/ai'))
+k8s_yaml(kustomize('deploy/k8s/base/scheduler'))
 k8s_yaml(kustomize('deploy/k8s/base/web'))
 
-k8s_resource('caddy',        labels=['edge'],         port_forwards=[])
-k8s_resource('gateway',      labels=['gateway'],      resource_deps=['gateway-compile'])
-k8s_resource('auth',         labels=['auth'],         resource_deps=['auth-compile'])
-k8s_resource('todo',         labels=['todo'],         resource_deps=['todo-compile'])
-k8s_resource('notification', labels=['notification'], resource_deps=['notification-compile'])
-k8s_resource('web',          labels=['web'])
+k8s_resource('caddy',                 labels=['edge'],         port_forwards=[])
+k8s_resource('gateway',               labels=['gateway'],      resource_deps=['gateway-compile'])
+k8s_resource('auth',                  labels=['auth'],         resource_deps=['auth-compile'])
+k8s_resource('todo',                  labels=['todo'],         resource_deps=['todo-compile'])
+k8s_resource('notification',          labels=['notification'], resource_deps=['notification-compile'])
+k8s_resource('ai',                    labels=['ai'],           resource_deps=['ai-compile'])
+k8s_resource('daily-plan-scheduler',  labels=['ai'],           resource_deps=['scheduler-compile'])
+k8s_resource('web',                   labels=['web'])

@@ -16,6 +16,11 @@ service AuthService {
   // ValidateToken verifies an access token and returns the embedded claims.
   // Gateway calls this on every authenticated request.
   rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  // ListUserIDs returns all registered user IDs and emails.
+  // Used by the scheduler to fan out daily-plan generation.
+  rpc ListUserIDs(ListUserIDsRequest) returns (ListUserIDsResponse);
+  // GetUserByID returns a single user's public profile.
+  rpc GetUserByID(GetUserByIDRequest) returns (GetUserByIDResponse);
 }
 
 // ── Sign up ──────────────────────────────────────────────────────────────────
@@ -93,4 +98,28 @@ message ValidateTokenRequest {
 message ValidateTokenResponse {
   string user_id = 1;
   string email   = 2;
+}
+
+// ── ListUserIDs ───────────────────────────────────────────────────────────────
+
+message ListUserIDsRequest {}
+
+message UserSummary {
+  string user_id = 1;
+  string email   = 2;
+  string name    = 3;
+}
+
+message ListUserIDsResponse {
+  repeated UserSummary users = 1;
+}
+
+// ── GetUserByID ───────────────────────────────────────────────────────────────
+
+message GetUserByIDRequest {
+  string user_id = 1;
+}
+
+message GetUserByIDResponse {
+  UserSummary user = 1;
 }

@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
-	"github.com/go-chi/chi/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -32,7 +32,7 @@ func (h *TodoHandler) List(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
-	jsonOK(w, resp)
+	protoOK(w, resp)
 }
 
 // POST /api/v1/tasks
@@ -71,9 +71,7 @@ func (h *TodoHandler) Create(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(resp.Task)
+	protoStatus(w, resp.Task, http.StatusCreated)
 }
 
 // GET /api/v1/tasks/{taskID}
@@ -89,7 +87,7 @@ func (h *TodoHandler) Get(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
-	jsonOK(w, resp.Task)
+	protoOK(w, resp.Task)
 }
 
 // PATCH /api/v1/tasks/{taskID}
@@ -128,7 +126,7 @@ func (h *TodoHandler) Update(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
-	jsonOK(w, resp.Task)
+	protoOK(w, resp.Task)
 }
 
 // DELETE /api/v1/tasks/{taskID}
@@ -160,5 +158,5 @@ func (h *TodoHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
-	jsonOK(w, resp.Task)
+	protoOK(w, resp.Task)
 }
