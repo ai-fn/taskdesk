@@ -11,6 +11,7 @@ import (
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	"github.com/fsociety/todo/pkg/logger"
+	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
@@ -75,6 +76,14 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", pkgmetrics.Handler())
+		if err := http.ListenAndServe(":9090", mux); err != nil {
+			log.Error("metrics server", "err", err)
+		}
+	}()
 
 	go func() {
 		log.Info("gateway listening", "addr", cfg.ListenAddr)

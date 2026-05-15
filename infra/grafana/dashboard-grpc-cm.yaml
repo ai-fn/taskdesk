@@ -1,0 +1,129 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-grpc
+  namespace: monitoring
+data:
+  grpc-services.json: |
+    {
+      "uid": "todo-grpc",
+      "title": "gRPC Services",
+      "tags": ["grpc", "todo"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "time": {"from": "now-1h", "to": "now"},
+      "refresh": "30s",
+      "panels": [
+        {
+          "id": 1, "type": "stat", "title": "Request Rate",
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+          "targets": [{"expr": "sum(rate(grpc_requests_total[1m]))", "refId": "A"}],
+          "options": {
+            "reduceOptions": {"calcs": ["lastNotNull"]},
+            "colorMode": "background", "graphMode": "area"
+          },
+          "fieldConfig": {"defaults": {
+            "unit": "reqps",
+            "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "green"}]}
+          }}
+        },
+        {
+          "id": 2, "type": "stat", "title": "Error Rate",
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+          "targets": [{"expr": "sum(rate(grpc_requests_total{code!=\"OK\"}[1m]))", "refId": "A"}],
+          "options": {
+            "reduceOptions": {"calcs": ["lastNotNull"]},
+            "colorMode": "background", "graphMode": "area"
+          },
+          "fieldConfig": {"defaults": {
+            "unit": "reqps",
+            "thresholds": {"mode": "absolute", "steps": [
+              {"value": null, "color": "green"},
+              {"value": 0.01, "color": "yellow"},
+              {"value": 0.1, "color": "red"}
+            ]}
+          }}
+        },
+        {
+          "id": 3, "type": "stat", "title": "p99 Latency (all services)",
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+          "targets": [{"expr": "histogram_quantile(0.99, sum by(le)(rate(grpc_duration_seconds_bucket[5m])))", "refId": "A"}],
+          "options": {
+            "reduceOptions": {"calcs": ["lastNotNull"]},
+            "colorMode": "background", "graphMode": "none"
+          },
+          "fieldConfig": {"defaults": {
+            "unit": "s",
+            "thresholds": {"mode": "absolute", "steps": [
+              {"value": null, "color": "green"},
+              {"value": 0.05, "color": "yellow"},
+              {"value": 0.5, "color": "red"}
+            ]}
+          }}
+        },
+        {
+          "id": 4, "type": "stat", "title": "Total Requests",
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+          "targets": [{"expr": "sum(grpc_requests_total)", "refId": "A", "instant": true}],
+          "options": {
+            "reduceOptions": {"calcs": ["lastNotNull"]},
+            "colorMode": "none", "graphMode": "none"
+          },
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "id": 5, "type": "timeseries", "title": "Request Rate by Service",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "targets": [{"expr": "sum by(service)(rate(grpc_requests_total[1m]))", "legendFormat": "{{service}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {
+            "unit": "reqps",
+            "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15, "gradientMode": "opacity"}
+          }}
+        },
+        {
+          "id": 6, "type": "timeseries", "title": "Error Rate by Service",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "targets": [{"expr": "sum by(service)(rate(grpc_requests_total{code!=\"OK\"}[1m]))", "legendFormat": "{{service}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {
+            "unit": "reqps",
+            "custom": {"drawStyle": "bars", "fillOpacity": 80}
+          }}
+        },
+        {
+          "id": 7, "type": "timeseries", "title": "p99 Latency by Service",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "targets": [{"expr": "histogram_quantile(0.99, sum by(service,le)(rate(grpc_duration_seconds_bucket[5m])))", "legendFormat": "p99 {{service}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {
+            "unit": "s",
+            "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}
+          }}
+        },
+        {
+          "id": 8, "type": "timeseries", "title": "p50 Latency by Service",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "targets": [{"expr": "histogram_quantile(0.50, sum by(service,le)(rate(grpc_duration_seconds_bucket[5m])))", "legendFormat": "p50 {{service}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {
+            "unit": "s",
+            "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}
+          }}
+        },
+        {
+          "id": 9, "type": "timeseries", "title": "Request Rate by Method",
+          "description": "Breaks down traffic per individual gRPC method — useful for spotting which calls dominate load.",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+          "targets": [{"expr": "sum by(service, method)(rate(grpc_requests_total{method!~\".*/Health/.*\"}[1m]))", "legendFormat": "{{service}} · {{method}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {
+            "unit": "reqps",
+            "custom": {"drawStyle": "line", "fillOpacity": 5}
+          }}
+        },
+        {
+          "id": 10, "type": "table", "title": "Error Breakdown by Method",
+          "description": "Non-OK gRPC calls grouped by code and method.",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 28},
+          "targets": [{"expr": "sort_desc(sum by(service, method, code)(grpc_requests_total{code!=\"OK\"}))", "refId": "A", "instant": true, "legendFormat": ""}],
+          "options": {"sortBy": [{"displayName": "Value", "desc": true}]},
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        }
+      ]
+    }

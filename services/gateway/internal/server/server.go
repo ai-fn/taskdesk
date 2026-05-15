@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 
+	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	"github.com/fsociety/todo/services/gateway/internal/handler"
 	"github.com/fsociety/todo/services/gateway/internal/middleware"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
@@ -28,6 +29,7 @@ func New(
 
 	r.Use(chimw.Recoverer)
 	r.Use(accessLog(log))
+	r.Use(pkgmetrics.HTTPMiddleware)
 
 	// Public
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {

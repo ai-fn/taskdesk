@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
+	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	pkgpgx "github.com/fsociety/todo/pkg/pgx"
 	"github.com/fsociety/todo/pkg/tokens"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
@@ -60,7 +62,10 @@ func main() {
 
 	svc := server.New(store.New(pool), maker, log)
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(pkgmetrics.UnaryServerInterceptor("auth", log)),
+		grpc.ChainStreamInterceptor(pkgmetrics.StreamServerInterceptor("auth", log)),
+	)
 	authv1.RegisterAuthServiceServer(grpcServer, svc)
 	reflection.Register(grpcServer)
 
@@ -74,6 +79,15 @@ func main() {
 		log.Error("listen", "err", err)
 		os.Exit(1)
 	}
+
+	// Serve Prometheus metrics on :9090 for scraping.
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", pkgmetrics.Handler())
+		if err := http.ListenAndServe(":9090", mux); err != nil {
+			log.Error("metrics server", "err", err)
+		}
+	}()
 
 	log.Info("auth-service starting", "addr", cfg.ListenAddr)
 
