@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bufio"
 	"log/slog"
+	"net"
 	"net/http"
 
 	"github.com/fsociety/todo/services/gateway/internal/handler"
@@ -81,4 +83,12 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return h.Hijack()
 }
