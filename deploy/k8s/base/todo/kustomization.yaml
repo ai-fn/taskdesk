@@ -10,5 +10,7 @@ configMapGenerator:
     files:
       - 000001_init.up.sql
       - 000001_init.down.sql
+      - 000002_outbox.up.sql
+      - 000002_outbox.down.sql
 generatorOptions:
   disableNameSuffixHash: true
