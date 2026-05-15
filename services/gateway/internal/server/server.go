@@ -8,6 +8,7 @@ import (
 
 	"github.com/fsociety/todo/services/gateway/internal/handler"
 	"github.com/fsociety/todo/services/gateway/internal/middleware"
+	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/go-chi/chi/v5"
@@ -20,6 +21,7 @@ func New(
 	log *slog.Logger,
 	authClient authv1.AuthServiceClient,
 	todoClient todov1.TodoServiceClient,
+	aiClient aiv1.AIServiceClient,
 	rdb *redis.Client,
 ) http.Handler {
 	r := chi.NewRouter()
@@ -52,6 +54,10 @@ func New(
 		r.Delete("/{taskID}",        todo.Delete)
 		r.Post("/{taskID}/complete", todo.Complete)
 	})
+
+	// Daily plan (AI-generated)
+	plan := handler.NewPlanHandler(aiClient)
+	r.With(middleware.Authenticate(authClient)).Get("/api/v1/plan", plan.GetLatest)
 
 	// WebSocket: authenticated users subscribe to their real-time notifications.
 	ws := handler.NewWSHandler(rdb, log)

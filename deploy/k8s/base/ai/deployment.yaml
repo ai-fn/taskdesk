@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai
+  namespace: todo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai
+  template:
+    metadata:
+      labels:
+        app: ai
+    spec:
+      containers:
+        - name: ai
+          image: todo/ai
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 50054
+          env:
+            - name: LISTEN_ADDR
+              value: ":50054"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ai-secret
+                  key: DATABASE_URL
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-secret
+                  key: ANTHROPIC_API_KEY
+            - name: MIGRATIONS_DIR
+              value: "file:///migrations/ai"
+            - name: TODO_SERVICE_ADDR
+              value: "todo.todo.svc.cluster.local:50052"
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations/ai
+              readOnly: true
+          readinessProbe:
+            grpc:
+              port: 50054
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            grpc:
+              port: 50054
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: migrations
+          configMap:
+            name: ai-migrations

@@ -9,6 +9,8 @@ import (
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 const refreshCookieName = "refresh_token"
@@ -157,6 +159,23 @@ func handleGRPCError(w http.ResponseWriter, err error) {
 func jsonOK(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+// protoOK serializes a proto message using protojson so that well-known types
+// like Timestamp are rendered as RFC-3339 strings instead of {seconds,nanos}.
+func protoOK(w http.ResponseWriter, m proto.Message) {
+	protoStatus(w, m, http.StatusOK)
+}
+
+func protoStatus(w http.ResponseWriter, m proto.Message, code int) {
+	b, err := protojson.MarshalOptions{EmitUnpopulated: false, UseProtoNames: true, UseEnumNumbers: true}.Marshal(m)
+	if err != nil {
+		jsonError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(b)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {

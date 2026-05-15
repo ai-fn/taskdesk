@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS ai.daily_plans;
+DROP SCHEMA IF EXISTS ai;

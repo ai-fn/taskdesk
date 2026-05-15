@@ -194,6 +194,48 @@ func (s *Server) ValidateToken(_ context.Context, req *authv1.ValidateTokenReque
 	}, nil
 }
 
+// ── ListUserIDs ───────────────────────────────────────────────────────────────
+
+func (s *Server) ListUserIDs(ctx context.Context, _ *authv1.ListUserIDsRequest) (*authv1.ListUserIDsResponse, error) {
+	users, err := s.store.ListUsers(ctx)
+	if err != nil {
+		s.log.Error("list users", "err", err)
+		return nil, status.Error(codes.Internal, "list users failed")
+	}
+	resp := &authv1.ListUserIDsResponse{}
+	for _, u := range users {
+		resp.Users = append(resp.Users, &authv1.UserSummary{
+			UserId: u.ID,
+			Email:  u.Email,
+			Name:   u.Name,
+		})
+	}
+	return resp, nil
+}
+
+// ── GetUserByID ───────────────────────────────────────────────────────────────
+
+func (s *Server) GetUserByID(ctx context.Context, req *authv1.GetUserByIDRequest) (*authv1.GetUserByIDResponse, error) {
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+	u, err := s.store.GetUserByID(ctx, req.UserId)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "user not found")
+		}
+		s.log.Error("get user by id", "err", err)
+		return nil, status.Error(codes.Internal, "get user failed")
+	}
+	return &authv1.GetUserByIDResponse{
+		User: &authv1.UserSummary{
+			UserId: u.ID,
+			Email:  u.Email,
+			Name:   u.Name,
+		},
+	}, nil
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func (s *Server) mintTokens(userID, email string) (access, refresh string, err error) {

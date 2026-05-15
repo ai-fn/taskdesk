@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import type { Task } from '@/types'
 import { TaskList } from '@/components/tasks/TaskList'
 import { TaskForm } from '@/components/tasks/TaskForm'
+import { DailyPlanPanel } from '@/components/tasks/DailyPlanPanel'
 import { Button } from '@/components/ui/Button'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
 import { ToastContainer, type ToastMessage } from '@/components/ui/Toast'
@@ -21,9 +22,14 @@ export function TasksPage() {
   }, [])
 
   const handleNotification = useCallback((n: TaskNotification) => {
-    const text = n.event_type === 'task.completed'
-      ? `✓ Completed: ${n.task_title}`
-      : n.task_title
+    let text: string
+    if (n.type === 'daily_plan_ready') {
+      text = 'Your AI daily plan is ready!'
+    } else if (n.event_type === 'task.completed') {
+      text = `✓ Completed: ${n.task_title ?? ''}`
+    } else {
+      return
+    }
     setToasts((prev) => [...prev, { id: Date.now(), text }])
   }, [])
 
@@ -76,6 +82,7 @@ export function TasksPage() {
         </Button>
       </div>
 
+      <DailyPlanPanel />
       <TaskList onEdit={handleEdit} />
 
       {modal && (

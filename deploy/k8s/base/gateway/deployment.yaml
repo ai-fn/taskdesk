@@ -30,6 +30,8 @@ spec:
           value: "auth.todo.svc.cluster.local:50051"
         - name: TODO_ADDR
           value: "todo.todo.svc.cluster.local:50052"
+        - name: AI_ADDR
+          value: "ai.todo.svc.cluster.local:50054"
         - name: REDIS_ADDR
           value: "redis.data.svc.cluster.local:6379"
         ports:
