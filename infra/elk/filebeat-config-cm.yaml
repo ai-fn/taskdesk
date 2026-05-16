@@ -24,28 +24,42 @@ data:
       - decode_json_fields:
           fields: ["message"]
           target: ""
-          overwrite_keys: true
+          overwrite_keys: false
           add_error_key: false
+      # Go slog emits `service: "auth"` but ECS maps `service` as an object.
+      # Rename to service.name (ECS-compliant keyword) before indexing.
+      - rename:
+          fields:
+            - from: service
+              to: service.name
+          ignore_missing: true
+          fail_on_error: false
       # Drop noisy health-check spam from the log stream.
+      # Only drop /healthz 200s from gateway — not ALL msg:http logs.
       - drop_event:
           when:
             or:
-              - equals:
-                  msg: "http"
+              # Gateway liveness-probe noise: msg=http + path=/healthz + status=200
+              - and:
+                - equals:
+                    msg: "http"
+                - equals:
+                    path: "/healthz"
+                - equals:
+                    status: 200
+              # ES initContainer sets vm.max_map_count — not a real service log.
               - equals:
                   kubernetes.container.name: "sysctl"
 
     output.elasticsearch:
       hosts: ["http://elasticsearch.monitoring.svc.cluster.local:9200"]
       index: "todo-logs-%{+yyyy.MM.dd}"
+      # Filebeat 8.x defaults to data streams; disable for simple daily indices.
+      data_stream.enabled: false
 
-    # Disable ILM and use a simple time-based index pattern instead.
+    # Disable ILM and data-stream template management entirely.
     setup.ilm.enabled: false
-    setup.template.name: "todo-logs"
-    setup.template.pattern: "todo-logs-*"
-    setup.template.settings:
-      index.number_of_shards: 1
-      index.number_of_replicas: 0
+    setup.template.enabled: false
 
     logging.level: warning
     logging.to_stderr: true
