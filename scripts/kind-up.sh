@@ -19,11 +19,19 @@ bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 # Images we need in the cluster. Pinned tags only — never `:latest` so the
 # cluster is reproducible and we know exactly what's loaded.
 IMAGES=(
+  # Core infrastructure
   caddy:2.8-alpine
   postgres:16-alpine
   redis:7-alpine
   axllent/mailpit:v1.20
   alpine:3.20                                  # base image for Tilt dev builds
+  busybox:1.36                                 # Elasticsearch initContainer (vm.max_map_count)
+  # Observability
+  prom/prometheus:v2.55.1
+  grafana/grafana:11.4.0
+  docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+  docker.elastic.co/kibana/kibana:8.17.0
+  docker.elastic.co/beats/filebeat:8.17.0
 )
 
 # 1. Cluster -----------------------------------------------------------------
@@ -37,7 +45,7 @@ fi
 kubectl config use-context "kind-${CLUSTER}" >/dev/null
 
 # 2. Namespaces --------------------------------------------------------------
-for ns in todo data observability; do
+for ns in todo data monitoring; do
   kubectl create namespace "${ns}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 done
 
@@ -85,6 +93,24 @@ bold "→ waiting for data pods to be ready (up to 2m)"
 kubectl -n data wait --for=condition=ready pod -l app=postgres --timeout=2m || true
 kubectl -n data wait --for=condition=ready pod -l app=redis    --timeout=1m || true
 kubectl -n data wait --for=condition=ready pod -l app=mailpit  --timeout=1m || true
+
+bold "→ deploying observability stack (monitoring ns)"
+kubectl apply -f "${ROOT}/infra/prometheus/namespace.yaml" 2>/dev/null || true
+kubectl apply -f "${ROOT}/infra/prometheus/rbac.yaml"
+kubectl apply -f "${ROOT}/infra/prometheus/configmap.yaml"
+kubectl apply -f "${ROOT}/infra/prometheus/deployment.yaml"
+kubectl apply -f "${ROOT}/infra/prometheus/service.yaml"
+kubectl apply -f "${ROOT}/infra/grafana/configmap.yaml"
+kubectl apply -f "${ROOT}/infra/grafana/dashboard-provider-cm.yaml"
+kubectl apply -f "${ROOT}/infra/grafana/dashboard-grpc-cm.yaml"
+kubectl apply -f "${ROOT}/infra/grafana/dashboard-http-cm.yaml"
+kubectl apply -f "${ROOT}/infra/grafana/deployment.yaml"
+kubectl apply -f "${ROOT}/infra/grafana/service.yaml"
+kubectl apply -f "${ROOT}/infra/elk/elasticsearch.yaml"
+kubectl apply -f "${ROOT}/infra/elk/kibana.yaml"
+kubectl apply -f "${ROOT}/infra/elk/filebeat-rbac.yaml"
+kubectl apply -f "${ROOT}/infra/elk/filebeat-config-cm.yaml"
+kubectl apply -f "${ROOT}/infra/elk/filebeat-daemonset.yaml"
 
 bold "→ generating JWT key (idempotent)"
 "${ROOT}/scripts/gen-jwt-key.sh"
