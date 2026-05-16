@@ -6,7 +6,7 @@ metadata:
   labels:
     app: mailpit
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app: mailpit
   ports:
@@ -16,3 +16,4 @@ spec:
   - name: http
     port: 8025
     targetPort: http
+    nodePort: 30025

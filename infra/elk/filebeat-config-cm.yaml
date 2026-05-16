@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: filebeat-config
+  namespace: monitoring
+data:
+  filebeat.yml: |
+    filebeat.inputs:
+      - type: filestream
+        id: kubernetes-containers
+        paths:
+          - /var/log/containers/*.log
+        parsers:
+          - container: {}
+        prospector.scanner.symlinks: true
+
+    processors:
+      - add_kubernetes_metadata:
+          host: ${NODE_NAME}
+          matchers:
+            - logs_path:
+                logs_path: "/var/log/containers/"
+      # Parse the JSON message our Go services emit and promote fields to root.
+      - decode_json_fields:
+          fields: ["message"]
+          target: ""
+          overwrite_keys: true
+          add_error_key: false
+      # Drop noisy health-check spam from the log stream.
+      - drop_event:
+          when:
+            or:
+              - equals:
+                  msg: "http"
+              - equals:
+                  kubernetes.container.name: "sysctl"
+
+    output.elasticsearch:
+      hosts: ["http://elasticsearch.monitoring.svc.cluster.local:9200"]
+      index: "todo-logs-%{+yyyy.MM.dd}"
+
+    # Disable ILM and use a simple time-based index pattern instead.
+    setup.ilm.enabled: false
+    setup.template.name: "todo-logs"
+    setup.template.pattern: "todo-logs-*"
+    setup.template.settings:
+      index.number_of_shards: 1
+      index.number_of_replicas: 0
+
+    logging.level: warning
+    logging.to_stderr: true

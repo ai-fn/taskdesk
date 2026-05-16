@@ -241,3 +241,18 @@ k8s_resource('daily-plan-scheduler',  labels=['ai'],           resource_deps=['s
 k8s_resource('web',                   labels=['web'])
 k8s_resource('prometheus',            labels=['monitoring'])
 k8s_resource('grafana',               labels=['monitoring'])
+
+# ----------------------------------------------------------------------------
+# ELK stack — monitoring namespace
+# ----------------------------------------------------------------------------
+k8s_yaml([
+    'infra/elk/elasticsearch.yaml',
+    'infra/elk/kibana.yaml',
+    'infra/elk/filebeat-rbac.yaml',
+    'infra/elk/filebeat-config-cm.yaml',
+    'infra/elk/filebeat-daemonset.yaml',
+])
+
+k8s_resource('elasticsearch', labels=['monitoring'])
+k8s_resource('kibana',        labels=['monitoring'])
+k8s_resource('filebeat',      labels=['monitoring'])
