@@ -3,10 +3,12 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
+	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -17,11 +19,13 @@ const refreshCookieName = "refresh_token"
 
 // AuthHandler bridges HTTP ↔ auth-service gRPC.
 type AuthHandler struct {
-	client authv1.AuthServiceClient
+	client     authv1.AuthServiceClient
+	todoClient todov1.TodoServiceClient
+	log        *slog.Logger
 }
 
-func NewAuthHandler(c authv1.AuthServiceClient) *AuthHandler {
-	return &AuthHandler{client: c}
+func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, log *slog.Logger) *AuthHandler {
+	return &AuthHandler{client: c, todoClient: todo, log: log}
 }
 
 // POST /api/v1/auth/signup
@@ -44,6 +48,14 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		handleGRPCError(w, err)
 		return
+	}
+
+	// Seed default "My lists" group — best-effort, don't fail signup if this errors.
+	if _, err := h.todoClient.CreateGroup(r.Context(), &todov1.CreateGroupRequest{
+		UserId: resp.UserId,
+		Name:   "My lists",
+	}); err != nil {
+		h.log.Error("seed default group", "user_id", resp.UserId, "err", err)
 	}
 
 	setRefreshCookie(w, resp.RefreshToken)
@@ -168,7 +180,7 @@ func protoOK(w http.ResponseWriter, m proto.Message) {
 }
 
 func protoStatus(w http.ResponseWriter, m proto.Message, code int) {
-	b, err := protojson.MarshalOptions{EmitUnpopulated: false, UseProtoNames: true, UseEnumNumbers: true}.Marshal(m)
+	b, err := protojson.MarshalOptions{EmitUnpopulated: true, UseProtoNames: true, UseEnumNumbers: true}.Marshal(m)
 	if err != nil {
 		jsonError(w, "internal error", http.StatusInternalServerError)
 		return

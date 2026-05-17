@@ -12,20 +12,20 @@ import (
 )
 
 // systemPrompt is stable across all users — cached by Claude on the first call.
-const systemPrompt = `You are a personal productivity assistant helping users prioritize their daily tasks.
+const systemPrompt = `You are a compact daily planner. Given a user's tasks, produce a focused plan for today.
 
-Given a user's open tasks and recent completion history, you will analyze the tasks and produce a prioritized daily plan. Your goal is to help the user focus on what matters most.
+OUTPUT RULES — follow exactly:
+- summary: one short sentence (≤20 words). State the day's single theme, e.g. "Focus on urgent fixes and two key project milestones."
+- items: include ONLY tasks due today, past-due, or the 3-5 highest-priority upcoming tasks. Skip low-value tasks if the list is long.
+- rationale: ≤8 words per task. Be direct, e.g. "Due today", "Blocks team", "High priority, quick win".
 
-Prioritization criteria (in order of importance):
-1. Urgency — tasks with due dates today or past-due come first
-2. Priority level — URGENT > HIGH > MEDIUM > LOW > UNSPECIFIED
-3. Momentum — if a task was recently worked on (IN_PROGRESS), keep the streak
-4. Completion patterns — prefer task types the user tends to finish
+RANKING ORDER:
+1. Past-due tasks (oldest first)
+2. Due today (by priority)
+3. IN_PROGRESS tasks (keep momentum)
+4. Upcoming HIGH/URGENT tasks nearest in time
 
-For each task, provide a concise one-sentence rationale explaining your ranking.
-Also produce a 2-3 sentence summary of the overall day plan.
-
-You MUST call the submit_daily_plan tool with your structured output. Do not reply in plain text.`
+You MUST call the submit_daily_plan tool. Do not reply in plain text.`
 
 // SubmitDailyPlanInput matches the JSON schema of the submit_daily_plan tool.
 type SubmitDailyPlanInput struct {
@@ -84,7 +84,7 @@ func (p *Planner) Generate(ctx context.Context, uc UserContext) (*SubmitDailyPla
 
 	resp, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeOpus4_7,
-		MaxTokens: 2048,
+		MaxTokens: 1024,
 		// Stable system prompt — Claude caches this prefix, saving ~$0.30 per call.
 		System: []anthropic.TextBlockParam{
 			{
@@ -101,21 +101,21 @@ func (p *Planner) Generate(ctx context.Context, uc UserContext) (*SubmitDailyPla
 						Properties: map[string]any{
 							"summary": map[string]any{
 								"type":        "string",
-								"description": "2-3 sentence overview of the user's day plan.",
+								"description": "One sentence (≤20 words) stating the day's single focus theme.",
 							},
 							"items": map[string]any{
 								"type": "array",
 								"items": map[string]any{
 									"type": "object",
 									"properties": map[string]any{
-										"task_id":   map[string]any{"type": "string"},
+										"task_id":    map[string]any{"type": "string"},
 										"task_title": map[string]any{"type": "string"},
-										"rank":      map[string]any{"type": "integer", "description": "1 = highest priority"},
-										"rationale": map[string]any{"type": "string", "description": "One sentence explaining this rank."},
+										"rank":       map[string]any{"type": "integer", "description": "1 = highest priority"},
+										"rationale":  map[string]any{"type": "string", "description": "≤8 words: why this rank."},
 									},
 									"required": []string{"task_id", "task_title", "rank", "rationale"},
 								},
-								"description": "Tasks in prioritized order (rank 1 first).",
+								"description": "Today's and nearest high-priority tasks in ranked order (rank 1 first). Omit low-value tasks.",
 							},
 						},
 						Required: []string{"summary", "items"},

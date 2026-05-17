@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -23,11 +24,34 @@ func NewTodoHandler(c todov1.TodoServiceClient) *TodoHandler {
 // GET /api/v1/tasks
 func (h *TodoHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromContext(r.Context())
+	q := r.URL.Query()
 
-	resp, err := h.client.ListTasks(r.Context(), &todov1.ListTasksRequest{
+	req := &todov1.ListTasksRequest{
 		UserId:    userID,
-		PageToken: r.URL.Query().Get("page_token"),
-	})
+		PageToken: q.Get("page_token"),
+	}
+	if s := q.Get("status"); s != "" {
+		var n int32
+		fmt.Sscanf(s, "%d", &n)
+		req.Status = todov1.Status(n)
+	}
+	if q.Get("list_id") != "" {
+		req.ListIdFilter = q.Get("list_id")
+	}
+	if q.Get("flagged_only") == "true" {
+		req.FlaggedOnly = true
+	}
+	if q.Get("include_deleted") == "true" {
+		req.IncludeDeleted = true
+	}
+	if q.Get("due_today") == "true" {
+		req.DueTodayOnly = true
+	}
+	if q.Get("has_due_date") == "true" {
+		req.HasDueDate = true
+	}
+
+	resp, err := h.client.ListTasks(r.Context(), req)
 	if err != nil {
 		handleGRPCError(w, err)
 		return
@@ -40,11 +64,13 @@ func (h *TodoHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromContext(r.Context())
 
 	var body struct {
-		Title       string    `json:"title"`
-		Description string    `json:"description"`
-		Priority    int32     `json:"priority"`
-		Tags        []string  `json:"tags"`
+		Title       string     `json:"title"`
+		Description string     `json:"description"`
+		Priority    int32      `json:"priority"`
+		Tags        []string   `json:"tags"`
 		DueAt       *time.Time `json:"due_at"`
+		ListID      string     `json:"list_id"`
+		Flagged     bool       `json:"flagged"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
@@ -61,6 +87,8 @@ func (h *TodoHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Description: body.Description,
 		Priority:    todov1.Priority(body.Priority),
 		Tags:        body.Tags,
+		ListId:      body.ListID,
+		Flagged:     body.Flagged,
 	}
 	if body.DueAt != nil {
 		req.DueAt = timestamppb.New(*body.DueAt)
@@ -96,12 +124,14 @@ func (h *TodoHandler) Update(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskID")
 
 	var body struct {
-		Title       string    `json:"title"`
-		Description string    `json:"description"`
-		Priority    int32     `json:"priority"`
-		Status      int32     `json:"status"`
-		Tags        []string  `json:"tags"`
+		Title       string     `json:"title"`
+		Description string     `json:"description"`
+		Priority    int32      `json:"priority"`
+		Status      int32      `json:"status"`
+		Tags        []string   `json:"tags"`
 		DueAt       *time.Time `json:"due_at"`
+		ListID      *string    `json:"list_id"` // nil = don't change; "" = remove from list
+		Flagged     *bool      `json:"flagged"` // nil = don't change
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
@@ -120,6 +150,14 @@ func (h *TodoHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.DueAt != nil {
 		req.DueAt = timestamppb.New(*body.DueAt)
 	}
+	if body.Flagged != nil {
+		req.Flagged = *body.Flagged
+		req.UpdateMask = append(req.UpdateMask, "flagged")
+	}
+	if body.ListID != nil {
+		req.ListId = *body.ListID
+		req.UpdateMask = append(req.UpdateMask, "list_id")
+	}
 
 	resp, err := h.client.UpdateTask(r.Context(), req)
 	if err != nil {
@@ -129,7 +167,7 @@ func (h *TodoHandler) Update(w http.ResponseWriter, r *http.Request) {
 	protoOK(w, resp.Task)
 }
 
-// DELETE /api/v1/tasks/{taskID}
+// DELETE /api/v1/tasks/{taskID}  (soft delete)
 func (h *TodoHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromContext(r.Context())
 	taskID := chi.URLParam(r, "taskID")
@@ -159,4 +197,36 @@ func (h *TodoHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	protoOK(w, resp.Task)
+}
+
+// POST /api/v1/tasks/{taskID}/restore
+func (h *TodoHandler) Restore(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromContext(r.Context())
+	taskID := chi.URLParam(r, "taskID")
+
+	resp, err := h.client.RestoreTask(r.Context(), &todov1.RestoreTaskRequest{
+		UserId: userID,
+		TaskId: taskID,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+	protoOK(w, resp.Task)
+}
+
+// DELETE /api/v1/tasks/{taskID}/purge  (permanent delete)
+func (h *TodoHandler) Purge(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromContext(r.Context())
+	taskID := chi.URLParam(r, "taskID")
+
+	_, err := h.client.PurgeTask(r.Context(), &todov1.PurgeTaskRequest{
+		UserId: userID,
+		TaskId: taskID,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

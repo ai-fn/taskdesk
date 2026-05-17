@@ -1,4 +1,5 @@
 import type { Task } from '@/types'
+import type { ListTasksFilter } from '@/api/tasks'
 import { TaskCard } from './TaskCard'
 import { Spinner } from '@/components/ui/Spinner'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
@@ -6,10 +7,13 @@ import { useTasks } from '@/hooks/useTasks'
 
 interface Props {
   onEdit: (task: Task) => void
+  filter?: ListTasksFilter
+  filterKey?: string
+  isDeletedView?: boolean
 }
 
-export function TaskList({ onEdit }: Props) {
-  const { data, isLoading, isError, error } = useTasks()
+export function TaskList({ onEdit, filter, filterKey, isDeletedView }: Props) {
+  const { data, isLoading, isError, error } = useTasks(filter)
 
   if (isLoading) {
     return (
@@ -28,7 +32,7 @@ export function TaskList({ onEdit }: Props) {
   if (tasks.length === 0) {
     return (
       <p className="py-12 text-center text-gray-400">
-        No tasks yet. Create your first one above.
+        {isDeletedView ? 'No recently deleted tasks.' : 'No tasks yet. Create your first one above.'}
       </p>
     )
   }
@@ -36,7 +40,13 @@ export function TaskList({ onEdit }: Props) {
   return (
     <div className="flex flex-col gap-3">
       {tasks.map((task) => (
-        <TaskCard key={task.id} task={task} onEdit={onEdit} />
+        <TaskCard
+          key={task.id}
+          task={task}
+          onEdit={onEdit}
+          filterKey={filterKey}
+          isDeletedView={isDeletedView}
+        />
       ))}
     </div>
   )

@@ -25,11 +25,13 @@ func (s *Store) CreateTaskWithEvent(ctx context.Context, t *domain.Task) error {
 	return withTx(ctx, s.db, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO todo.tasks
-				(id, user_id, title, description, priority, status, tags, due_at, created_at, updated_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+				(id, user_id, title, description, priority, status, tags,
+				 due_at, created_at, updated_at, list_id, flagged)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 			t.ID, t.UserID, t.Title, t.Description,
 			int32(t.Priority), int32(t.Status), t.Tags,
 			t.DueAt, t.CreatedAt, t.UpdatedAt,
+			t.ListID, t.Flagged,
 		); err != nil {
 			return err
 		}
@@ -41,19 +43,16 @@ func (s *Store) CreateTaskWithEvent(ctx context.Context, t *domain.Task) error {
 func (s *Store) UpdateTaskWithEvent(ctx context.Context, t *domain.Task, eventType string) (*domain.Task, error) {
 	var updated domain.Task
 	err := withTx(ctx, s.db, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `
+		err := scanTask(tx.QueryRow(ctx, `
 			UPDATE todo.tasks
 			SET title=$3, description=$4, priority=$5, status=$6,
-			    tags=$7, due_at=$8, updated_at=$9
-			WHERE id=$1 AND user_id=$2
-			RETURNING id, user_id, title, description, priority, status, tags,
-			          due_at, created_at, updated_at`,
+			    tags=$7, due_at=$8, updated_at=$9, list_id=$10, flagged=$11
+			WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL
+			RETURNING `+taskCols,
 			t.ID, t.UserID, t.Title, t.Description,
 			int32(t.Priority), int32(t.Status), t.Tags,
-			t.DueAt, t.UpdatedAt,
-		).Scan(&updated.ID, &updated.UserID, &updated.Title, &updated.Description,
-			&updated.Priority, &updated.Status, &updated.Tags,
-			&updated.DueAt, &updated.CreatedAt, &updated.UpdatedAt)
+			t.DueAt, t.UpdatedAt, t.ListID, t.Flagged,
+		), &updated)
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				return ErrNotFound
@@ -68,14 +67,15 @@ func (s *Store) UpdateTaskWithEvent(ctx context.Context, t *domain.Task, eventTy
 	return &updated, nil
 }
 
-// DeleteTaskWithEvent deletes the task and writes an outbox event atomically.
+// DeleteTaskWithEvent soft-deletes the task and writes an outbox event atomically.
 func (s *Store) DeleteTaskWithEvent(ctx context.Context, userID, taskID string) error {
 	return withTx(ctx, s.db, func(tx pgx.Tx) error {
-		// Grab the title before deleting so we can include it in the event.
 		var title string
-		if err := tx.QueryRow(ctx,
-			`DELETE FROM todo.tasks WHERE id=$1 AND user_id=$2 RETURNING title`,
-			taskID, userID,
+		if err := tx.QueryRow(ctx, `
+			UPDATE todo.tasks
+			SET deleted_at = now(), updated_at = now()
+			WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL
+			RETURNING title`, taskID, userID,
 		).Scan(&title); err != nil {
 			if err == pgx.ErrNoRows {
 				return ErrNotFound
@@ -86,8 +86,7 @@ func (s *Store) DeleteTaskWithEvent(ctx context.Context, userID, taskID string) 
 	})
 }
 
-// UnpublishedBatch returns up to n outbox rows that haven't been published yet,
-// locking them with SKIP LOCKED so concurrent workers don't double-process.
+// UnpublishedBatch returns up to n outbox rows that haven't been published yet.
 func (s *Store) UnpublishedBatch(ctx context.Context, n int) ([]OutboxEntry, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, event_type, payload

@@ -14,6 +14,21 @@ service TodoService {
   rpc UpdateTask(UpdateTaskRequest)   returns (UpdateTaskResponse);
   rpc DeleteTask(DeleteTaskRequest)   returns (DeleteTaskResponse);
   rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
+  // Soft-delete recovery
+  rpc RestoreTask(RestoreTaskRequest) returns (RestoreTaskResponse);
+  rpc PurgeTask(PurgeTaskRequest)     returns (PurgeTaskResponse);
+  // Lists
+  rpc CreateList(CreateListRequest)     returns (CreateListResponse);
+  rpc ListLists(ListListsRequest)       returns (ListListsResponse);
+  rpc UpdateList(UpdateListRequest)     returns (UpdateListResponse);
+  rpc DeleteList(DeleteListRequest)     returns (DeleteListResponse);
+  rpc ReorderLists(ReorderListsRequest) returns (ReorderListsResponse);
+  // Groups
+  rpc CreateGroup(CreateGroupRequest)     returns (CreateGroupResponse);
+  rpc ListGroups(ListGroupsRequest)       returns (ListGroupsResponse);
+  rpc UpdateGroup(UpdateGroupRequest)     returns (UpdateGroupResponse);
+  rpc DeleteGroup(DeleteGroupRequest)     returns (DeleteGroupResponse);
+  rpc ReorderGroups(ReorderGroupsRequest) returns (ReorderGroupsResponse);
 }
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -43,12 +58,42 @@ message Task {
   Priority priority    = 5;
   Status   status      = 6;
   repeated string tags = 7;
-  google.protobuf.Timestamp due_at      = 8;
-  google.protobuf.Timestamp created_at  = 9;
-  google.protobuf.Timestamp updated_at  = 10;
+  google.protobuf.Timestamp due_at     = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+  string  list_id   = 11;
+  bool    flagged   = 12;
+  google.protobuf.Timestamp deleted_at = 13;
 }
 
-// ── Create ───────────────────────────────────────────────────────────────────
+// ── TaskList message ──────────────────────────────────────────────────────────
+
+message TaskList {
+  string id        = 1;
+  string user_id   = 2;
+  string name      = 3;
+  string color     = 4;
+  int32  position  = 5;
+  bool   is_hidden = 6;
+  int32  task_count = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  string group_id  = 10;
+  string icon      = 11;
+}
+
+// ── ListGroup message ─────────────────────────────────────────────────────────
+
+message ListGroup {
+  string id       = 1;
+  string user_id  = 2;
+  string name     = 3;
+  int32  position = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+// ── Create task ───────────────────────────────────────────────────────────────
 
 message CreateTaskRequest {
   string   user_id     = 1;
@@ -57,13 +102,15 @@ message CreateTaskRequest {
   Priority priority    = 4;
   repeated string tags = 5;
   google.protobuf.Timestamp due_at = 6;
+  string list_id = 7;
+  bool   flagged = 8;
 }
 
 message CreateTaskResponse {
   Task task = 1;
 }
 
-// ── Get ──────────────────────────────────────────────────────────────────────
+// ── Get task ──────────────────────────────────────────────────────────────────
 
 message GetTaskRequest {
   string user_id = 1;
@@ -74,7 +121,7 @@ message GetTaskResponse {
   Task task = 1;
 }
 
-// ── List ─────────────────────────────────────────────────────────────────────
+// ── List tasks ────────────────────────────────────────────────────────────────
 
 message ListTasksRequest {
   string user_id = 1;
@@ -82,19 +129,23 @@ message ListTasksRequest {
   Status   status   = 2;
   Priority priority = 3;
   // Pagination
-  int32  page_size  = 4; // default 50, max 200
-  string page_token = 5; // opaque cursor (encoded last task ID + created_at)
+  int32  page_size  = 4;
+  string page_token = 5;
+  // New filters
+  string list_id_filter  = 6;  // exact list ID; empty = all lists
+  bool   flagged_only    = 7;
+  bool   include_deleted = 8;  // true = show ONLY soft-deleted tasks
+  bool   due_today_only  = 9;
+  bool   has_due_date    = 10;
 }
 
 message ListTasksResponse {
-  repeated Task tasks          = 1;
-  string        next_page_token = 2; // empty when no more pages
+  repeated Task tasks         = 1;
+  string        next_page_token = 2;
 }
 
-// ── Update ───────────────────────────────────────────────────────────────────
+// ── Update task ───────────────────────────────────────────────────────────────
 
-// Only set fields that should change. Empty string = no change for strings.
-// Use update_mask to explicitly zero-out a field if needed.
 message UpdateTaskRequest {
   string   user_id     = 1;
   string   task_id     = 2;
@@ -104,15 +155,18 @@ message UpdateTaskRequest {
   Status   status      = 6;
   repeated string tags = 7;
   google.protobuf.Timestamp due_at = 8;
-  // Which fields to update. If empty, all non-zero fields are updated.
+  // update_mask lists fields that should be explicitly set even if zero-value.
+  // Supported: "flagged", "list_id"
   repeated string update_mask = 9;
+  string list_id = 10;
+  bool   flagged = 11;
 }
 
 message UpdateTaskResponse {
   Task task = 1;
 }
 
-// ── Delete ───────────────────────────────────────────────────────────────────
+// ── Delete task ───────────────────────────────────────────────────────────────
 
 message DeleteTaskRequest {
   string user_id = 1;
@@ -121,7 +175,7 @@ message DeleteTaskRequest {
 
 message DeleteTaskResponse {}
 
-// ── Complete ─────────────────────────────────────────────────────────────────
+// ── Complete task ─────────────────────────────────────────────────────────────
 
 message CompleteTaskRequest {
   string user_id = 1;
@@ -130,4 +184,121 @@ message CompleteTaskRequest {
 
 message CompleteTaskResponse {
   Task task = 1;
+}
+
+// ── Restore / Purge ───────────────────────────────────────────────────────────
+
+message RestoreTaskRequest {
+  string user_id = 1;
+  string task_id = 2;
+}
+
+message RestoreTaskResponse {
+  Task task = 1;
+}
+
+message PurgeTaskRequest {
+  string user_id = 1;
+  string task_id = 2;
+}
+
+message PurgeTaskResponse {}
+
+// ── List CRUD ─────────────────────────────────────────────────────────────────
+
+message CreateListRequest {
+  string user_id  = 1;
+  string name     = 2;
+  string color    = 3;
+  string group_id = 4;
+  string icon     = 5;
+}
+
+message CreateListResponse {
+  TaskList list = 1;
+}
+
+message ListListsRequest {
+  string user_id = 1;
+}
+
+message ListListsResponse {
+  repeated TaskList lists = 1;
+}
+
+message UpdateListRequest {
+  string user_id  = 1;
+  string list_id  = 2;
+  string name     = 3;
+  string color    = 4;
+  bool   is_hidden = 5;
+  // update_mask: "name", "color", "is_hidden", "group_id", "icon"
+  repeated string update_mask = 6;
+  string group_id = 11;
+  string icon     = 12;
+}
+
+message UpdateListResponse {
+  TaskList list = 1;
+}
+
+message DeleteListRequest {
+  string user_id = 1;
+  string list_id = 2;
+}
+
+message DeleteListResponse {}
+
+message ReorderListsRequest {
+  string user_id = 1;
+  repeated string list_ids = 2;
+}
+
+message ReorderListsResponse {
+  repeated TaskList lists = 1;
+}
+
+// ── Group CRUD ────────────────────────────────────────────────────────────────
+
+message CreateGroupRequest {
+  string user_id = 1;
+  string name    = 2;
+}
+
+message CreateGroupResponse {
+  ListGroup group = 1;
+}
+
+message ListGroupsRequest {
+  string user_id = 1;
+}
+
+message ListGroupsResponse {
+  repeated ListGroup groups = 1;
+}
+
+message UpdateGroupRequest {
+  string user_id   = 1;
+  string group_id  = 2;
+  string name      = 3;
+}
+
+message UpdateGroupResponse {
+  ListGroup group = 1;
+}
+
+message DeleteGroupRequest {
+  string user_id  = 1;
+  string group_id = 2;
+}
+
+message DeleteGroupResponse {}
+
+message ReorderGroupsRequest {
+  string user_id = 1;
+  repeated string group_ids = 2;
+}
+
+message ReorderGroupsResponse {
+  repeated ListGroup groups = 1;
 }

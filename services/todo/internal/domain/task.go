@@ -32,4 +32,7 @@ type Task struct {
 	DueAt       *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	ListID      *string    // nil = no list
+	Flagged     bool
+	DeletedAt   *time.Time // nil = not soft-deleted
 }
