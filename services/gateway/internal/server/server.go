@@ -37,7 +37,7 @@ func New(
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	auth := handler.NewAuthHandler(authClient)
+	auth := handler.NewAuthHandler(authClient, todoClient, log)
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/signup",  auth.SignUp)
 		r.Post("/login",   auth.Login)
@@ -55,11 +55,39 @@ func New(
 		r.Patch("/{taskID}",         todo.Update)
 		r.Delete("/{taskID}",        todo.Delete)
 		r.Post("/{taskID}/complete", todo.Complete)
+		r.Post("/{taskID}/restore",  todo.Restore)
+		r.Delete("/{taskID}/purge",  todo.Purge)
+	})
+
+	lists := handler.NewListHandler(todoClient)
+	r.Route("/api/v1/lists", func(r chi.Router) {
+		r.Use(middleware.Authenticate(authClient))
+
+		r.Get("/",              lists.List)
+		r.Post("/",             lists.Create)
+		r.Post("/reorder",      lists.Reorder)
+		r.Patch("/{listID}",    lists.Update)
+		r.Delete("/{listID}",   lists.Delete)
+	})
+
+	groups := handler.NewGroupHandler(todoClient)
+	r.Route("/api/v1/groups", func(r chi.Router) {
+		r.Use(middleware.Authenticate(authClient))
+
+		r.Get("/",              groups.List)
+		r.Post("/",             groups.Create)
+		r.Post("/reorder",      groups.Reorder)
+		r.Patch("/{groupID}",   groups.Update)
+		r.Delete("/{groupID}",  groups.Delete)
 	})
 
 	// Daily plan (AI-generated)
 	plan := handler.NewPlanHandler(aiClient)
-	r.With(middleware.Authenticate(authClient)).Get("/api/v1/plan", plan.GetLatest)
+	r.Route("/api/v1/plan", func(r chi.Router) {
+		r.Use(middleware.Authenticate(authClient))
+		r.Get("/", plan.GetLatest)
+		r.Post("/generate", plan.Generate)
+	})
 
 	// WebSocket: authenticated users subscribe to their real-time notifications.
 	ws := handler.NewWSHandler(rdb, log)
@@ -91,6 +119,12 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {

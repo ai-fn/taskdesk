@@ -23,10 +23,47 @@ export interface Task {
   priority: Priority
   status: Status
   tags?: string[]
-  due_at?: string   // RFC-3339, absent when nil
+  due_at?: string     // RFC-3339, absent when nil
+  created_at: string
+  updated_at: string
+  list_id?: string
+  flagged?: boolean
+  deleted_at?: string // present when soft-deleted
+}
+
+export interface TaskList {
+  id: string
+  user_id: string
+  name: string
+  color: string
+  position: number
+  is_hidden: boolean
+  task_count: number
+  group_id?: string
+  icon?: string
   created_at: string
   updated_at: string
 }
+
+export interface ListGroup {
+  id: string
+  user_id: string
+  name: string
+  position: number
+  created_at: string
+  updated_at: string
+}
+
+export const SYSTEM_LISTS = {
+  ALL:       { id: 'all',       name: 'All',              color: '#8E8E93', icon: '∞' },
+  TODAY:     { id: 'today',     name: 'Today',            color: '#FF9500', icon: '☀' },
+  SCHEDULED: { id: 'scheduled', name: 'Scheduled',        color: '#007AFF', icon: '📅' },
+  FLAGGED:   { id: 'flagged',   name: 'Flagged',          color: '#FF3B30', icon: '⚑' },
+  COMPLETED: { id: 'completed', name: 'Completed',        color: '#34C759', icon: '✓' },
+  DELETED:   { id: 'deleted',   name: 'Recently Deleted', color: '#8E8E93', icon: '🗑' },
+} as const
+
+export type SystemListId = typeof SYSTEM_LISTS[keyof typeof SYSTEM_LISTS]['id']
 
 export interface TaskListResponse {
   tasks: Task[]

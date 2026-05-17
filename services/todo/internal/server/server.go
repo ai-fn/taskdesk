@@ -46,12 +46,16 @@ func (s *Server) CreateTask(ctx context.Context, req *todov1.CreateTaskRequest) 
 		Priority:    domain.Priority(req.Priority),
 		Status:      domain.StatusTodo,
 		Tags:        req.Tags,
+		Flagged:     req.Flagged,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
 	if req.DueAt != nil {
 		ts := req.DueAt.AsTime()
 		t.DueAt = &ts
+	}
+	if req.ListId != "" {
+		t.ListID = &req.ListId
 	}
 
 	if err := s.store.CreateTaskWithEvent(ctx, t); err != nil {
@@ -89,16 +93,23 @@ func (s *Server) ListTasks(ctx context.Context, req *todov1.ListTasksRequest) (*
 	}
 
 	f := store.ListFilter{
-		UserID:   req.UserId,
-		PageSize: req.PageSize,
+		UserID:         req.UserId,
+		PageSize:       req.PageSize,
+		IncludeDeleted: req.IncludeDeleted,
+		FlaggedOnly:    req.FlaggedOnly,
+		DueTodayOnly:   req.DueTodayOnly,
+		HasDueDate:     req.HasDueDate,
 	}
 	if req.Status != todov1.Status_STATUS_UNSPECIFIED {
-		s := domain.Status(req.Status)
-		f.Status = &s
+		st := domain.Status(req.Status)
+		f.Status = &st
 	}
 	if req.Priority != todov1.Priority_PRIORITY_UNSPECIFIED {
 		p := domain.Priority(req.Priority)
 		f.Priority = &p
+	}
+	if req.ListIdFilter != "" {
+		f.ListIDFilter = &req.ListIdFilter
 	}
 	if req.PageToken != "" {
 		cur, err := decodeCursor(req.PageToken)
@@ -147,7 +158,6 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 		return nil, status.Error(codes.Internal, "get task failed")
 	}
 
-	// Apply partial update: only non-zero fields change (unless update_mask says otherwise).
 	if req.Title != "" {
 		existing.Title = req.Title
 	}
@@ -167,6 +177,28 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 		ts := req.DueAt.AsTime()
 		existing.DueAt = &ts
 	}
+
+	inMask := func(field string) bool {
+		for _, f := range req.UpdateMask {
+			if f == field {
+				return true
+			}
+		}
+		return false
+	}
+	if inMask("flagged") {
+		existing.Flagged = req.Flagged
+	}
+	if inMask("list_id") {
+		if req.ListId == "" {
+			existing.ListID = nil
+		} else {
+			existing.ListID = &req.ListId
+		}
+	} else if req.ListId != "" {
+		existing.ListID = &req.ListId
+	}
+
 	existing.UpdatedAt = time.Now().UTC()
 
 	evType := events.TypeTaskUpdated
@@ -218,6 +250,289 @@ func (s *Server) CompleteTask(ctx context.Context, req *todov1.CompleteTaskReque
 	return &todov1.CompleteTaskResponse{Task: resp.Task}, nil
 }
 
+// ── RestoreTask ───────────────────────────────────────────────────────────────
+
+func (s *Server) RestoreTask(ctx context.Context, req *todov1.RestoreTaskRequest) (*todov1.RestoreTaskResponse, error) {
+	if req.UserId == "" || req.TaskId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
+	}
+	t, err := s.store.RestoreTask(ctx, req.UserId, req.TaskId)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "task not found or not deleted")
+		}
+		s.log.Error("restore task", "err", err)
+		return nil, status.Error(codes.Internal, "restore task failed")
+	}
+	return &todov1.RestoreTaskResponse{Task: toProto(t)}, nil
+}
+
+// ── PurgeTask ─────────────────────────────────────────────────────────────────
+
+func (s *Server) PurgeTask(ctx context.Context, req *todov1.PurgeTaskRequest) (*todov1.PurgeTaskResponse, error) {
+	if req.UserId == "" || req.TaskId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
+	}
+	if err := s.store.PurgeTask(ctx, req.UserId, req.TaskId); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "task not found or not deleted")
+		}
+		s.log.Error("purge task", "err", err)
+		return nil, status.Error(codes.Internal, "purge task failed")
+	}
+	return &todov1.PurgeTaskResponse{}, nil
+}
+
+// ── CreateList ────────────────────────────────────────────────────────────────
+
+func (s *Server) CreateList(ctx context.Context, req *todov1.CreateListRequest) (*todov1.CreateListResponse, error) {
+	if req.UserId == "" || req.Name == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and name are required")
+	}
+	color := req.Color
+	if color == "" {
+		color = "#007AFF"
+	}
+	now := time.Now().UTC()
+	l := &domain.List{
+		ID:        uuid.New().String(),
+		UserID:    req.UserId,
+		Name:      req.Name,
+		Color:     color,
+		Icon:      req.Icon,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if req.GroupId != "" {
+		l.GroupID = &req.GroupId
+	}
+	if err := s.store.CreateList(ctx, l); err != nil {
+		s.log.Error("create list", "err", err)
+		return nil, status.Error(codes.Internal, "create list failed")
+	}
+	return &todov1.CreateListResponse{List: toProtoList(l)}, nil
+}
+
+// ── ListLists ─────────────────────────────────────────────────────────────────
+
+func (s *Server) ListLists(ctx context.Context, req *todov1.ListListsRequest) (*todov1.ListListsResponse, error) {
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+	lists, err := s.store.ListLists(ctx, req.UserId)
+	if err != nil {
+		s.log.Error("list lists", "err", err)
+		return nil, status.Error(codes.Internal, "list lists failed")
+	}
+	resp := &todov1.ListListsResponse{}
+	for _, l := range lists {
+		resp.Lists = append(resp.Lists, toProtoList(l))
+	}
+	return resp, nil
+}
+
+// ── UpdateList ────────────────────────────────────────────────────────────────
+
+func (s *Server) UpdateList(ctx context.Context, req *todov1.UpdateListRequest) (*todov1.UpdateListResponse, error) {
+	if req.UserId == "" || req.ListId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and list_id are required")
+	}
+
+	lists, err := s.store.ListLists(ctx, req.UserId)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "get list failed")
+	}
+	var existing *domain.List
+	for _, l := range lists {
+		if l.ID == req.ListId {
+			existing = l
+			break
+		}
+	}
+	if existing == nil {
+		return nil, status.Error(codes.NotFound, "list not found")
+	}
+
+	inMask := func(field string) bool {
+		for _, f := range req.UpdateMask {
+			if f == field {
+				return true
+			}
+		}
+		return len(req.UpdateMask) == 0 // no mask = update all non-zero
+	}
+	if req.Name != "" {
+		existing.Name = req.Name
+	}
+	if req.Color != "" {
+		existing.Color = req.Color
+	}
+	if inMask("is_hidden") {
+		existing.IsHidden = req.IsHidden
+	}
+	if inMask("icon") || req.Icon != "" {
+		existing.Icon = req.Icon
+	}
+	updateGroupID := inMask("group_id")
+	if updateGroupID {
+		if req.GroupId == "" {
+			existing.GroupID = nil
+		} else {
+			existing.GroupID = &req.GroupId
+		}
+	}
+	existing.UpdatedAt = time.Now().UTC()
+
+	updated, err := s.store.UpdateList(ctx, existing, updateGroupID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "list not found")
+		}
+		s.log.Error("update list", "err", err)
+		return nil, status.Error(codes.Internal, "update list failed")
+	}
+	updated.TaskCount = existing.TaskCount
+	return &todov1.UpdateListResponse{List: toProtoList(updated)}, nil
+}
+
+// ── DeleteList ────────────────────────────────────────────────────────────────
+
+func (s *Server) DeleteList(ctx context.Context, req *todov1.DeleteListRequest) (*todov1.DeleteListResponse, error) {
+	if req.UserId == "" || req.ListId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and list_id are required")
+	}
+	if err := s.store.DeleteList(ctx, req.UserId, req.ListId); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "list not found")
+		}
+		s.log.Error("delete list", "err", err)
+		return nil, status.Error(codes.Internal, "delete list failed")
+	}
+	return &todov1.DeleteListResponse{}, nil
+}
+
+// ── ReorderLists ──────────────────────────────────────────────────────────────
+
+func (s *Server) ReorderLists(ctx context.Context, req *todov1.ReorderListsRequest) (*todov1.ReorderListsResponse, error) {
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+	if _, err := s.store.ReorderLists(ctx, req.UserId, req.ListIds); err != nil {
+		s.log.Error("reorder lists", "err", err)
+		return nil, status.Error(codes.Internal, "reorder lists failed")
+	}
+	// Return updated list order
+	lists, err := s.store.ListLists(ctx, req.UserId)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "fetch lists failed")
+	}
+	resp := &todov1.ReorderListsResponse{}
+	for _, l := range lists {
+		resp.Lists = append(resp.Lists, toProtoList(l))
+	}
+	return resp, nil
+}
+
+// ── CreateGroup ───────────────────────────────────────────────────────────────
+
+func (s *Server) CreateGroup(ctx context.Context, req *todov1.CreateGroupRequest) (*todov1.CreateGroupResponse, error) {
+	if req.UserId == "" || req.Name == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and name are required")
+	}
+	now := time.Now().UTC()
+	g := &domain.ListGroup{
+		ID:        uuid.New().String(),
+		UserID:    req.UserId,
+		Name:      req.Name,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.store.CreateGroup(ctx, g); err != nil {
+		s.log.Error("create group", "err", err)
+		return nil, status.Error(codes.Internal, "create group failed")
+	}
+	return &todov1.CreateGroupResponse{Group: toProtoGroup(g)}, nil
+}
+
+// ── ListGroups ────────────────────────────────────────────────────────────────
+
+func (s *Server) ListGroups(ctx context.Context, req *todov1.ListGroupsRequest) (*todov1.ListGroupsResponse, error) {
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+	groups, err := s.store.ListGroups(ctx, req.UserId)
+	if err != nil {
+		s.log.Error("list groups", "err", err)
+		return nil, status.Error(codes.Internal, "list groups failed")
+	}
+	resp := &todov1.ListGroupsResponse{}
+	for _, g := range groups {
+		resp.Groups = append(resp.Groups, toProtoGroup(g))
+	}
+	return resp, nil
+}
+
+// ── UpdateGroup ───────────────────────────────────────────────────────────────
+
+func (s *Server) UpdateGroup(ctx context.Context, req *todov1.UpdateGroupRequest) (*todov1.UpdateGroupResponse, error) {
+	if req.UserId == "" || req.GroupId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and group_id are required")
+	}
+	now := time.Now().UTC()
+	g := &domain.ListGroup{
+		ID:        req.GroupId,
+		UserID:    req.UserId,
+		Name:      req.Name,
+		UpdatedAt: now,
+	}
+	updated, err := s.store.UpdateGroup(ctx, g)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "group not found")
+		}
+		s.log.Error("update group", "err", err)
+		return nil, status.Error(codes.Internal, "update group failed")
+	}
+	return &todov1.UpdateGroupResponse{Group: toProtoGroup(updated)}, nil
+}
+
+// ── DeleteGroup ───────────────────────────────────────────────────────────────
+
+func (s *Server) DeleteGroup(ctx context.Context, req *todov1.DeleteGroupRequest) (*todov1.DeleteGroupResponse, error) {
+	if req.UserId == "" || req.GroupId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and group_id are required")
+	}
+	if err := s.store.DeleteGroup(ctx, req.UserId, req.GroupId); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "group not found")
+		}
+		s.log.Error("delete group", "err", err)
+		return nil, status.Error(codes.Internal, "delete group failed")
+	}
+	return &todov1.DeleteGroupResponse{}, nil
+}
+
+// ── ReorderGroups ─────────────────────────────────────────────────────────────
+
+func (s *Server) ReorderGroups(ctx context.Context, req *todov1.ReorderGroupsRequest) (*todov1.ReorderGroupsResponse, error) {
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+	if _, err := s.store.ReorderGroups(ctx, req.UserId, req.GroupIds); err != nil {
+		s.log.Error("reorder groups", "err", err)
+		return nil, status.Error(codes.Internal, "reorder groups failed")
+	}
+	groups, err := s.store.ListGroups(ctx, req.UserId)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "fetch groups failed")
+	}
+	resp := &todov1.ReorderGroupsResponse{}
+	for _, g := range groups {
+		resp.Groups = append(resp.Groups, toProtoGroup(g))
+	}
+	return resp, nil
+}
+
 // ── proto ↔ domain ────────────────────────────────────────────────────────────
 
 func toProto(t *domain.Task) *todov1.Task {
@@ -229,13 +544,50 @@ func toProto(t *domain.Task) *todov1.Task {
 		Priority:    todov1.Priority(t.Priority),
 		Status:      todov1.Status(t.Status),
 		Tags:        t.Tags,
+		Flagged:     t.Flagged,
 		CreatedAt:   timestamppb.New(t.CreatedAt),
 		UpdatedAt:   timestamppb.New(t.UpdatedAt),
 	}
 	if t.DueAt != nil {
 		p.DueAt = timestamppb.New(*t.DueAt)
 	}
+	if t.ListID != nil {
+		p.ListId = *t.ListID
+	}
+	if t.DeletedAt != nil {
+		p.DeletedAt = timestamppb.New(*t.DeletedAt)
+	}
 	return p
+}
+
+func toProtoList(l *domain.List) *todov1.TaskList {
+	p := &todov1.TaskList{
+		Id:        l.ID,
+		UserId:    l.UserID,
+		Name:      l.Name,
+		Color:     l.Color,
+		Icon:      l.Icon,
+		Position:  int32(l.Position),
+		IsHidden:  l.IsHidden,
+		TaskCount: int32(l.TaskCount),
+		CreatedAt: timestamppb.New(l.CreatedAt),
+		UpdatedAt: timestamppb.New(l.UpdatedAt),
+	}
+	if l.GroupID != nil {
+		p.GroupId = *l.GroupID
+	}
+	return p
+}
+
+func toProtoGroup(g *domain.ListGroup) *todov1.ListGroup {
+	return &todov1.ListGroup{
+		Id:        g.ID,
+		UserId:    g.UserID,
+		Name:      g.Name,
+		Position:  int32(g.Position),
+		CreatedAt: timestamppb.New(g.CreatedAt),
+		UpdatedAt: timestamppb.New(g.UpdatedAt),
+	}
 }
 
 // ── cursor (keyset pagination) ────────────────────────────────────────────────
