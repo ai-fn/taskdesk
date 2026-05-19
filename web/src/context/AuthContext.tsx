@@ -3,9 +3,21 @@ import { useNavigate } from 'react-router-dom'
 import * as authApi from '@/api/auth'
 import { setToken, setOnUnauthenticated } from '@/api/client'
 
+// Decode the JWT payload (display-only — never used for auth decisions).
+function jwtEmail(token: string): string | null {
+  try {
+    const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    const payload = JSON.parse(atob(b64))
+    return typeof payload.email === 'string' ? payload.email : null
+  } catch {
+    return null
+  }
+}
+
 interface AuthState {
   accessToken: string | null
   userId: string | null
+  email: string | null
   isInitializing: boolean
 }
 
@@ -22,6 +34,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
     accessToken: null,
     userId: null,
+    email: null,
     isInitializing: true,
   })
   const navigate = useNavigate()
@@ -42,23 +55,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setToken(res.access_token)
         // We don't have userId from the refresh response — that's fine, the
         // access token itself carries the claims. We only need userId for display.
-        setState({ accessToken: res.access_token, userId: null, isInitializing: false })
+        setState({ accessToken: res.access_token, userId: null, email: jwtEmail(res.access_token), isInitializing: false })
       })
       .catch(() => {
-        setState({ accessToken: null, userId: null, isInitializing: false })
+        setState({ accessToken: null, userId: null, email: null, isInitializing: false })
       })
   }, [])
 
   async function login(email: string, password: string) {
     const res = await authApi.login(email, password)
     setToken(res.access_token)
-    setState({ accessToken: res.access_token, userId: res.user_id, isInitializing: false })
+    setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), isInitializing: false })
   }
 
   async function signup(email: string, password: string, name: string) {
     const res = await authApi.signup(email, password, name)
     setToken(res.access_token)
-    setState({ accessToken: res.access_token, userId: res.user_id, isInitializing: false })
+    setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), isInitializing: false })
   }
 
   async function logout() {
@@ -66,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await authApi.logout()
     } finally {
       setToken(null)
-      setState({ accessToken: null, userId: null, isInitializing: false })
+      setState({ accessToken: null, userId: null, email: null, isInitializing: false })
       navigateRef.current('/login')
     }
   }
@@ -75,6 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         userId: state.userId,
+        email: state.email,
         isInitializing: state.isInitializing,
         isAuthenticated: state.accessToken !== null,
         login,

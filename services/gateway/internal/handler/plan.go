@@ -1,12 +1,17 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"time"
 
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -18,6 +23,11 @@ type PlanHandler struct {
 func NewPlanHandler(c aiv1.AIServiceClient) *PlanHandler {
 	return &PlanHandler{client: c}
 }
+
+// generateTimeout bounds how long we'll wait for Claude end-to-end. Long enough
+// for a slow streaming response, short enough that a hang doesn't pin an SSE
+// connection (and a gateway goroutine) open forever.
+const generateTimeout = 90 * time.Second
 
 // GET /api/v1/plan — returns the user's latest daily plan.
 func (h *PlanHandler) GetLatest(w http.ResponseWriter, r *http.Request) {
@@ -32,14 +42,13 @@ func (h *PlanHandler) GetLatest(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/v1/plan/generate — triggers plan generation and streams the result
-// as Server-Sent Events so the client gets a heartbeat immediately and the
-// plan when Claude finishes (which can take 15-60 s).
+// as Server-Sent Events.
 //
 // Event shapes:
 //
-//	data: {"status":"generating"}          — sent right away to keep connection alive
-//	data: {"status":"done","plan":{...}}   — sent when Claude returns
-//	data: {"status":"error","error":"..."}  — sent on failure
+//	data: {"type":"text","delta":"..."}    — word-by-word narrative from Claude
+//	data: {"type":"done","plan":{...}}     — final structured plan
+//	data: {"type":"error","error":"..."}   — on failure
 func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromContext(r.Context())
 
@@ -49,40 +58,86 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SSE headers — disable all proxy/CDN buffering so events reach the browser.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	// Heartbeat: lets the browser know the connection is alive before the
-	// Claude call blocks for potentially tens of seconds.
-	fmt.Fprintf(w, "data: {\"status\":\"generating\"}\n\n")
-	flusher.Flush()
+	ctx, cancel := context.WithTimeout(r.Context(), generateTimeout)
+	defer cancel()
 
-	resp, err := h.client.GeneratePlan(r.Context(), &aiv1.GeneratePlanRequest{UserId: userID})
+	grpcStream, err := h.client.GeneratePlanStream(ctx, &aiv1.GeneratePlanRequest{UserId: userID})
 	if err != nil {
-		if r.Context().Err() != nil {
-			return // client cancelled — nothing to write
+		writeSSEError(w, flusher, "could not start generation: "+err.Error())
+		return
+	}
+
+	// Track whether we already forwarded a terminal SSE event so the EOF guard
+	// below doesn't double-send.
+	terminated := false
+
+	for {
+		chunk, err := grpcStream.Recv()
+		if err == io.EOF {
+			break
 		}
-		msg, _ := json.Marshal(map[string]string{"status": "error", "error": err.Error()})
-		fmt.Fprintf(w, "data: %s\n\n", msg)
-		flusher.Flush()
-		return
+		if err != nil {
+			// Client gone — don't bother writing, the connection is dead.
+			if errors.Is(r.Context().Err(), context.Canceled) {
+				return
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				writeSSEError(w, flusher, "plan generation timed out")
+			} else if st, ok := status.FromError(err); ok && st.Message() != "" {
+				writeSSEError(w, flusher, st.Message())
+			} else {
+				writeSSEError(w, flusher, err.Error())
+			}
+			return
+		}
+
+		switch p := chunk.Payload.(type) {
+		case *aiv1.PlanStreamChunk_TextDelta:
+			msg, _ := json.Marshal(map[string]string{"type": "text", "delta": p.TextDelta})
+			fmt.Fprintf(w, "data: %s\n\n", msg)
+			flusher.Flush()
+
+		case *aiv1.PlanStreamChunk_Plan:
+			planJSON, err := protojson.MarshalOptions{
+				EmitUnpopulated: true,
+				UseProtoNames:   true,
+				UseEnumNumbers:  true,
+			}.Marshal(p.Plan)
+			if err != nil {
+				writeSSEError(w, flusher, "marshal failed")
+				return
+			}
+			fmt.Fprintf(w, "data: {\"type\":\"done\",\"plan\":%s}\n\n", planJSON)
+			flusher.Flush()
+			terminated = true
+			return
+
+		case *aiv1.PlanStreamChunk_Error:
+			writeSSEError(w, flusher, p.Error)
+			terminated = true
+			return
+		}
 	}
 
-	planJSON, err := protojson.MarshalOptions{
-		EmitUnpopulated: true,
-		UseProtoNames:   true,
-		UseEnumNumbers:  true,
-	}.Marshal(resp.Plan)
-	if err != nil {
-		fmt.Fprintf(w, "data: {\"status\":\"error\",\"error\":\"marshal failed\"}\n\n")
-		flusher.Flush()
-		return
+	// Stream EOF without ever emitting a terminal chunk — synthesise an error
+	// so the frontend never silently loses the user's streamed narrative.
+	if !terminated {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			writeSSEError(w, flusher, "plan generation timed out")
+		} else {
+			writeSSEError(w, flusher, "stream ended without a plan")
+		}
 	}
+}
 
-	fmt.Fprintf(w, "data: {\"status\":\"done\",\"plan\":%s}\n\n", planJSON)
+func writeSSEError(w http.ResponseWriter, flusher http.Flusher, msg string) {
+	payload, _ := json.Marshal(map[string]string{"type": "error", "error": msg})
+	fmt.Fprintf(w, "data: %s\n\n", payload)
 	flusher.Flush()
 }

@@ -10,6 +10,8 @@ option go_package = "github.com/fsociety/todo/proto/gen/ai/v1;aiv1";
 service AIService {
   // GeneratePlan calls Claude, stores the result, and publishes it to Kafka.
   rpc GeneratePlan(GeneratePlanRequest) returns (GeneratePlanResponse);
+  // GeneratePlanStream streams text deltas as Claude writes, then sends the final plan.
+  rpc GeneratePlanStream(GeneratePlanRequest) returns (stream PlanStreamChunk);
   // GetLatestPlan retrieves the most recent daily plan for a user.
   rpc GetLatestPlan(GetLatestPlanRequest) returns (GetLatestPlanResponse);
 }
@@ -52,4 +54,16 @@ message PlanItem {
   string task_title = 2;
   int32  rank      = 3; // 1 = highest priority
   string rationale = 4; // Claude's one-line reason
+}
+
+// ── GeneratePlanStream ────────────────────────────────────────────────────────
+
+// PlanStreamChunk is one piece of a streaming plan generation response.
+// text_delta arrives word-by-word as Claude writes; plan arrives once at the end.
+message PlanStreamChunk {
+  oneof payload {
+    string    text_delta = 1; // incremental narrative text from Claude
+    DailyPlan plan       = 2; // final structured plan (last chunk)
+    string    error      = 3; // error message (terminates the stream)
+  }
 }
