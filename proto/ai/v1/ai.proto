@@ -14,6 +14,8 @@ service AIService {
   rpc GeneratePlanStream(GeneratePlanRequest) returns (stream PlanStreamChunk);
   // GetLatestPlan retrieves the most recent daily plan for a user.
   rpc GetLatestPlan(GetLatestPlanRequest) returns (GetLatestPlanResponse);
+  // EmbedText returns a voyage-3-lite embedding for the given text.
+  rpc EmbedText(EmbedTextRequest) returns (EmbedTextResponse);
 }
 
 // ── GeneratePlan ──────────────────────────────────────────────────────────────
@@ -66,4 +68,16 @@ message PlanStreamChunk {
     DailyPlan plan       = 2; // final structured plan (last chunk)
     string    error      = 3; // error message (terminates the stream)
   }
+}
+
+// ── EmbedText ─────────────────────────────────────────────────────────────────
+
+message EmbedTextRequest {
+  string text       = 1;
+  // input_type: "document" for indexing, "query" for search queries.
+  string input_type = 2;
+}
+
+message EmbedTextResponse {
+  repeated float embedding = 1; // 1024 float32 values (voyage-3-lite)
 }

@@ -613,3 +613,50 @@ func decodeCursor(token string) (cursor, error) {
 	}
 	return c, nil
 }
+
+// ── Embeddings / Semantic search ─────────────────────────────────────────────
+
+func (s *Server) UpsertTaskEmbedding(ctx context.Context, req *todov1.UpsertTaskEmbeddingRequest) (*todov1.UpsertTaskEmbeddingResponse, error) {
+	if req.UserId == "" || req.TaskId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
+	}
+	if err := s.store.UpsertTaskEmbedding(ctx, req.TaskId, req.UserId, req.Embedding); err != nil {
+		s.log.Error("upsert embedding", "task_id", req.TaskId, "err", err)
+		return nil, status.Error(codes.Internal, "upsert embedding failed")
+	}
+	return &todov1.UpsertTaskEmbeddingResponse{}, nil
+}
+
+func (s *Server) DeleteTaskEmbedding(ctx context.Context, req *todov1.DeleteTaskEmbeddingRequest) (*todov1.DeleteTaskEmbeddingResponse, error) {
+	if req.UserId == "" || req.TaskId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
+	}
+	if err := s.store.DeleteTaskEmbedding(ctx, req.TaskId, req.UserId); err != nil {
+		s.log.Error("delete embedding", "task_id", req.TaskId, "err", err)
+		return nil, status.Error(codes.Internal, "delete embedding failed")
+	}
+	return &todov1.DeleteTaskEmbeddingResponse{}, nil
+}
+
+func (s *Server) SearchTasks(ctx context.Context, req *todov1.SearchTasksRequest) (*todov1.SearchTasksResponse, error) {
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+	if len(req.Embedding) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "embedding is required")
+	}
+	limit := int(req.Limit)
+	if limit <= 0 {
+		limit = 20
+	}
+	tasks, err := s.store.SearchTasksByEmbedding(ctx, req.UserId, req.Embedding, limit)
+	if err != nil {
+		s.log.Error("search tasks", "user_id", req.UserId, "err", err)
+		return nil, status.Error(codes.Internal, "search failed")
+	}
+	proto := make([]*todov1.Task, 0, len(tasks))
+	for _, t := range tasks {
+		proto = append(proto, toProto(t))
+	}
+	return &todov1.SearchTasksResponse{Tasks: proto}, nil
+}

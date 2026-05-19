@@ -16,7 +16,10 @@ import (
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	pkgpgx "github.com/fsociety/todo/pkg/pgx"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
+	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
+	"github.com/fsociety/todo/services/ai/internal/consumer"
+	"github.com/fsociety/todo/services/ai/internal/embedder"
 	"github.com/fsociety/todo/services/ai/internal/planner"
 	"github.com/fsociety/todo/services/ai/internal/server"
 	"github.com/fsociety/todo/services/ai/internal/store"
@@ -32,7 +35,9 @@ type Config struct {
 	MigrationsDir   string `env:"MIGRATIONS_DIR"    default:"file:///migrations/ai"`
 	KafkaBrokers    string `env:"KAFKA_BROKERS"     default:"todo-kafka-bootstrap.data.svc.cluster.local:9092"`
 	TodoServiceAddr string `env:"TODO_SERVICE_ADDR" default:"todo.todo.svc.cluster.local:50052"`
+	AuthServiceAddr string `env:"AUTH_SERVICE_ADDR" default:"auth.todo.svc.cluster.local:50051"`
 	AnthropicAPIKey string `env:"ANTHROPIC_API_KEY"`
+	VoyageAPIKey    string `env:"VOYAGE_API_KEY"`
 	pkgpgx.Config
 }
 
@@ -77,9 +82,34 @@ func main() {
 	defer todoConn.Close()
 	todoClient := todov1.NewTodoServiceClient(todoConn)
 
+	// Connect to auth-service for backfill user enumeration.
+	authConn, err := grpc.NewClient(cfg.AuthServiceAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Error("dial auth-service", "err", err)
+		os.Exit(1)
+	}
+	defer authConn.Close()
+	authClient := authv1.NewAuthServiceClient(authConn)
+
+	emb := embedder.New(cfg.VoyageAPIKey)
 	p := planner.New(cfg.AnthropicAPIKey)
 	st := store.New(pool)
-	svc := server.New(p, st, todoClient, producer, log)
+	svc := server.New(p, emb, st, todoClient, producer, log)
+
+	// Embedding consumer: listens to task events and keeps the vector index fresh.
+	embHandler := consumer.New(emb, todoClient, authClient, log)
+	embConsumer, err := consumer.NewRunner(brokers, embHandler, log)
+	if err != nil {
+		log.Error("create embedding consumer", "err", err)
+		os.Exit(1)
+	}
+	go func() {
+		if err := embConsumer.Run(ctx); err != nil {
+			log.Error("embedding consumer", "err", err)
+		}
+	}()
+	// Backfill: embed any existing tasks that don't have embeddings yet.
+	go embHandler.Backfill(ctx)
 
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(pkgmetrics.UnaryServerInterceptor("ai", log)),

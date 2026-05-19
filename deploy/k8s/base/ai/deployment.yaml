@@ -36,6 +36,12 @@ spec:
                 secretKeyRef:
                   name: ai-secret
                   key: ANTHROPIC_API_KEY
+            - name: VOYAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-secret
+                  key: VOYAGE_API_KEY
+                  optional: true
             - name: MIGRATIONS_DIR
               value: "file:///migrations/ai"
             - name: TODO_SERVICE_ADDR
