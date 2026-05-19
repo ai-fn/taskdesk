@@ -12,6 +12,7 @@ import (
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/ai/internal/embedder"
+	"github.com/fsociety/todo/services/ai/internal/parser"
 	"github.com/fsociety/todo/services/ai/internal/planner"
 	"github.com/fsociety/todo/services/ai/internal/store"
 	"github.com/google/uuid"
@@ -26,6 +27,7 @@ const DailyPlanTopic = "daily-plan.generated.v1"
 type Server struct {
 	aiv1.UnimplementedAIServiceServer
 	planner    *planner.Planner
+	parser     *parser.Parser
 	embedder   *embedder.Embedder
 	store      *store.Store
 	todoClient todov1.TodoServiceClient
@@ -33,8 +35,8 @@ type Server struct {
 	log        *slog.Logger
 }
 
-func New(p *planner.Planner, emb *embedder.Embedder, st *store.Store, tc todov1.TodoServiceClient, kc *pkgkafka.Producer, log *slog.Logger) *Server {
-	return &Server{planner: p, embedder: emb, store: st, todoClient: tc, kafka: kc, log: log}
+func New(p *planner.Planner, pa *parser.Parser, emb *embedder.Embedder, st *store.Store, tc todov1.TodoServiceClient, kc *pkgkafka.Producer, log *slog.Logger) *Server {
+	return &Server{planner: p, parser: pa, embedder: emb, store: st, todoClient: tc, kafka: kc, log: log}
 }
 
 // GeneratePlan fetches the user's tasks, calls Claude, persists the plan, and
@@ -304,6 +306,41 @@ func tasksToInput(tasks []*todov1.Task) []planner.TaskInput {
 		out = append(out, ti)
 	}
 	return out
+}
+
+// ── ParseTask ─────────────────────────────────────────────────────────────────
+
+// ParseTask extracts structured task fields from a natural language description.
+func (s *Server) ParseTask(ctx context.Context, req *aiv1.ParseTaskRequest) (*aiv1.ParseTaskResponse, error) {
+	if req.Text == "" {
+		return nil, status.Error(codes.InvalidArgument, "text is required")
+	}
+
+	today := req.Today
+	if today == "" {
+		today = time.Now().UTC().Format("2006-01-02")
+	}
+
+	result, err := s.parser.Parse(ctx, req.Text, today, req.ListNames)
+	if err != nil {
+		s.log.Error("parse task", "err", err)
+		return nil, status.Error(codes.Internal, "parse failed")
+	}
+
+	pt := &aiv1.ParsedTask{
+		Title:       result.Title,
+		Description: result.Description,
+		Priority:    result.PriorityInt(),
+		ListName:    result.ListName,
+		Tags:        result.Tags,
+		Flagged:     result.Flagged,
+	}
+	if t := result.DueAtTime(); t != nil {
+		pt.DueAt = timestamppb.New(*t)
+	}
+
+	s.log.Info("task parsed", "title", result.Title, "priority", result.Priority, "due_at", result.DueAt)
+	return &aiv1.ParseTaskResponse{Task: pt}, nil
 }
 
 // ── EmbedText ─────────────────────────────────────────────────────────────────

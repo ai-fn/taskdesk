@@ -85,3 +85,21 @@ export async function searchTasks(q: string): Promise<TaskListResponse> {
   const { data } = await api.get<TaskListResponse>('/api/v1/tasks/search', { params: { q } })
   return data
 }
+
+export interface ParsedTask {
+  title: string
+  description?: string
+  priority?: number
+  due_at?: string        // RFC3339 string
+  list_name?: string     // best-guess name; caller resolves to list_id
+  tags?: string[]
+  flagged?: boolean
+}
+
+export async function parseTask(text: string, listNames: string[], signal?: AbortSignal): Promise<ParsedTask> {
+  const { data } = await api.post<ParsedTask>('/api/v1/tasks/parse', {
+    text,
+    list_names: listNames,
+  }, { signal })
+  return data
+}

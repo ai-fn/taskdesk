@@ -16,6 +16,8 @@ service AIService {
   rpc GetLatestPlan(GetLatestPlanRequest) returns (GetLatestPlanResponse);
   // EmbedText returns a voyage-3-lite embedding for the given text.
   rpc EmbedText(EmbedTextRequest) returns (EmbedTextResponse);
+  // ParseTask extracts structured task fields from a natural language description.
+  rpc ParseTask(ParseTaskRequest) returns (ParseTaskResponse);
 }
 
 // ── GeneratePlan ──────────────────────────────────────────────────────────────
@@ -80,4 +82,29 @@ message EmbedTextRequest {
 
 message EmbedTextResponse {
   repeated float embedding = 1; // 1024 float32 values (voyage-3-lite)
+}
+
+// ── ParseTask ─────────────────────────────────────────────────────────────────
+
+message ParseTaskRequest {
+  string user_id              = 1;
+  string text                 = 2; // natural language description
+  string today                = 3; // ISO date "2026-05-19" for relative-date resolution
+  repeated string list_names  = 4; // user's available list names for context
+}
+
+// ParsedTask holds the structured fields Claude extracted from free text.
+// All fields except title are optional — omitted when not mentioned.
+message ParsedTask {
+  string title                        = 1;
+  string description                  = 2;
+  int32  priority                     = 3; // 0=unspec 1=low 2=med 3=high 4=urgent
+  google.protobuf.Timestamp due_at    = 4;
+  string list_name                    = 5; // best-match name from list_names
+  repeated string tags                = 6;
+  bool   flagged                      = 7;
+}
+
+message ParseTaskResponse {
+  ParsedTask task = 1;
 }

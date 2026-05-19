@@ -15,8 +15,19 @@ interface FormValues {
   flagged: boolean
 }
 
+export interface TaskPrefill {
+  title?: string
+  description?: string
+  priority?: number
+  due_at?: string
+  list_id?: string
+  tags?: string[]
+  flagged?: boolean
+}
+
 interface Props {
   task?: Task
+  prefill?: TaskPrefill
   lists?: TaskList[]
   defaultListId?: string
   onSubmit: (values: {
@@ -35,21 +46,25 @@ interface Props {
 
 const fieldClass = 'rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
 
-export function TaskForm({ task, lists = [], defaultListId, onSubmit, onCancel, isLoading }: Props) {
+export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, onCancel, isLoading }: Props) {
   const {
     register,
     handleSubmit,
     formState: { errors },
   } = useForm<FormValues>({
     defaultValues: {
-      title: task?.title ?? '',
-      description: task?.description ?? '',
-      priority: task?.priority ?? Priority.UNSPECIFIED,
+      title: task?.title ?? prefill?.title ?? '',
+      description: task?.description ?? prefill?.description ?? '',
+      priority: task?.priority ?? prefill?.priority ?? Priority.UNSPECIFIED,
       status: task?.status ?? Status.TODO,
-      tags: task?.tags?.join(', ') ?? '',
-      due_at: task?.due_at ? task.due_at.slice(0, 16) : '',
-      list_id: task?.list_id ?? defaultListId ?? '',
-      flagged: task?.flagged ?? false,
+      tags: task?.tags?.join(', ') ?? prefill?.tags?.join(', ') ?? '',
+      due_at: task?.due_at
+        ? task.due_at.slice(0, 16)
+        : prefill?.due_at
+          ? prefill.due_at.slice(0, 16)
+          : '',
+      list_id: task?.list_id ?? prefill?.list_id ?? defaultListId ?? '',
+      flagged: task?.flagged ?? prefill?.flagged ?? false,
     },
   })
 
