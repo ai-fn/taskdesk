@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { Task } from '@/types'
 import { SYSTEM_LISTS, Status } from '@/types'
@@ -37,11 +37,14 @@ export function TasksPage() {
   const [modal, setModal] = useState<Modal>(null)
   const [formError, setFormError] = useState('')
   const [toasts, setToasts] = useState<ToastMessage[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
 
   const { data: lists = [] } = useLists()
 
   const filter = useMemo(() => filterForListId(listId), [listId])
   const filterKey = JSON.stringify(filter)
+
+  useEffect(() => { setSearchQuery('') }, [listId])
   const isDeletedView = listId === 'deleted'
   const isCustomList = !SYSTEM_IDS.has(listId)
 
@@ -136,11 +139,35 @@ export function TasksPage() {
 
       {listId === 'all' && <DailyPlanPanel />}
 
+      <div className="mb-4 flex items-center gap-2 rounded-xl bg-white dark:bg-gray-800 px-4 py-2.5 shadow-sm ring-1 ring-transparent focus-within:ring-indigo-400/60 transition-shadow">
+        <svg className="h-4 w-4 shrink-0 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="m21 21-4.35-4.35"/>
+        </svg>
+        <input
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Filter tasks..."
+          className="flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400 dark:placeholder:text-gray-500 text-gray-900 dark:text-gray-100"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        )}
+      </div>
+
       <TaskList
         filter={filter}
         filterKey={filterKey}
         onEdit={handleEdit}
         isDeletedView={isDeletedView}
+        searchQuery={searchQuery}
       />
 
       {modal && (

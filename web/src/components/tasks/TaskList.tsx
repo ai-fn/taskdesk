@@ -10,9 +10,10 @@ interface Props {
   filter?: ListTasksFilter
   filterKey?: string
   isDeletedView?: boolean
+  searchQuery?: string
 }
 
-export function TaskList({ onEdit, filter, filterKey, isDeletedView }: Props) {
+export function TaskList({ onEdit, filter, filterKey, isDeletedView, searchQuery }: Props) {
   const { data, isLoading, isError, error } = useTasks(filter)
 
   if (isLoading) {
@@ -27,13 +28,27 @@ export function TaskList({ onEdit, filter, filterKey, isDeletedView }: Props) {
     return <ErrorMessage message={(error as Error).message ?? 'Failed to load tasks'} />
   }
 
-  const tasks = data?.tasks ?? []
+  const allTasks = data?.tasks ?? []
+  const lower = searchQuery?.toLowerCase() ?? ''
+  const tasks = lower
+    ? allTasks.filter(
+        (t) =>
+          t.title.toLowerCase().includes(lower) ||
+          (t.description?.toLowerCase().includes(lower) ?? false)
+      )
+    : allTasks
 
-  if (tasks.length === 0) {
+  if (allTasks.length === 0) {
     return (
       <p className="py-12 text-center text-gray-400 dark:text-gray-500">
         {isDeletedView ? 'No recently deleted tasks.' : 'No tasks yet. Create your first one above.'}
       </p>
+    )
+  }
+
+  if (tasks.length === 0) {
+    return (
+      <p className="py-12 text-center text-gray-400 dark:text-gray-500">No matching tasks.</p>
     )
   }
 
