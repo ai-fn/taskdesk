@@ -11,7 +11,7 @@ import type { ListGroup, TaskList } from '@/types'
 import { ListCard, SystemListCard } from '@/components/lists/ListCard'
 import { ListFormModal } from '@/components/lists/ListFormModal'
 import { EditListsPanel } from '@/components/lists/EditListsPanel'
-import { SearchOverlay } from '@/components/lists/SearchOverlay'
+import { SearchBar } from '@/components/lists/SearchOverlay'
 import { DailyPlanPanel } from '@/components/tasks/DailyPlanPanel'
 import { TaskForm } from '@/components/tasks/TaskForm'
 import { Spinner } from '@/components/ui/Spinner'
@@ -29,7 +29,6 @@ function useSystemCount(filter: Parameters<typeof listTasks>[0]) {
 export function ListsHomePage() {
   const [showEdit, setShowEdit] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
-  const [showSearch, setShowSearch] = useState(false)
   const [showCreateTask, setShowCreateTask] = useState(false)
 
   const { data: lists = [], isLoading: listsLoading } = useLists()
@@ -58,7 +57,7 @@ export function ListsHomePage() {
     deleted:   countDeleted,
   }
 
-  useBodyScrollLock(showCreateTask || showCreate || showSearch || showEdit)
+  useBodyScrollLock(showCreateTask || showCreate || showEdit)
 
   const isLoading = listsLoading || groupsLoading
   const visibleLists = lists.filter((l) => !l.is_hidden)
@@ -110,13 +109,7 @@ export function ListsHomePage() {
         </div>
 
         {/* Search bar */}
-        <button
-          onClick={() => setShowSearch(true)}
-          className="mb-6 flex w-full items-center gap-2 rounded-xl bg-white dark:bg-gray-800 px-4 py-2.5 text-sm text-gray-400 dark:text-gray-500 shadow-sm hover:shadow-md"
-        >
-          <span>🔍</span>
-          <span>Search tasks...</span>
-        </button>
+        <SearchBar lists={lists} />
 
         {/* AI daily plan */}
         <DailyPlanPanel />
@@ -176,10 +169,6 @@ export function ListsHomePage() {
           onCancel={() => setShowCreate(false)}
           isLoading={createList.isPending}
         />
-      )}
-
-      {showSearch && (
-        <SearchOverlay lists={lists} onClose={() => setShowSearch(false)} />
       )}
 
       {showCreateTask && (
