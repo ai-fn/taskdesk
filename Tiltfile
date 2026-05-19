@@ -28,12 +28,17 @@ if os.path.exists('.env'):
         if line and not line.startswith('#') and '=' in line:
             k, _, v = line.partition('=')
             env_secrets[k.strip()] = v.strip()
+    patch_data = {}
     if 'ANTHROPIC_API_KEY' in env_secrets:
+        patch_data['ANTHROPIC_API_KEY'] = env_secrets['ANTHROPIC_API_KEY']
+    if 'VOYAGE_API_KEY' in env_secrets:
+        patch_data['VOYAGE_API_KEY'] = env_secrets['VOYAGE_API_KEY']
+    if patch_data:
         local_resource(
-            'patch-anthropic-secret',
-            # Patches the key into the cluster secret. secret.yaml intentionally
-            # omits ANTHROPIC_API_KEY so kustomize never resets it between tilt ups.
-            cmd='kubectl -n todo patch secret ai-secret -p \'{"stringData":{"ANTHROPIC_API_KEY":"%s"}}\'' % env_secrets['ANTHROPIC_API_KEY'],
+            'patch-ai-secrets',
+            # Patches keys into the cluster secret. secret.yaml intentionally omits
+            # API keys so kustomize never resets them between tilt ups.
+            cmd='kubectl -n todo patch secret ai-secret -p \'%s\'' % encode_json({'stringData': patch_data}),
             labels=['secrets'],
         )
 

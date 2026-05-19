@@ -1,6 +1,6 @@
 export const taskKeys = {
-  all:    ['tasks'] as const,
-  list:   (filter?: string) => [...taskKeys.all, 'list', filter ?? ''] as const,
+  all: ['tasks'] as const,
+  list: (filter?: string) => [...taskKeys.all, 'list', filter ?? ''] as const,
   detail: (id: string) => [...taskKeys.all, 'detail', id] as const,
 }
 

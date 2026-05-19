@@ -1,0 +1,1 @@
+ALTER TABLE todo.lists DROP COLUMN IF EXISTS icon;

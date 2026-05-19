@@ -80,3 +80,8 @@ export async function restoreTask(id: string): Promise<Task> {
 export async function purgeTask(id: string): Promise<void> {
   await api.delete(`/api/v1/tasks/${id}/purge`)
 }
+
+export async function searchTasks(q: string): Promise<TaskListResponse> {
+  const { data } = await api.get<TaskListResponse>('/api/v1/tasks/search', { params: { q } })
+  return data
+}

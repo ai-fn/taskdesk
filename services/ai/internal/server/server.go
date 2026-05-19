@@ -11,6 +11,7 @@ import (
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
+	"github.com/fsociety/todo/services/ai/internal/embedder"
 	"github.com/fsociety/todo/services/ai/internal/planner"
 	"github.com/fsociety/todo/services/ai/internal/store"
 	"github.com/google/uuid"
@@ -25,14 +26,15 @@ const DailyPlanTopic = "daily-plan.generated.v1"
 type Server struct {
 	aiv1.UnimplementedAIServiceServer
 	planner    *planner.Planner
+	embedder   *embedder.Embedder
 	store      *store.Store
 	todoClient todov1.TodoServiceClient
 	kafka      *pkgkafka.Producer
 	log        *slog.Logger
 }
 
-func New(p *planner.Planner, st *store.Store, tc todov1.TodoServiceClient, kc *pkgkafka.Producer, log *slog.Logger) *Server {
-	return &Server{planner: p, store: st, todoClient: tc, kafka: kc, log: log}
+func New(p *planner.Planner, emb *embedder.Embedder, st *store.Store, tc todov1.TodoServiceClient, kc *pkgkafka.Producer, log *slog.Logger) *Server {
+	return &Server{planner: p, embedder: emb, store: st, todoClient: tc, kafka: kc, log: log}
 }
 
 // GeneratePlan fetches the user's tasks, calls Claude, persists the plan, and
@@ -302,4 +304,24 @@ func tasksToInput(tasks []*todov1.Task) []planner.TaskInput {
 		out = append(out, ti)
 	}
 	return out
+}
+
+// ── EmbedText ─────────────────────────────────────────────────────────────────
+
+// EmbedText returns a voyage-3-lite embedding for the provided text.
+// Called by the gateway when embedding a search query.
+func (s *Server) EmbedText(ctx context.Context, req *aiv1.EmbedTextRequest) (*aiv1.EmbedTextResponse, error) {
+	if req.Text == "" {
+		return nil, status.Error(codes.InvalidArgument, "text is required")
+	}
+	inputType := req.InputType
+	if inputType == "" {
+		inputType = "query"
+	}
+	vec, err := s.embedder.Embed(ctx, req.Text, inputType)
+	if err != nil {
+		s.log.Error("embed text", "err", err)
+		return nil, status.Error(codes.Internal, "embedding failed")
+	}
+	return &aiv1.EmbedTextResponse{Embedding: vec}, nil
 }

@@ -29,6 +29,10 @@ service TodoService {
   rpc UpdateGroup(UpdateGroupRequest)     returns (UpdateGroupResponse);
   rpc DeleteGroup(DeleteGroupRequest)     returns (DeleteGroupResponse);
   rpc ReorderGroups(ReorderGroupsRequest) returns (ReorderGroupsResponse);
+  // Semantic search (pgvector)
+  rpc UpsertTaskEmbedding(UpsertTaskEmbeddingRequest) returns (UpsertTaskEmbeddingResponse);
+  rpc DeleteTaskEmbedding(DeleteTaskEmbeddingRequest) returns (DeleteTaskEmbeddingResponse);
+  rpc SearchTasks(SearchTasksRequest)                 returns (SearchTasksResponse);
 }
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -301,4 +305,31 @@ message ReorderGroupsRequest {
 
 message ReorderGroupsResponse {
   repeated ListGroup groups = 1;
+}
+
+// ── Embeddings / Semantic search ──────────────────────────────────────────────
+
+message UpsertTaskEmbeddingRequest {
+  string         user_id   = 1;
+  string         task_id   = 2;
+  repeated float embedding = 3;
+}
+
+message UpsertTaskEmbeddingResponse {}
+
+message DeleteTaskEmbeddingRequest {
+  string user_id = 1;
+  string task_id = 2;
+}
+
+message DeleteTaskEmbeddingResponse {}
+
+message SearchTasksRequest {
+  string         user_id   = 1;
+  repeated float embedding = 2;
+  int32          limit     = 3;
+}
+
+message SearchTasksResponse {
+  repeated Task tasks = 1;
 }

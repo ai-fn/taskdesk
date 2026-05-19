@@ -89,6 +89,10 @@ func New(
 		r.Post("/generate", plan.Generate)
 	})
 
+	// Semantic search (pgvector)
+	search := handler.NewSearchHandler(aiClient, todoClient)
+	r.With(middleware.Authenticate(authClient)).Get("/api/v1/tasks/search", search.Search)
+
 	// WebSocket: authenticated users subscribe to their real-time notifications.
 	ws := handler.NewWSHandler(rdb, log)
 	r.With(middleware.Authenticate(authClient)).Get("/api/v1/ws", ws.ServeHTTP)
