@@ -74,52 +74,52 @@ export function SearchOverlay({ lists, onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-white/95 backdrop-blur-sm">
-      <div className="flex items-center gap-2 border-b px-4 py-3">
+    <div className="fixed inset-0 z-50 flex flex-col bg-white/95 dark:bg-gray-900/95 backdrop-blur-sm">
+      <div className="flex items-center gap-2 border-b border-gray-200 dark:border-gray-700 px-4 py-3">
         <span className="text-gray-400">🔍</span>
         <input
           autoFocus
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search tasks and lists..."
-          className="flex-1 bg-transparent text-base outline-none placeholder:text-gray-400"
+          className="flex-1 bg-transparent text-base outline-none placeholder:text-gray-400 dark:placeholder:text-gray-500 text-gray-900 dark:text-gray-100"
         />
-        <button onClick={onClose} className="text-sm text-indigo-600 font-medium">
+        <button onClick={onClose} className="text-sm text-indigo-600 dark:text-indigo-400 font-medium">
           Cancel
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {!query.trim() && (
-          <p className="px-4 py-8 text-center text-sm text-gray-400">
+          <p className="px-4 py-8 text-center text-sm text-gray-400 dark:text-gray-500">
             Search by task name, description or list name
           </p>
         )}
         {query.trim() && totalCount === 0 && (
-          <p className="px-4 py-8 text-center text-sm text-gray-400">No results</p>
+          <p className="px-4 py-8 text-center text-sm text-gray-400 dark:text-gray-500">No results</p>
         )}
         {grouped.map(([listId, tasks]) => {
           const list = listId ? listMap[listId] : undefined
           return (
             <div key={listId ?? 'no-list'}>
               {/* List header */}
-              <div className="sticky top-0 flex items-center gap-2 border-b bg-gray-50 px-4 py-2">
+              <div className="sticky top-0 flex items-center gap-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-4 py-2">
                 {list ? (
                   <>
                     <span
                       className="h-2.5 w-2.5 rounded-full flex-shrink-0"
                       style={{ backgroundColor: list.color }}
                     />
-                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                       {list.name}
                     </span>
                   </>
                 ) : (
-                  <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
                     No list
                   </span>
                 )}
-                <span className="ml-auto text-xs text-gray-400">{tasks.length}</span>
+                <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">{tasks.length}</span>
               </div>
 
               {/* Tasks in this group */}
@@ -127,11 +127,11 @@ export function SearchOverlay({ lists, onClose }: Props) {
                 <button
                   key={task.id}
                   onClick={() => handleSelect(task)}
-                  className="flex w-full flex-col gap-0.5 border-b px-6 py-3 text-left hover:bg-gray-50"
+                  className="flex w-full flex-col gap-0.5 border-b border-gray-100 dark:border-gray-800 px-6 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
                 >
-                  <span className="text-sm font-medium text-gray-900">{task.title}</span>
+                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{task.title}</span>
                   {task.description && (
-                    <span className="line-clamp-1 text-xs text-gray-400">
+                    <span className="line-clamp-1 text-xs text-gray-400 dark:text-gray-500">
                       {task.description}
                     </span>
                   )}

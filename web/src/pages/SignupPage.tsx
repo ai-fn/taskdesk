@@ -41,7 +41,7 @@ export function SignupPage() {
 
   return (
     <AuthLayout>
-      <h1 className="mb-6 text-xl font-bold text-gray-900">Create account</h1>
+      <h1 className="mb-6 text-xl font-bold text-gray-900 dark:text-gray-100">Create account</h1>
       {apiError && <div className="mb-4"><ErrorMessage message={apiError} /></div>}
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
         <Input
@@ -71,9 +71,9 @@ export function SignupPage() {
           Create account
         </Button>
       </form>
-      <p className="mt-4 text-center text-sm text-gray-500">
+      <p className="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
         Already have an account?{' '}
-        <Link to="/login" className="text-indigo-600 hover:underline">
+        <Link to="/login" className="text-indigo-600 dark:text-indigo-400 hover:underline">
           Sign in
         </Link>
       </p>

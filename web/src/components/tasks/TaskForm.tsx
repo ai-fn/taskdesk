@@ -33,6 +33,8 @@ interface Props {
   isLoading?: boolean
 }
 
+const fieldClass = 'rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+
 export function TaskForm({ task, lists = [], defaultListId, onSubmit, onCancel, isLoading }: Props) {
   const {
     register,
@@ -73,20 +75,17 @@ export function TaskForm({ task, lists = [], defaultListId, onSubmit, onCancel, 
         {...register('title', { required: 'Title is required' })}
       />
       <div className="flex flex-col gap-1">
-        <label className="text-sm font-medium text-gray-700">Description</label>
+        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
         <textarea
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          className={`${fieldClass} resize-none`}
           rows={3}
           placeholder="Optional description"
           {...register('description')}
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label className="text-sm font-medium text-gray-700">Priority</label>
-        <select
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-          {...register('priority')}
-        >
+        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Priority</label>
+        <select className={fieldClass} {...register('priority')}>
           <option value={Priority.UNSPECIFIED}>None</option>
           <option value={Priority.LOW}>Low</option>
           <option value={Priority.MEDIUM}>Medium</option>
@@ -96,11 +95,8 @@ export function TaskForm({ task, lists = [], defaultListId, onSubmit, onCancel, 
       </div>
       {task && (
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700">Status</label>
-          <select
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            {...register('status')}
-          >
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Status</label>
+          <select className={fieldClass} {...register('status')}>
             <option value={Status.TODO}>To Do</option>
             <option value={Status.IN_PROGRESS}>In Progress</option>
             <option value={Status.DONE}>Done</option>
@@ -109,11 +105,8 @@ export function TaskForm({ task, lists = [], defaultListId, onSubmit, onCancel, 
       )}
       {lists.length > 0 && (
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700">List</label>
-          <select
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            {...register('list_id')}
-          >
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">List</label>
+          <select className={fieldClass} {...register('list_id')}>
             <option value="">No list</option>
             {lists.map((l) => (
               <option key={l.id} value={l.id}>{l.name}</option>
@@ -125,10 +118,10 @@ export function TaskForm({ task, lists = [], defaultListId, onSubmit, onCancel, 
         <input
           type="checkbox"
           id="flagged"
-          className="h-4 w-4 rounded border-gray-300 text-red-500 focus:ring-red-400"
+          className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-red-500 focus:ring-red-400 dark:bg-gray-800"
           {...register('flagged')}
         />
-        <label htmlFor="flagged" className="text-sm font-medium text-gray-700">
+        <label htmlFor="flagged" className="text-sm font-medium text-gray-700 dark:text-gray-300">
           ⚑ Flagged
         </label>
       </div>

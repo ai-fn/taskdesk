@@ -12,14 +12,14 @@ export const Input = forwardRef<HTMLInputElement, Props>(({ label, error, classN
 
   return (
     <div className="flex flex-col gap-1">
-      {label && <label className="text-sm font-medium text-gray-700">{label}</label>}
+      {label && <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</label>}
       <div className="relative">
         <input
           ref={ref}
           type={isPassword ? (show ? 'text' : 'password') : type}
-          className={`w-full rounded-md border px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 ${
+          className={`w-full rounded-md border px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 ${
             isPassword ? 'pr-9' : ''
-          } ${error ? 'border-red-400' : 'border-gray-300'} ${className}`}
+          } ${error ? 'border-red-400 dark:border-red-500' : 'border-gray-300 dark:border-gray-600'} ${className}`}
           {...props}
         />
         {isPassword && (
@@ -27,7 +27,7 @@ export const Input = forwardRef<HTMLInputElement, Props>(({ label, error, classN
             type="button"
             tabIndex={-1}
             onClick={() => setShow((v) => !v)}
-            className="absolute inset-y-0 right-0 flex items-center px-2.5 text-gray-400 hover:text-gray-600"
+            className="absolute inset-y-0 right-0 flex items-center px-2.5 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
             aria-label={show ? 'Hide password' : 'Show password'}
           >
             {show ? (
@@ -45,7 +45,7 @@ export const Input = forwardRef<HTMLInputElement, Props>(({ label, error, classN
           </button>
         )}
       </div>
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}
     </div>
   )
 })

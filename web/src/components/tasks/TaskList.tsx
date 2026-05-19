@@ -31,7 +31,7 @@ export function TaskList({ onEdit, filter, filterKey, isDeletedView }: Props) {
 
   if (tasks.length === 0) {
     return (
-      <p className="py-12 text-center text-gray-400">
+      <p className="py-12 text-center text-gray-400 dark:text-gray-500">
         {isDeletedView ? 'No recently deleted tasks.' : 'No tasks yet. Create your first one above.'}
       </p>
     )

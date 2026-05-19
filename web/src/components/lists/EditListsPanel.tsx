@@ -42,23 +42,23 @@ function SortableItem({ list, groups, onEdit, onDelete, onToggleHide, onMoveToGr
   }
 
   return (
-    <div ref={setNodeRef} style={style} className="flex items-center gap-3 rounded-lg bg-white px-3 py-2.5 shadow-sm">
+    <div ref={setNodeRef} style={style} className="flex items-center gap-3 rounded-lg bg-white dark:bg-gray-800 px-3 py-2.5 shadow-sm dark:shadow-gray-900/20">
       <button
         {...attributes}
         {...listeners}
-        className="cursor-grab text-gray-400 hover:text-gray-600 active:cursor-grabbing"
+        className="cursor-grab text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 active:cursor-grabbing"
         aria-label="Drag to reorder"
       >
         ⠿
       </button>
       <div className="h-3 w-3 flex-shrink-0 rounded-full" style={{ backgroundColor: list.color }} />
-      <span className="flex-1 truncate text-sm font-medium text-gray-800">{list.name}</span>
-      <span className="text-xs text-gray-400">{list.task_count}</span>
+      <span className="flex-1 truncate text-sm font-medium text-gray-800 dark:text-gray-200">{list.name}</span>
+      <span className="text-xs text-gray-400 dark:text-gray-500">{list.task_count}</span>
       {groups.length > 1 && (
         <select
           value={list.group_id ?? ''}
           onChange={(e) => onMoveToGroup(list, e.target.value)}
-          className="max-w-[90px] truncate rounded border border-gray-200 px-1 py-0.5 text-xs text-gray-500"
+          className="max-w-[90px] truncate rounded border border-gray-200 dark:border-gray-600 px-1 py-0.5 text-xs text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-700"
           onClick={(e) => e.stopPropagation()}
         >
           <option value="">No group</option>
@@ -67,11 +67,11 @@ function SortableItem({ list, groups, onEdit, onDelete, onToggleHide, onMoveToGr
           ))}
         </select>
       )}
-      <button onClick={() => onToggleHide(list)} className="text-gray-400 hover:text-gray-600" title={list.is_hidden ? 'Show' : 'Hide'}>
+      <button onClick={() => onToggleHide(list)} className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300" title={list.is_hidden ? 'Show' : 'Hide'}>
         {list.is_hidden ? '👁' : '🙈'}
       </button>
-      <button onClick={() => onEdit(list)} className="text-gray-400 hover:text-indigo-500" title="Edit">✎</button>
-      <button onClick={() => onDelete(list.id)} className="text-gray-400 hover:text-red-500" title="Delete">✕</button>
+      <button onClick={() => onEdit(list)} className="text-gray-400 hover:text-indigo-500 dark:text-gray-500 dark:hover:text-indigo-400" title="Edit">✎</button>
+      <button onClick={() => onDelete(list.id)} className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400" title="Delete">✕</button>
     </div>
   )
 }
@@ -87,11 +87,11 @@ interface GroupHeaderProps {
 function GroupHeader({ group, onRename, onDelete }: GroupHeaderProps) {
   return (
     <div className="mt-4 mb-1 flex items-center gap-2">
-      <span className="flex-1 text-xs font-semibold uppercase tracking-wide text-gray-400">{group.name}</span>
-      <button onClick={() => onRename(group)} className="text-gray-400 hover:text-indigo-500 text-xs" title="Rename group">✎</button>
+      <span className="flex-1 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">{group.name}</span>
+      <button onClick={() => onRename(group)} className="text-gray-400 hover:text-indigo-500 dark:text-gray-500 dark:hover:text-indigo-400 text-xs" title="Rename group">✎</button>
       <button
         onClick={() => onDelete(group)}
-        className="text-gray-400 hover:text-red-500 text-xs"
+        className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 text-xs"
         title="Delete group"
       >✕</button>
     </div>
@@ -195,11 +195,11 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
-      <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-sm flex-col bg-gray-50 shadow-2xl">
-        <div className="flex items-center justify-between border-b bg-white px-4 py-3">
-          <h2 className="text-base font-semibold text-gray-900">Edit Lists</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-xl">✕</button>
+      <div className="fixed inset-0 z-40 bg-black/30 dark:bg-black/50" onClick={onClose} />
+      <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-sm flex-col bg-gray-50 dark:bg-gray-900 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-3">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Edit Lists</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-xl">✕</button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
@@ -211,14 +211,14 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
                     renamingGroup?.id === group.id ? (
                       <div className="mt-4 mb-1 flex items-center gap-2">
                         <input
-                          className="flex-1 rounded border border-indigo-300 px-2 py-0.5 text-xs font-semibold focus:outline-none"
+                          className="flex-1 rounded border border-indigo-300 dark:border-indigo-600 px-2 py-0.5 text-xs font-semibold focus:outline-none bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                           value={newGroupName}
                           onChange={(e) => setNewGroupName(e.target.value)}
                           onKeyDown={(e) => { if (e.key === 'Enter') submitRenameGroup(); if (e.key === 'Escape') setRenamingGroup(null) }}
                           autoFocus
                         />
-                        <button onClick={submitRenameGroup} className="text-xs text-indigo-600 font-medium">Save</button>
-                        <button onClick={() => setRenamingGroup(null)} className="text-xs text-gray-400">Cancel</button>
+                        <button onClick={submitRenameGroup} className="text-xs text-indigo-600 dark:text-indigo-400 font-medium">Save</button>
+                        <button onClick={() => setRenamingGroup(null)} className="text-xs text-gray-400 dark:text-gray-500">Cancel</button>
                       </div>
                     ) : (
                       <GroupHeader group={group} onRename={handleRenameGroup} onDelete={handleDeleteGroup} />
@@ -226,7 +226,7 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
                   ) : (
                     groups.length > 0 && (
                       <div className="mt-4 mb-1">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-gray-300">Ungrouped</span>
+                        <span className="text-xs font-semibold uppercase tracking-wide text-gray-300 dark:text-gray-600">Ungrouped</span>
                       </div>
                     )
                   )}
@@ -243,7 +243,7 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
                       />
                     ))}
                     {sectionLists.length === 0 && (
-                      <p className="pl-1 text-xs text-gray-300 italic">No lists</p>
+                      <p className="pl-1 text-xs text-gray-300 dark:text-gray-600 italic">No lists</p>
                     )}
                   </div>
                 </div>
@@ -252,11 +252,11 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
           </DndContext>
         </div>
 
-        <div className="border-t bg-white p-4 flex flex-col gap-2">
+        <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 flex flex-col gap-2">
           {showNewGroup ? (
             <div className="flex gap-2">
               <input
-                className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="flex-1 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
                 placeholder="Group name"
                 value={newGroupName}
                 onChange={(e) => setNewGroupName(e.target.value)}
@@ -273,7 +273,7 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
           ) : (
             <button
               onClick={() => { setShowNewGroup(true); setNewGroupName('') }}
-              className="w-full rounded-xl border border-dashed border-indigo-300 px-4 py-2 text-sm font-medium text-indigo-500 hover:border-indigo-400 hover:text-indigo-600"
+              className="w-full rounded-xl border border-dashed border-indigo-300 dark:border-indigo-700 px-4 py-2 text-sm font-medium text-indigo-500 dark:text-indigo-400 hover:border-indigo-400 dark:hover:border-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-300"
             >
               + New Group
             </button>

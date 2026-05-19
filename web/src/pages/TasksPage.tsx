@@ -115,7 +115,7 @@ export function TasksPage() {
       <div className="mb-6 flex items-center gap-3">
         <button
           onClick={() => navigate('/')}
-          className="rounded-lg p-1 text-gray-400 hover:text-gray-600"
+          className="rounded-lg p-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
           aria-label="Back to lists"
         >
           ‹
@@ -125,7 +125,7 @@ export function TasksPage() {
             className="h-5 w-5 rounded-full"
             style={{ backgroundColor: listColor }}
           />
-          <h1 className="text-2xl font-bold text-gray-900">{listName}</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{listName}</h1>
         </div>
         {!isDeletedView && (
           <Button onClick={() => { setFormError(''); setModal({ type: 'create' }) }}>
@@ -144,9 +144,9 @@ export function TasksPage() {
       />
 
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
-            <h2 className="mb-4 text-lg font-semibold text-gray-900">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 dark:bg-black/60 px-4">
+          <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-800 p-6 shadow-xl">
+            <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
               {modal.type === 'create' ? 'New task' : 'Edit task'}
             </h2>
             {formError && <div className="mb-4"><ErrorMessage message={formError} /></div>}

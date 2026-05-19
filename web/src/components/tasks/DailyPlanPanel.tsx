@@ -26,20 +26,20 @@ export function DailyPlanPanel() {
   const plan = data?.plan
 
   return (
-    <div className="mb-6 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+    <div className="mb-6 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/30 p-4">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h2 className="font-semibold text-indigo-900">AI Daily Plan</h2>
+        <h2 className="font-semibold text-indigo-900 dark:text-indigo-300">AI Daily Plan</h2>
         <div className="flex items-center gap-2">
           <button
             onClick={generate.isPending ? generate.cancel : generate.mutate}
-            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700"
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 dark:bg-indigo-700 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700 dark:hover:bg-indigo-600"
           >
             {generate.isPending ? (
               <>
                 <div className="relative inline-flex items-center justify-center">
                   <Spinner className="h-4 w-4" />
                   <svg className="absolute h-3.5 w-3.5" viewBox="0 0 24 24" fill="white">
-                    <rect x="5" y="5" width="14" height="14" rx="1" />
+                    <rect x="4" y="4" width="16" height="16" rx="1" />
                   </svg>
                 </div>
                 Generating…
@@ -52,7 +52,7 @@ export function DailyPlanPanel() {
       </div>
 
       {generate.errorMessage && (
-        <p className="mb-2 text-xs text-red-600">
+        <p className="mb-2 text-xs text-red-600 dark:text-red-400">
           {generate.errorMessage.includes('no tasks')
             ? 'Add some tasks first, then generate a plan.'
             : 'Failed to generate plan. Try again.'}
@@ -60,20 +60,20 @@ export function DailyPlanPanel() {
       )}
 
       {isLoading && (
-        <div className="flex items-center gap-2 text-indigo-600">
+        <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
           <Spinner className="h-4 w-4" />
           <span className="text-sm">Loading…</span>
         </div>
       )}
 
       {!isLoading && !plan && !generate.isPending && (
-        <p className="text-sm text-indigo-600">
+        <p className="text-sm text-indigo-600 dark:text-indigo-400">
           No plan yet for today. Hit Generate to get AI-powered prioritization.
         </p>
       )}
 
       {generate.isPending && (
-        <div className="text-indigo-700">
+        <div className="text-indigo-700 dark:text-indigo-300">
           <p className="text-sm italic">
             {generate.deltas.length === 0 ? (
               <>Asking Claude<span className="inline-block w-4 text-left">{dots}</span></>
@@ -95,9 +95,9 @@ export function DailyPlanPanel() {
         // otherwise reuse the DOM and the items would just pop in.
         <div key={plan.plan_id}>
           <div className="mb-1 flex items-center justify-between">
-            <p className="animate-fade-in text-sm text-indigo-800">{plan.summary}</p>
+            <p className="animate-fade-in text-sm text-indigo-800 dark:text-indigo-200">{plan.summary}</p>
             <span
-              className="ml-2 shrink-0 animate-fade-in text-xs text-indigo-400"
+              className="ml-2 shrink-0 animate-fade-in text-xs text-indigo-400 dark:text-indigo-500"
               style={{ animationDelay: '60ms' }}
             >
               {new Date(plan.generated_at).toLocaleDateString(undefined, {
@@ -112,13 +112,13 @@ export function DailyPlanPanel() {
                 className="flex animate-fade-in items-start gap-2 text-sm"
                 style={{ animationDelay: `${120 + i * 90}ms` }}
               >
-                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-600 dark:bg-indigo-700 text-xs font-bold text-white">
                   {item.rank}
                 </span>
                 <div>
-                  <span className="font-medium text-gray-900">{item.task_title}</span>
+                  <span className="font-medium text-gray-900 dark:text-gray-100">{item.task_title}</span>
                   {item.rationale && (
-                    <span className="ml-1 text-gray-500">— {item.rationale}</span>
+                    <span className="ml-1 text-gray-500 dark:text-gray-400">— {item.rationale}</span>
                   )}
                 </div>
               </li>
@@ -139,13 +139,13 @@ export function DailyPlanPanel() {
                       className={`flex items-start gap-2 text-sm${expanded ? ' animate-fade-in' : ''}`}
                       style={{ animationDelay: expanded ? `${i * 60}ms` : '0ms' }}
                     >
-                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-600 dark:bg-indigo-700 text-xs font-bold text-white">
                         {item.rank}
                       </span>
                       <div>
-                        <span className="font-medium text-gray-900">{item.task_title}</span>
+                        <span className="font-medium text-gray-900 dark:text-gray-100">{item.task_title}</span>
                         {item.rationale && (
-                          <span className="ml-1 text-gray-500">— {item.rationale}</span>
+                          <span className="ml-1 text-gray-500 dark:text-gray-400">— {item.rationale}</span>
                         )}
                       </div>
                     </li>
@@ -154,7 +154,7 @@ export function DailyPlanPanel() {
               </div>
               <button
                 onClick={() => setExpanded((v) => !v)}
-                className="mt-2 pl-7 text-xs font-medium text-indigo-500 hover:text-indigo-700"
+                className="mt-2 pl-7 text-xs font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300"
               >
                 {expanded ? '▲ Show less' : `▼ Show ${plan.items.length - 5} more`}
               </button>
