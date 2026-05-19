@@ -4,7 +4,8 @@ import type { Task } from '@/types'
 import { SYSTEM_LISTS, Status } from '@/types'
 import type { ListTasksFilter } from '@/api/tasks'
 import { TaskList } from '@/components/tasks/TaskList'
-import { TaskForm } from '@/components/tasks/TaskForm'
+import { TaskForm, type TaskPrefill } from '@/components/tasks/TaskForm'
+import { NaturalLanguageInput } from '@/components/tasks/NaturalLanguageInput'
 import { DailyPlanPanel } from '@/components/tasks/DailyPlanPanel'
 import { Button } from '@/components/ui/Button'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
@@ -14,7 +15,11 @@ import { useLists } from '@/hooks/useLists'
 import { useNotifications, type TaskNotification } from '@/hooks/useNotifications'
 import axios from 'axios'
 
-type Modal = { type: 'create' } | { type: 'edit'; task: Task } | null
+type Modal =
+  | { type: 'create'; prefill?: TaskPrefill }
+  | { type: 'nl' }
+  | { type: 'edit'; task: Task }
+  | null
 
 const SYSTEM_IDS = new Set<string>(Object.values(SYSTEM_LISTS).map((s) => s.id))
 
@@ -131,9 +136,18 @@ export function TasksPage() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{listName}</h1>
         </div>
         {!isDeletedView && (
-          <Button onClick={() => { setFormError(''); setModal({ type: 'create' }) }}>
-            + New task
-          </Button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setFormError(''); setModal({ type: 'nl' }) }}
+              className="rounded-lg p-1.5 text-gray-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
+              title="Create from natural language"
+            >
+              ✨
+            </button>
+            <Button onClick={() => { setFormError(''); setModal({ type: 'create' }) }}>
+              + New task
+            </Button>
+          </div>
         )}
       </div>
 
@@ -173,18 +187,34 @@ export function TasksPage() {
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 dark:bg-black/60 px-4">
           <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-800 p-6 shadow-xl">
-            <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
-              {modal.type === 'create' ? 'New task' : 'Edit task'}
-            </h2>
-            {formError && <div className="mb-4"><ErrorMessage message={formError} /></div>}
-            <TaskForm
-              task={modal.type === 'edit' ? modal.task : undefined}
-              lists={lists}
-              defaultListId={isCustomList ? listId : undefined}
-              onSubmit={modal.type === 'create' ? handleCreate : handleUpdate}
-              onCancel={() => setModal(null)}
-              isLoading={createTask.isPending || updateTask.isPending}
-            />
+            {modal.type === 'nl' ? (
+              <>
+                <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
+                  New task
+                </h2>
+                <NaturalLanguageInput
+                  lists={lists}
+                  onParsed={(prefill) => { setFormError(''); setModal({ type: 'create', prefill }) }}
+                  onCancel={() => setModal(null)}
+                />
+              </>
+            ) : (
+              <>
+                <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
+                  {modal.type === 'create' ? 'New task' : 'Edit task'}
+                </h2>
+                {formError && <div className="mb-4"><ErrorMessage message={formError} /></div>}
+                <TaskForm
+                  task={modal.type === 'edit' ? modal.task : undefined}
+                  prefill={modal.type === 'create' ? modal.prefill : undefined}
+                  lists={lists}
+                  defaultListId={isCustomList ? listId : undefined}
+                  onSubmit={modal.type === 'create' ? handleCreate : handleUpdate}
+                  onCancel={() => setModal(null)}
+                  isLoading={createTask.isPending || updateTask.isPending}
+                />
+              </>
+            )}
           </div>
         </div>
       )}

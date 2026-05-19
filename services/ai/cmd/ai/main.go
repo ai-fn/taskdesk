@@ -20,6 +20,7 @@ import (
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/ai/internal/consumer"
 	"github.com/fsociety/todo/services/ai/internal/embedder"
+	"github.com/fsociety/todo/services/ai/internal/parser"
 	"github.com/fsociety/todo/services/ai/internal/planner"
 	"github.com/fsociety/todo/services/ai/internal/server"
 	"github.com/fsociety/todo/services/ai/internal/store"
@@ -93,8 +94,9 @@ func main() {
 
 	emb := embedder.New(cfg.VoyageAPIKey)
 	p := planner.New(cfg.AnthropicAPIKey)
+	pa := parser.New(cfg.AnthropicAPIKey)
 	st := store.New(pool)
-	svc := server.New(p, emb, st, todoClient, producer, log)
+	svc := server.New(p, pa, emb, st, todoClient, producer, log)
 
 	// Embedding consumer: listens to task events and keeps the vector index fresh.
 	embHandler := consumer.New(emb, todoClient, authClient, log)

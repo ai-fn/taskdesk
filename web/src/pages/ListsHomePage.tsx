@@ -13,7 +13,8 @@ import { ListFormModal } from '@/components/lists/ListFormModal'
 import { EditListsPanel } from '@/components/lists/EditListsPanel'
 import { SearchBar } from '@/components/lists/SearchOverlay'
 import { DailyPlanPanel } from '@/components/tasks/DailyPlanPanel'
-import { TaskForm } from '@/components/tasks/TaskForm'
+import { TaskForm, type TaskPrefill } from '@/components/tasks/TaskForm'
+import { NaturalLanguageInput } from '@/components/tasks/NaturalLanguageInput'
 import { Spinner } from '@/components/ui/Spinner'
 import { Modal } from '@/components/ui/Modal'
 
@@ -30,6 +31,8 @@ export function ListsHomePage() {
   const [showEdit, setShowEdit] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [showCreateTask, setShowCreateTask] = useState(false)
+  const [showNLTask, setShowNLTask] = useState(false)
+  const [nlPrefill, setNlPrefill] = useState<TaskPrefill | undefined>()
 
   const { data: lists = [], isLoading: listsLoading } = useLists()
   const { data: groups = [], isLoading: groupsLoading } = useGroups()
@@ -57,7 +60,7 @@ export function ListsHomePage() {
     deleted:   countDeleted,
   }
 
-  useBodyScrollLock(showCreateTask || showCreate || showEdit)
+  useBodyScrollLock(showCreateTask || showCreate || showEdit || showNLTask)
 
   const isLoading = listsLoading || groupsLoading
   const visibleLists = lists.filter((l) => !l.is_hidden)
@@ -91,6 +94,13 @@ export function ListsHomePage() {
               title="Edit lists"
             >
               ☰
+            </button>
+            <button
+              onClick={() => setShowNLTask(true)}
+              className="rounded-lg p-1.5 text-gray-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
+              title="Create from natural language"
+            >
+              ✨
             </button>
             <button
               onClick={() => setShowCreateTask(true)}
@@ -172,18 +182,37 @@ export function ListsHomePage() {
       )}
 
       {showCreateTask && (
-        <Modal onClose={() => setShowCreateTask(false)} className="max-w-md">
+        <Modal onClose={() => { setShowCreateTask(false); setNlPrefill(undefined) }} className="max-w-md">
           <div className="rounded-xl bg-white dark:bg-gray-800 p-6 shadow-xl">
             <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">New task</h2>
             <TaskForm
+              prefill={nlPrefill}
               lists={lists}
               onSubmit={(values) => {
                 const { list_id, ...rest } = values
                 createTask.mutate({ ...rest, list_id: list_id ?? undefined })
                 setShowCreateTask(false)
+                setNlPrefill(undefined)
               }}
-              onCancel={() => setShowCreateTask(false)}
+              onCancel={() => { setShowCreateTask(false); setNlPrefill(undefined) }}
               isLoading={createTask.isPending}
+            />
+          </div>
+        </Modal>
+      )}
+
+      {showNLTask && (
+        <Modal onClose={() => setShowNLTask(false)} className="max-w-md">
+          <div className="rounded-xl bg-white dark:bg-gray-800 p-6 shadow-xl">
+            <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">New task</h2>
+            <NaturalLanguageInput
+              lists={lists}
+              onParsed={(prefill) => {
+                setNlPrefill(prefill)
+                setShowNLTask(false)
+                setShowCreateTask(true)
+              }}
+              onCancel={() => setShowNLTask(false)}
             />
           </div>
         </Modal>

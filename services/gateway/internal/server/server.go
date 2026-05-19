@@ -93,6 +93,10 @@ func New(
 	search := handler.NewSearchHandler(aiClient, todoClient)
 	r.With(middleware.Authenticate(authClient)).Get("/api/v1/tasks/search", search.Search)
 
+	// Natural language task parsing
+	parseH := handler.NewParseHandler(aiClient)
+	r.With(middleware.Authenticate(authClient)).Post("/api/v1/tasks/parse", parseH.Parse)
+
 	// WebSocket: authenticated users subscribe to their real-time notifications.
 	ws := handler.NewWSHandler(rdb, log)
 	r.With(middleware.Authenticate(authClient)).Get("/api/v1/ws", ws.ServeHTTP)
