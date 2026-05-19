@@ -81,29 +81,29 @@ export function ListsHomePage() {
     : (visibleLists.length > 0 ? [{ group: null, lists: visibleLists }] : [])
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-950">
       <div className="mx-auto max-w-2xl px-4 py-6">
         {/* Header */}
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-1">
             <button
               onClick={() => setShowEdit(true)}
-              className="rounded-lg p-2 text-gray-500 hover:bg-gray-200"
+              className="rounded-lg p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800"
               title="Edit lists"
             >
               ☰
             </button>
             <button
               onClick={() => setShowCreateTask(true)}
-              className="rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-600 hover:bg-indigo-50"
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
             >
               + New task
             </button>
           </div>
-          <h1 className="text-xl font-bold text-gray-900">My Lists</h1>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">My Lists</h1>
           <button
             onClick={() => setShowCreate(true)}
-            className="rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-600 hover:bg-indigo-50"
+            className="rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
           >
             + New List
           </button>
@@ -112,7 +112,7 @@ export function ListsHomePage() {
         {/* Search bar */}
         <button
           onClick={() => setShowSearch(true)}
-          className="mb-6 flex w-full items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm text-gray-400 shadow-sm hover:shadow-md"
+          className="mb-6 flex w-full items-center gap-2 rounded-xl bg-white dark:bg-gray-800 px-4 py-2.5 text-sm text-gray-400 dark:text-gray-500 shadow-sm hover:shadow-md"
         >
           <span>🔍</span>
           <span>Search tasks...</span>
@@ -144,7 +144,7 @@ export function ListsHomePage() {
         ) : sections.map(({ group, lists: sectionLists }) =>
           sectionLists.length === 0 ? null : (
             <div key={group?.id ?? '__ungrouped'} className="mb-6">
-              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
                 {group?.name ?? 'My Lists'}
               </h2>
               <div className="grid grid-cols-2 gap-3">
@@ -184,8 +184,8 @@ export function ListsHomePage() {
 
       {showCreateTask && (
         <Modal onClose={() => setShowCreateTask(false)} className="max-w-md">
-          <div className="rounded-xl bg-white p-6 shadow-xl">
-            <h2 className="mb-4 text-lg font-semibold text-gray-900">New task</h2>
+          <div className="rounded-xl bg-white dark:bg-gray-800 p-6 shadow-xl">
+            <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">New task</h2>
             <TaskForm
               lists={lists}
               onSubmit={(values) => {

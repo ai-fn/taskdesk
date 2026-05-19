@@ -6,6 +6,7 @@ import type { TaskList, ListGroup } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
+import { useTheme } from '@/context/ThemeContext'
 
 const COLORS = [
   '#FF3B30', '#FF9500', '#FFCC00', '#34C759',
@@ -37,6 +38,8 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
   const [icon, setIcon]       = useState(list?.icon ?? '')
   const [showPicker, setShowPicker] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
+  const { theme } = useTheme()
+  const emojiTheme = (theme === 'dark' ? 'dark' : theme === 'light' ? 'light' : 'auto') as EmojiTheme
 
   // Close picker when clicking outside it
   useEffect(() => {
@@ -66,8 +69,8 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
 
   return (
     <Modal onClose={onCancel} className="max-w-sm">
-      <div className="rounded-2xl bg-white p-6 shadow-xl">
-        <h2 className="mb-4 text-lg font-semibold text-gray-900">
+      <div className="rounded-2xl bg-white dark:bg-gray-800 p-6 shadow-xl">
+        <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
           {list ? 'Edit list' : 'New list'}
         </h2>
 
@@ -82,7 +85,7 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
 
           {/* Color picker */}
           <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">Color</label>
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Color</label>
             <div className="grid grid-cols-6 gap-2">
               {COLORS.map((c) => (
                 <button
@@ -102,7 +105,7 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
 
           {/* Icon picker */}
           <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">Icon</label>
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Icon</label>
 
             <div className="grid grid-cols-7 gap-1">
               {/* Slot 0 — opens emoji board */}
@@ -113,8 +116,8 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
                   onClick={() => setShowPicker((v) => !v)}
                   className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-base transition-colors ${
                     showPicker || isCustom
-                      ? 'border-indigo-500 bg-indigo-50'
-                      : 'border-dashed border-gray-300 hover:border-gray-400'
+                      ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
+                      : 'border-dashed border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
                   }`}
                 >
                   {isCustom ? icon : '😀'}
@@ -122,10 +125,10 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
 
                 {showPicker && (
                   <div className="absolute left-0 top-11 z-[60]">
-                    <Suspense fallback={<div className="flex h-[380px] w-[320px] items-center justify-center rounded-lg border bg-white text-sm text-gray-400">Loading…</div>}>
+                    <Suspense fallback={<div className="flex h-[380px] w-[320px] items-center justify-center rounded-lg border bg-white dark:bg-gray-800 dark:border-gray-700 text-sm text-gray-400">Loading…</div>}>
                       <EmojiPicker
                         onEmojiClick={handleEmojiClick}
-                        theme={'light' as EmojiTheme}
+                        theme={emojiTheme}
                         width={320}
                         height={380}
                         searchPlaceholder="Search emoji..."
@@ -143,7 +146,7 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
                   type="button"
                   onClick={() => setIcon(p)}
                   className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-base transition-colors ${
-                    icon === p ? 'border-indigo-500 bg-indigo-50' : 'border-transparent hover:border-gray-200'
+                    icon === p ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30' : 'border-transparent hover:border-gray-200 dark:hover:border-gray-600'
                   }`}
                 >
                   {p}
@@ -160,8 +163,8 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
                     type="button"
                     title="No icon"
                     onClick={() => setIcon('')}
-                    className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-xs text-gray-400 transition-colors ${
-                      !icon ? 'border-indigo-500 bg-indigo-50' : 'border-dashed border-gray-300 hover:border-gray-400'
+                    className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-xs text-gray-400 dark:text-gray-500 transition-colors ${
+                      !icon ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30' : 'border-dashed border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
                     }`}
                   >
                     ✕
@@ -175,7 +178,7 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
                     type="button"
                     onClick={() => setIcon(p)}
                     className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-base transition-colors ${
-                      icon === p ? 'border-indigo-500 bg-indigo-50' : 'border-transparent hover:border-gray-200'
+                      icon === p ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30' : 'border-transparent hover:border-gray-200 dark:hover:border-gray-600'
                     }`}
                   >
                     {p}
@@ -188,11 +191,11 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
           {/* Group selector */}
           {groups.length > 0 && (
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Group</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Group</label>
               <select
                 value={groupId}
                 onChange={(e) => setGroupId(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               >
                 <option value="">No group</option>
                 {groups.map((g) => (

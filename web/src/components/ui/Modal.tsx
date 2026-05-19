@@ -12,7 +12,7 @@ export function Modal({ onClose, children, className = '' }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 dark:bg-black/60 px-4"
       onPointerDown={onClose}
     >
       {/* Stop propagation so clicks inside the card don't bubble to the backdrop */}
