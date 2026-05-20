@@ -57,6 +57,9 @@ func (s *Server) CreateTask(ctx context.Context, req *todov1.CreateTaskRequest) 
 	if req.ListId != "" {
 		t.ListID = &req.ListId
 	}
+	if req.ParentTaskId != "" {
+		t.ParentTaskID = &req.ParentTaskId
+	}
 
 	if err := s.store.CreateTaskWithEvent(ctx, t); err != nil {
 		s.log.Error("create task", "err", err)
@@ -110,6 +113,9 @@ func (s *Server) ListTasks(ctx context.Context, req *todov1.ListTasksRequest) (*
 	}
 	if req.ListIdFilter != "" {
 		f.ListIDFilter = &req.ListIdFilter
+	}
+	if req.ParentTaskId != "" {
+		f.ParentTaskID = &req.ParentTaskId
 	}
 	if req.PageToken != "" {
 		cur, err := decodeCursor(req.PageToken)
@@ -247,6 +253,14 @@ func (s *Server) CompleteTask(ctx context.Context, req *todov1.CompleteTaskReque
 	if err != nil {
 		return nil, err
 	}
+
+	// If this is a subtask, auto-complete the parent when all siblings are done.
+	if resp.Task.ParentTaskId != "" {
+		if _, err := s.store.AutoCompleteParent(ctx, req.UserId, resp.Task.ParentTaskId); err != nil {
+			s.log.Warn("auto-complete parent", "parent_id", resp.Task.ParentTaskId, "err", err)
+		}
+	}
+
 	return &todov1.CompleteTaskResponse{Task: resp.Task}, nil
 }
 
@@ -561,6 +575,11 @@ func toProto(t *domain.Task) *todov1.Task {
 		p.CompletionScore = int32(*t.CompletionScore)
 	}
 	p.CompletionInsight = t.CompletionInsight
+	if t.ParentTaskID != nil {
+		p.ParentTaskId = *t.ParentTaskID
+	}
+	p.SubtaskCount = int32(t.SubtaskCount)
+	p.SubtaskDoneCount = int32(t.SubtaskDoneCount)
 	return p
 }
 

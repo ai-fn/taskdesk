@@ -31,6 +31,9 @@ export interface Task {
   deleted_at?: string    // present when soft-deleted
   completion_score?: number    // 0–100; absent until scored
   completion_insight?: string  // Claude's one-liner
+  parent_task_id?: string      // absent = root task
+  subtask_count?: number       // computed
+  subtask_done_count?: number  // computed
 }
 
 export interface TaskList {

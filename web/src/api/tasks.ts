@@ -9,6 +9,7 @@ export interface ListTasksFilter {
   include_deleted?: boolean
   due_today?: boolean
   has_due_date?: boolean
+  parent_task_id?: string
 }
 
 export async function listTasks(filter?: ListTasksFilter): Promise<TaskListResponse> {
@@ -20,6 +21,7 @@ export async function listTasks(filter?: ListTasksFilter): Promise<TaskListRespo
   if (filter?.include_deleted) params.include_deleted = 'true'
   if (filter?.due_today) params.due_today = 'true'
   if (filter?.has_due_date) params.has_due_date = 'true'
+  if (filter?.parent_task_id) params.parent_task_id = filter.parent_task_id
   const { data } = await api.get<TaskListResponse>('/api/v1/tasks', { params })
   return data
 }
@@ -32,6 +34,7 @@ export interface CreateTaskInput {
   due_at?: string
   list_id?: string
   flagged?: boolean
+  parent_task_id?: string
 }
 
 export async function createTask(input: CreateTaskInput): Promise<Task> {

@@ -37,4 +37,7 @@ type Task struct {
 	DeletedAt         *time.Time // nil = not soft-deleted
 	CompletionScore   *int       // nil = not yet scored; 0–100 when present
 	CompletionInsight string
+	ParentTaskID      *string    // nil = root task
+	SubtaskCount      int        // computed by store
+	SubtaskDoneCount  int        // computed by store
 }

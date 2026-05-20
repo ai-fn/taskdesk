@@ -22,16 +22,20 @@ type OutboxEntry struct {
 
 // CreateTaskWithEvent inserts the task and an outbox event in one transaction.
 func (s *Store) CreateTaskWithEvent(ctx context.Context, t *domain.Task) error {
+	tags := t.Tags
+	if tags == nil {
+		tags = []string{}
+	}
 	return withTx(ctx, s.db, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO todo.tasks
 				(id, user_id, title, description, priority, status, tags,
-				 due_at, created_at, updated_at, list_id, flagged)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+				 due_at, created_at, updated_at, list_id, flagged, parent_task_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 			t.ID, t.UserID, t.Title, t.Description,
-			int32(t.Priority), int32(t.Status), t.Tags,
+			int32(t.Priority), int32(t.Status), tags,
 			t.DueAt, t.CreatedAt, t.UpdatedAt,
-			t.ListID, t.Flagged,
+			t.ListID, t.Flagged, t.ParentTaskID,
 		); err != nil {
 			return err
 		}
