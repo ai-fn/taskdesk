@@ -33,6 +33,9 @@ service TodoService {
   rpc UpsertTaskEmbedding(UpsertTaskEmbeddingRequest) returns (UpsertTaskEmbeddingResponse);
   rpc DeleteTaskEmbedding(DeleteTaskEmbeddingRequest) returns (DeleteTaskEmbeddingResponse);
   rpc SearchTasks(SearchTasksRequest)                 returns (SearchTasksResponse);
+
+  // UpdateTaskScore stores the AI-generated completion probability for a task.
+  rpc UpdateTaskScore(UpdateTaskScoreRequest) returns (UpdateTaskScoreResponse);
 }
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -68,6 +71,8 @@ message Task {
   string  list_id   = 11;
   bool    flagged   = 12;
   google.protobuf.Timestamp deleted_at = 13;
+  int32   completion_score   = 14; // 0–100; 0 = not yet scored
+  string  completion_insight = 15; // Claude's one-liner reason
 }
 
 // ── TaskList message ──────────────────────────────────────────────────────────
@@ -332,4 +337,17 @@ message SearchTasksRequest {
 
 message SearchTasksResponse {
   repeated Task tasks = 1;
+}
+
+// ── UpdateTaskScore ───────────────────────────────────────────────────────────
+
+message UpdateTaskScoreRequest {
+  string user_id            = 1;
+  string task_id            = 2;
+  int32  completion_score   = 3; // 0–100
+  string completion_insight = 4;
+}
+
+message UpdateTaskScoreResponse {
+  Task task = 1;
 }

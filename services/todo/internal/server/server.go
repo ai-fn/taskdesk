@@ -557,6 +557,10 @@ func toProto(t *domain.Task) *todov1.Task {
 	if t.DeletedAt != nil {
 		p.DeletedAt = timestamppb.New(*t.DeletedAt)
 	}
+	if t.CompletionScore != nil {
+		p.CompletionScore = int32(*t.CompletionScore)
+	}
+	p.CompletionInsight = t.CompletionInsight
 	return p
 }
 
@@ -659,4 +663,18 @@ func (s *Server) SearchTasks(ctx context.Context, req *todov1.SearchTasksRequest
 		proto = append(proto, toProto(t))
 	}
 	return &todov1.SearchTasksResponse{Tasks: proto}, nil
+}
+
+// ── UpdateTaskScore ───────────────────────────────────────────────────────────
+
+func (s *Server) UpdateTaskScore(ctx context.Context, req *todov1.UpdateTaskScoreRequest) (*todov1.UpdateTaskScoreResponse, error) {
+	if req.UserId == "" || req.TaskId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
+	}
+	t, err := s.store.UpdateTaskScore(ctx, req.UserId, req.TaskId, int(req.CompletionScore), req.CompletionInsight)
+	if err != nil {
+		s.log.Error("update task score", "task_id", req.TaskId, "err", err)
+		return nil, status.Error(codes.Internal, "update score failed")
+	}
+	return &todov1.UpdateTaskScoreResponse{Task: toProto(t)}, nil
 }

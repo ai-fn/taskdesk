@@ -22,6 +22,7 @@ import (
 	"github.com/fsociety/todo/services/ai/internal/embedder"
 	"github.com/fsociety/todo/services/ai/internal/parser"
 	"github.com/fsociety/todo/services/ai/internal/planner"
+	"github.com/fsociety/todo/services/ai/internal/scorer"
 	"github.com/fsociety/todo/services/ai/internal/server"
 	"github.com/fsociety/todo/services/ai/internal/store"
 	"google.golang.org/grpc"
@@ -95,6 +96,7 @@ func main() {
 	emb := embedder.New(cfg.VoyageAPIKey)
 	p := planner.New(cfg.AnthropicAPIKey)
 	pa := parser.New(cfg.AnthropicAPIKey)
+	sc := scorer.New(cfg.AnthropicAPIKey)
 	st := store.New(pool)
 	svc := server.New(p, pa, emb, st, todoClient, producer, log)
 
@@ -112,6 +114,21 @@ func main() {
 	}()
 	// Backfill: embed any existing tasks that don't have embeddings yet.
 	go embHandler.Backfill(ctx)
+
+	// Scoring consumer: scores new tasks with Claude on task.created events.
+	scoreHandler := scorer.NewConsumer(sc, todoClient, authClient, log)
+	scoreConsumer, err := scorer.NewRunner(brokers, scoreHandler, log)
+	if err != nil {
+		log.Error("create scoring consumer", "err", err)
+		os.Exit(1)
+	}
+	go func() {
+		if err := scoreConsumer.Run(ctx); err != nil {
+			log.Error("scoring consumer", "err", err)
+		}
+	}()
+	// Backfill: score any existing tasks that don't have a completion score yet.
+	go scoreHandler.Backfill(ctx)
 
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(pkgmetrics.UnaryServerInterceptor("ai", log)),

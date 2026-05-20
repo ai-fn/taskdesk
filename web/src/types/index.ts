@@ -28,7 +28,9 @@ export interface Task {
   updated_at: string
   list_id?: string
   flagged?: boolean
-  deleted_at?: string // present when soft-deleted
+  deleted_at?: string    // present when soft-deleted
+  completion_score?: number    // 0–100; absent until scored
+  completion_insight?: string  // Claude's one-liner
 }
 
 export interface TaskList {

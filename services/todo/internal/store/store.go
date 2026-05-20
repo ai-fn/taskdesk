@@ -27,7 +27,8 @@ func New(db *pgxpool.Pool) *Store {
 // ── Task columns helper ───────────────────────────────────────────────────────
 
 const taskCols = `id, user_id, title, description, priority, status, tags,
-                  due_at, created_at, updated_at, list_id, flagged, deleted_at`
+                  due_at, created_at, updated_at, list_id, flagged, deleted_at,
+                  completion_score, COALESCE(completion_insight, '')`
 
 func scanTask(row interface {
 	Scan(dest ...any) error
@@ -37,6 +38,7 @@ func scanTask(row interface {
 		&t.Priority, &t.Status, &t.Tags,
 		&t.DueAt, &t.CreatedAt, &t.UpdatedAt,
 		&t.ListID, &t.Flagged, &t.DeletedAt,
+		&t.CompletionScore, &t.CompletionInsight,
 	)
 }
 
@@ -382,6 +384,28 @@ func (s *Store) ReorderGroups(ctx context.Context, userID string, orderedIDs []s
 		}
 		return nil, nil
 	})
+}
+
+// ── UpdateTaskScore ───────────────────────────────────────────────────────────
+
+// UpdateTaskScore stores the AI-generated completion probability on a task.
+// Called by ai-service after scoring via Kafka event.
+func (s *Store) UpdateTaskScore(ctx context.Context, userID, taskID string, score int, insight string) (*domain.Task, error) {
+	var t domain.Task
+	err := scanTask(s.db.QueryRow(ctx,
+		`UPDATE todo.tasks
+		 SET completion_score=$3, completion_insight=$4, updated_at=now()
+		 WHERE id=$1 AND user_id=$2
+		 RETURNING `+taskCols,
+		taskID, userID, score, insight,
+	), &t)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("update task score: %w", err)
+	}
+	return &t, nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
