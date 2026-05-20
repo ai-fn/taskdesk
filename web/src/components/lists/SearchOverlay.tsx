@@ -5,6 +5,12 @@ import { listTasks, searchTasks } from '@/api/tasks'
 import { taskKeys } from '@/api/queryKeys'
 import type { Task, TaskList } from '@/types'
 
+function scoreColor(score: number) {
+  if (score >= 70) return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+  if (score >= 40) return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300'
+  return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+}
+
 const SEMANTIC_MIN = 3
 const DEBOUNCE_MS = 350
 
@@ -173,6 +179,14 @@ export function SearchBar({ lists }: Props) {
                         style={{ color: listColor, backgroundColor: listColor + '22' }}
                       >
                         {list.name}
+                      </span>
+                    )}
+                    {task.completion_score != null && task.completion_score > 0 && (
+                      <span
+                        className={`shrink-0 rounded-full px-1.5 py-0.5 text-xs font-medium ${scoreColor(task.completion_score)}`}
+                        title={task.completion_insight || undefined}
+                      >
+                        ✦ {task.completion_score}%
                       </span>
                     )}
                   </div>

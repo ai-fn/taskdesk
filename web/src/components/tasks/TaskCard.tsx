@@ -11,6 +11,12 @@ const priorityColors: Record<Priority, string> = {
   [Priority.URGENT]: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
 }
 
+function scoreColor(score: number) {
+  if (score >= 70) return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+  if (score >= 40) return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300'
+  return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+}
+
 const statusSelectColors: Record<Status, string> = {
   [Status.UNSPECIFIED]: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
   [Status.TODO]: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200',
@@ -81,6 +87,14 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
             {task.due_at && (
               <span className="text-xs text-gray-400 dark:text-gray-500">
                 Due {new Date(task.due_at).toLocaleDateString()}
+              </span>
+            )}
+            {task.completion_score != null && task.completion_score > 0 && (
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-medium cursor-default ${scoreColor(task.completion_score)}`}
+                title={task.completion_insight || undefined}
+              >
+                ✦ {task.completion_score}%
               </span>
             )}
           </div>
