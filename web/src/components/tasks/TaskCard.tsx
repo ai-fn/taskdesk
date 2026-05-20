@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import type { Task } from '@/types'
 import { Priority, Status, PriorityLabel } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { useDeleteTask, useUpdateStatus, useToggleFlagged, useRestoreTask, usePurgeTask } from '@/hooks/useTaskMutations'
+import { SubtaskList } from './SubtaskList'
 
 const priorityColors: Record<Priority, string> = {
   [Priority.UNSPECIFIED]: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
@@ -38,9 +40,14 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
   const restore = useRestoreTask(filterKey)
   const purge = usePurgeTask(filterKey)
 
+  const [subtasksOpen, setSubtasksOpen] = useState(false)
+
   const isDone = task.status === Status.DONE
   const isTemp = task.id.startsWith('temp-')
   const isStatusPending = updateStatus.isPending && updateStatus.variables?.id === task.id
+  const subtaskCount = task.subtask_count ?? 0
+  const subtaskDone = task.subtask_done_count ?? 0
+  const subtaskPct = subtaskCount > 0 ? Math.round((subtaskDone / subtaskCount) * 100) : 0
 
   return (
     <div className={`rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm transition-opacity ${isDone ? 'opacity-60' : ''}`}>
@@ -98,6 +105,36 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
               </span>
             )}
           </div>
+
+          {/* Subtask progress bar — shown only when subtasks exist */}
+          {!isTemp && subtaskCount > 0 && (
+            <button
+              onClick={() => setSubtasksOpen((o) => !o)}
+              className="mt-2 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                className={`w-3 h-3 shrink-0 transition-transform ${subtasksOpen ? 'rotate-90' : ''}`}
+              >
+                <path d="M6 4l4 4-4 4"/>
+              </svg>
+              <span>{subtaskDone}/{subtaskCount} subtasks done</span>
+              <div className="w-16 h-1 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-indigo-400 dark:bg-indigo-500 transition-all"
+                  style={{ width: `${subtaskPct}%` }}
+                />
+              </div>
+            </button>
+          )}
+
+          {/* Subtask list — also opens via "+" button when count is 0 */}
+          {!isTemp && subtasksOpen && (
+            <SubtaskList parentTask={task} />
+          )}
         </div>
 
         {!isTemp && (
@@ -137,6 +174,13 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
                   title={task.flagged ? 'Unflag' : 'Flag'}
                 >
                   ⚑
+                </button>
+                <button
+                  onClick={() => setSubtasksOpen((o) => !o)}
+                  className="rounded p-1 text-xs text-gray-300 dark:text-gray-600 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
+                  title="Subtasks"
+                >
+                  ⊕
                 </button>
                 <Button
                   variant="ghost"

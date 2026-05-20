@@ -57,7 +57,8 @@ func (s *Store) SearchTasksByEmbedding(ctx context.Context, userID string, query
 	rows, err := s.db.Query(ctx,
 		`SELECT t.id, t.user_id, t.title, t.description, t.priority, t.status, t.tags,
 		        t.due_at, t.created_at, t.updated_at, t.list_id, t.flagged, t.deleted_at,
-		        t.completion_score, COALESCE(t.completion_insight, '')
+		        t.completion_score, COALESCE(t.completion_insight, ''),
+		        t.parent_task_id, 0::int, 0::int
 		 FROM todo.tasks t
 		 JOIN todo.task_embeddings e ON e.task_id = t.id
 		 WHERE t.user_id = $1

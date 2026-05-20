@@ -26,9 +26,12 @@ func New(db *pgxpool.Pool) *Store {
 
 // ── Task columns helper ───────────────────────────────────────────────────────
 
+// taskCols is used for single-row queries (GET, UPDATE RETURNING, etc.).
+// Subtask counts are placeholder zeros; only ListTasks computes real values.
 const taskCols = `id, user_id, title, description, priority, status, tags,
                   due_at, created_at, updated_at, list_id, flagged, deleted_at,
-                  completion_score, COALESCE(completion_insight, '')`
+                  completion_score, COALESCE(completion_insight, ''),
+                  parent_task_id, 0::int, 0::int`
 
 func scanTask(row interface {
 	Scan(dest ...any) error
@@ -39,21 +42,26 @@ func scanTask(row interface {
 		&t.DueAt, &t.CreatedAt, &t.UpdatedAt,
 		&t.ListID, &t.Flagged, &t.DeletedAt,
 		&t.CompletionScore, &t.CompletionInsight,
+		&t.ParentTaskID, &t.SubtaskCount, &t.SubtaskDoneCount,
 	)
 }
 
 // ── CreateTask ────────────────────────────────────────────────────────────────
 
 func (s *Store) CreateTask(ctx context.Context, t *domain.Task) error {
+	tags := t.Tags
+	if tags == nil {
+		tags = []string{}
+	}
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO todo.tasks
 			(id, user_id, title, description, priority, status, tags,
-			 due_at, created_at, updated_at, list_id, flagged)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+			 due_at, created_at, updated_at, list_id, flagged, parent_task_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		t.ID, t.UserID, t.Title, t.Description,
-		int32(t.Priority), int32(t.Status), t.Tags,
+		int32(t.Priority), int32(t.Status), tags,
 		t.DueAt, t.CreatedAt, t.UpdatedAt,
-		t.ListID, t.Flagged,
+		t.ListID, t.Flagged, t.ParentTaskID,
 	)
 	return err
 }
@@ -83,11 +91,12 @@ type ListFilter struct {
 	Status   *domain.Status
 	Priority *domain.Priority
 	// List / flag filters
-	ListIDFilter  *string // nil = all; &"" = tasks with no list; &"<id>" = specific list
-	FlaggedOnly   bool
+	ListIDFilter   *string // nil = all; &"" = tasks with no list; &"<id>" = specific list
+	FlaggedOnly    bool
 	IncludeDeleted bool   // true = show ONLY soft-deleted; false = show only active
-	DueTodayOnly  bool
-	HasDueDate    bool
+	DueTodayOnly   bool
+	HasDueDate     bool
+	ParentTaskID   *string // nil = root tasks only; set = subtasks of this parent
 	// Pagination
 	PageSize        int32
 	CursorCreatedAt *time.Time
@@ -100,18 +109,33 @@ func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, er
 	}
 
 	rows, err := s.db.Query(ctx, `
-		SELECT `+taskCols+`
-		FROM todo.tasks
-		WHERE user_id = $1
-		  AND ($2::int IS NULL OR status   = $2)
-		  AND ($3::int IS NULL OR priority = $3)
-		  AND ($4::timestamptz IS NULL OR (created_at, id) < ($4, $5))
-		  AND (CASE WHEN $7 THEN deleted_at IS NOT NULL ELSE deleted_at IS NULL END)
-		  AND ($8::text IS NULL OR list_id IS NOT DISTINCT FROM NULLIF($8, ''))
-		  AND (NOT $9::boolean OR flagged = TRUE)
-		  AND (NOT $10::boolean OR DATE(due_at AT TIME ZONE 'UTC') = CURRENT_DATE)
-		  AND (NOT $11::boolean OR due_at IS NOT NULL)
-		ORDER BY created_at DESC, id DESC
+		SELECT t.id, t.user_id, t.title, t.description, t.priority, t.status, t.tags,
+		       t.due_at, t.created_at, t.updated_at, t.list_id, t.flagged, t.deleted_at,
+		       t.completion_score, COALESCE(t.completion_insight, ''),
+		       t.parent_task_id,
+		       COALESCE(sc.subtask_count, 0)::int,
+		       COALESCE(sc.subtask_done_count, 0)::int
+		FROM todo.tasks t
+		LEFT JOIN (
+		  SELECT parent_task_id,
+		    COUNT(*) FILTER (WHERE deleted_at IS NULL) AS subtask_count,
+		    COUNT(*) FILTER (WHERE status = 3 AND deleted_at IS NULL) AS subtask_done_count
+		  FROM todo.tasks
+		  WHERE parent_task_id IS NOT NULL
+		  GROUP BY parent_task_id
+		) sc ON sc.parent_task_id = t.id
+		WHERE t.user_id = $1
+		  AND ($2::int IS NULL OR t.status   = $2)
+		  AND ($3::int IS NULL OR t.priority = $3)
+		  AND ($4::timestamptz IS NULL OR (t.created_at, t.id) < ($4, $5))
+		  AND (CASE WHEN $7 THEN t.deleted_at IS NOT NULL ELSE t.deleted_at IS NULL END)
+		  AND ($8::text IS NULL OR t.list_id IS NOT DISTINCT FROM NULLIF($8, ''))
+		  AND (NOT $9::boolean OR t.flagged = TRUE)
+		  AND (NOT $10::boolean OR DATE(t.due_at AT TIME ZONE 'UTC') = CURRENT_DATE)
+		  AND (NOT $11::boolean OR t.due_at IS NOT NULL)
+		  AND (CASE WHEN $12::text IS NULL THEN t.parent_task_id IS NULL
+		            ELSE t.parent_task_id = $12 END)
+		ORDER BY t.created_at DESC, t.id DESC
 		LIMIT $6`,
 		f.UserID,
 		f.Status, f.Priority,
@@ -122,6 +146,7 @@ func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, er
 		f.FlaggedOnly,
 		f.DueTodayOnly,
 		f.HasDueDate,
+		f.ParentTaskID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
@@ -404,6 +429,31 @@ func (s *Store) UpdateTaskScore(ctx context.Context, userID, taskID string, scor
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("update task score: %w", err)
+	}
+	return &t, nil
+}
+
+// ── AutoCompleteParent ────────────────────────────────────────────────────────
+
+// AutoCompleteParent marks the parent task as DONE if all its non-deleted
+// subtasks are now done. It is a no-op if any sibling is still incomplete,
+// or if the parent is already done. Returns the updated parent or nil if
+// no update was made.
+func (s *Store) AutoCompleteParent(ctx context.Context, userID, parentTaskID string) (*domain.Task, error) {
+	var t domain.Task
+	err := scanTask(s.db.QueryRow(ctx, `
+		UPDATE todo.tasks SET status=3, updated_at=now()
+		WHERE id=$1 AND user_id=$2 AND status != 3
+		  AND NOT EXISTS (
+		    SELECT 1 FROM todo.tasks
+		    WHERE parent_task_id=$1 AND deleted_at IS NULL AND status != 3
+		  )
+		RETURNING `+taskCols, parentTaskID, userID), &t)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil // nothing to do
+		}
+		return nil, fmt.Errorf("auto-complete parent: %w", err)
 	}
 	return &t, nil
 }

@@ -73,6 +73,9 @@ message Task {
   google.protobuf.Timestamp deleted_at = 13;
   int32   completion_score   = 14; // 0–100; 0 = not yet scored
   string  completion_insight = 15; // Claude's one-liner reason
+  string  parent_task_id     = 16; // empty = root task
+  int32   subtask_count      = 17; // computed: total non-deleted subtasks
+  int32   subtask_done_count = 18; // computed: done non-deleted subtasks
 }
 
 // ── TaskList message ──────────────────────────────────────────────────────────
@@ -111,8 +114,9 @@ message CreateTaskRequest {
   Priority priority    = 4;
   repeated string tags = 5;
   google.protobuf.Timestamp due_at = 6;
-  string list_id = 7;
-  bool   flagged = 8;
+  string list_id        = 7;
+  bool   flagged        = 8;
+  string parent_task_id = 9; // optional; set to create a subtask
 }
 
 message CreateTaskResponse {
@@ -146,6 +150,7 @@ message ListTasksRequest {
   bool   include_deleted = 8;  // true = show ONLY soft-deleted tasks
   bool   due_today_only  = 9;
   bool   has_due_date    = 10;
+  string parent_task_id  = 11; // when set: list subtasks of this task
 }
 
 message ListTasksResponse {

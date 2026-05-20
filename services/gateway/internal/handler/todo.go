@@ -50,6 +50,9 @@ func (h *TodoHandler) List(w http.ResponseWriter, r *http.Request) {
 	if q.Get("has_due_date") == "true" {
 		req.HasDueDate = true
 	}
+	if q.Get("parent_task_id") != "" {
+		req.ParentTaskId = q.Get("parent_task_id")
+	}
 
 	resp, err := h.client.ListTasks(r.Context(), req)
 	if err != nil {
@@ -64,13 +67,14 @@ func (h *TodoHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromContext(r.Context())
 
 	var body struct {
-		Title       string     `json:"title"`
-		Description string     `json:"description"`
-		Priority    int32      `json:"priority"`
-		Tags        []string   `json:"tags"`
-		DueAt       *time.Time `json:"due_at"`
-		ListID      string     `json:"list_id"`
-		Flagged     bool       `json:"flagged"`
+		Title        string     `json:"title"`
+		Description  string     `json:"description"`
+		Priority     int32      `json:"priority"`
+		Tags         []string   `json:"tags"`
+		DueAt        *time.Time `json:"due_at"`
+		ListID       string     `json:"list_id"`
+		Flagged      bool       `json:"flagged"`
+		ParentTaskID string     `json:"parent_task_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
@@ -82,13 +86,14 @@ func (h *TodoHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := &todov1.CreateTaskRequest{
-		UserId:      userID,
-		Title:       body.Title,
-		Description: body.Description,
-		Priority:    todov1.Priority(body.Priority),
-		Tags:        body.Tags,
-		ListId:      body.ListID,
-		Flagged:     body.Flagged,
+		UserId:       userID,
+		Title:        body.Title,
+		Description:  body.Description,
+		Priority:     todov1.Priority(body.Priority),
+		Tags:         body.Tags,
+		ListId:       body.ListID,
+		Flagged:      body.Flagged,
+		ParentTaskId: body.ParentTaskID,
 	}
 	if body.DueAt != nil {
 		req.DueAt = timestamppb.New(*body.DueAt)
