@@ -39,6 +39,16 @@ func (s *Store) CreateTaskWithEvent(ctx context.Context, t *domain.Task) error {
 		); err != nil {
 			return err
 		}
+		// Adding a subtask to a completed parent reopens it.
+		if t.ParentTaskID != nil {
+			if _, err := tx.Exec(ctx,
+				`UPDATE todo.tasks SET status = 1, updated_at = now()
+				 WHERE id = $1 AND user_id = $2 AND status = 3 AND deleted_at IS NULL`,
+				*t.ParentTaskID, t.UserID,
+			); err != nil {
+				return err
+			}
+		}
 		return insertOutbox(ctx, tx, events.TypeTaskCreated, t.UserID, t.ID, t.Title)
 	})
 }

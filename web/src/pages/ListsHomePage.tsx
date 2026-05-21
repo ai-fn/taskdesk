@@ -182,21 +182,28 @@ export function ListsHomePage() {
       )}
 
       {showCreateTask && (
-        <Modal onClose={() => { setShowCreateTask(false); setNlPrefill(undefined) }} className="max-w-md">
-          <div className="rounded-xl bg-white dark:bg-gray-800 p-6 shadow-xl">
-            <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">New task</h2>
-            <TaskForm
-              prefill={nlPrefill}
-              lists={lists}
-              onSubmit={(values) => {
-                const { list_id, ...rest } = values
-                createTask.mutate({ ...rest, list_id: list_id ?? undefined })
-                setShowCreateTask(false)
-                setNlPrefill(undefined)
-              }}
-              onCancel={() => { setShowCreateTask(false); setNlPrefill(undefined) }}
-              isLoading={createTask.isPending}
-            />
+        <Modal onClose={() => { setShowCreateTask(false); setNlPrefill(undefined) }} className="max-w-xl">
+          <div className="rounded-xl bg-white dark:bg-gray-800 shadow-xl overflow-hidden">
+            <div className="max-h-[90vh] overflow-y-auto p-6">
+              <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">New task</h2>
+              <TaskForm
+                prefill={nlPrefill}
+                lists={lists}
+                onSubmit={async (values) => {
+                  const { list_id, subtasks = [], ...rest } = values
+                  const newTask = await createTask.mutateAsync({ ...rest, list_id: list_id ?? undefined })
+                  if (subtasks.length > 0) {
+                    await Promise.all(subtasks.map((title) =>
+                      createTask.mutateAsync({ title, parent_task_id: newTask.id, list_id: newTask.list_id ?? undefined })
+                    ))
+                  }
+                  setShowCreateTask(false)
+                  setNlPrefill(undefined)
+                }}
+                onCancel={() => { setShowCreateTask(false); setNlPrefill(undefined) }}
+                isLoading={createTask.isPending}
+              />
+            </div>
           </div>
         </Modal>
       )}

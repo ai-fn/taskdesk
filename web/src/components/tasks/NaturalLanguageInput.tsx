@@ -91,6 +91,7 @@ export function NaturalLanguageInput({ lists, onParsed, onCancel }: Props) {
         list_id:     listId,
         tags:        result.tags,
         flagged:     result.flagged,
+        subtasks:    result.subtasks,
       })
     } catch (err) {
       if (axios.isCancel(err) || (err instanceof Error && err.name === 'CanceledError')) {

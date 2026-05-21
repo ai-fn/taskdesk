@@ -103,6 +103,7 @@ message ParsedTask {
   string list_name                    = 5; // best-match name from list_names
   repeated string tags                = 6;
   bool   flagged                      = 7;
+  repeated string subtasks            = 8; // optional decomposition into sub-steps
 }
 
 message ParseTaskResponse {
