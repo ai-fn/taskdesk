@@ -42,6 +42,8 @@ spec:
                   name: ai-secret
                   key: VOYAGE_API_KEY
                   optional: true
+            - name: MOCK_PARSE
+              value: "false"
             - name: MIGRATIONS_DIR
               value: "file:///migrations/ai"
             - name: TODO_SERVICE_ADDR

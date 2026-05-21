@@ -5,10 +5,12 @@ import { SYSTEM_LISTS, Status } from '@/types'
 import type { ListTasksFilter } from '@/api/tasks'
 import { TaskList } from '@/components/tasks/TaskList'
 import { TaskForm, type TaskPrefill } from '@/components/tasks/TaskForm'
+import { SubtaskList } from '@/components/tasks/SubtaskList'
 import { NaturalLanguageInput } from '@/components/tasks/NaturalLanguageInput'
 import { DailyPlanPanel } from '@/components/tasks/DailyPlanPanel'
 import { Button } from '@/components/ui/Button'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
+import { Modal } from '@/components/ui/Modal'
 import { ToastContainer, type ToastMessage } from '@/components/ui/Toast'
 import { useCreateTask, useUpdateTask } from '@/hooks/useTaskMutations'
 import { useLists } from '@/hooks/useLists'
@@ -67,7 +69,7 @@ export function TasksPage() {
     if (n.type === 'daily_plan_ready') {
       text = 'Your AI daily plan is ready!'
     } else if (n.event_type === 'task.completed') {
-      text = `✓ Completed: ${n.task_title ?? ''}`
+      text = `Completed: ${n.task_title ?? ''}`
     } else {
       return
     }
@@ -84,14 +86,19 @@ export function TasksPage() {
     setModal({ type: 'edit', task })
   }
 
-  async function handleCreate(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string; list_id?: string | null; flagged?: boolean }) {
+  async function handleCreate(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string; list_id?: string | null; flagged?: boolean; subtasks?: string[] }) {
     setFormError('')
     try {
-      const { list_id: _l, ...rest } = values
-      await createTask.mutateAsync({
+      const { list_id: _l, subtasks = [], ...rest } = values
+      const newTask = await createTask.mutateAsync({
         ...rest,
         list_id: isCustomList ? listId : undefined,
       })
+      if (subtasks.length > 0) {
+        await Promise.all(subtasks.map((title) =>
+          createTask.mutateAsync({ title, parent_task_id: newTask.id, list_id: newTask.list_id ?? undefined })
+        ))
+      }
       setModal(null)
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.data?.error) {
@@ -185,8 +192,9 @@ export function TasksPage() {
       />
 
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 dark:bg-black/60 px-4">
-          <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-800 p-6 shadow-xl">
+        <Modal onClose={() => setModal(null)} className="max-w-xl">
+          <div className="rounded-xl bg-white dark:bg-gray-800 shadow-xl overflow-hidden">
+          <div className="max-h-[90vh] overflow-y-auto p-6">
             {modal.type === 'nl' ? (
               <>
                 <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
@@ -194,7 +202,10 @@ export function TasksPage() {
                 </h2>
                 <NaturalLanguageInput
                   lists={lists}
-                  onParsed={(prefill) => { setFormError(''); setModal({ type: 'create', prefill }) }}
+                  onParsed={(prefill) => {
+                    setFormError('')
+                    setModal({ type: 'create', prefill })
+                  }}
                   onCancel={() => setModal(null)}
                 />
               </>
@@ -212,11 +223,19 @@ export function TasksPage() {
                   onSubmit={modal.type === 'create' ? handleCreate : handleUpdate}
                   onCancel={() => setModal(null)}
                   isLoading={createTask.isPending || updateTask.isPending}
-                />
+                >
+                  {modal.type === 'edit' && (
+                    <div className="border-t border-gray-100 dark:border-gray-700 pt-4">
+                      <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">Subtasks</p>
+                      <SubtaskList parentTask={modal.task} />
+                    </div>
+                  )}
+                </TaskForm>
               </>
             )}
           </div>
-        </div>
+          </div>
+        </Modal>
       )}
     </>
   )

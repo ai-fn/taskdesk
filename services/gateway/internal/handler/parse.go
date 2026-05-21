@@ -33,6 +33,7 @@ type ParsedTaskResponse struct {
 	ListName    string   `json:"list_name,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
 	Flagged     bool     `json:"flagged,omitempty"`
+	Subtasks    []string `json:"subtasks,omitempty"`
 }
 
 // POST /api/v1/tasks/parse
@@ -68,6 +69,7 @@ func (h *ParseHandler) Parse(w http.ResponseWriter, r *http.Request) {
 		ListName:    resp.Task.ListName,
 		Tags:        resp.Task.Tags,
 		Flagged:     resp.Task.Flagged,
+		Subtasks:    resp.Task.Subtasks,
 	}
 	if resp.Task.DueAt != nil {
 		out.DueAt = resp.Task.DueAt.AsTime().Format(time.RFC3339)

@@ -97,6 +97,7 @@ export interface ParsedTask {
   list_name?: string     // best-guess name; caller resolves to list_id
   tags?: string[]
   flagged?: boolean
+  subtasks?: string[]
 }
 
 export async function parseTask(text: string, listNames: string[], signal?: AbortSignal): Promise<ParsedTask> {

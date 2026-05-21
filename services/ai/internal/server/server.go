@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
@@ -316,6 +317,22 @@ func (s *Server) ParseTask(ctx context.Context, req *aiv1.ParseTaskRequest) (*ai
 		return nil, status.Error(codes.InvalidArgument, "text is required")
 	}
 
+	if os.Getenv("MOCK_PARSE") == "true" {
+		return &aiv1.ParseTaskResponse{Task: &aiv1.ParsedTask{
+			Title:       "Fix login redirect loop on OAuth callback",
+			Description: "After OAuth sign-in the callback handler redirects to /login instead of /dashboard, causing an infinite loop. Affects all OAuth providers.",
+			Priority:    3, // high
+			Tags:        []string{"bug", "auth", "oauth"},
+			Subtasks: []string{
+				"Reproduce the loop locally with Google OAuth",
+				"Trace the callback handler redirect logic",
+				"Check session/cookie state after token exchange",
+				"Write a regression test for the redirect path",
+				"Deploy fix and verify in staging",
+			},
+		}}, nil
+	}
+
 	today := req.Today
 	if today == "" {
 		today = time.Now().UTC().Format("2006-01-02")
@@ -334,6 +351,7 @@ func (s *Server) ParseTask(ctx context.Context, req *aiv1.ParseTaskRequest) (*ai
 		ListName:    result.ListName,
 		Tags:        result.Tags,
 		Flagged:     result.Flagged,
+		Subtasks:    result.Subtasks,
 	}
 	if t := result.DueAtTime(); t != nil {
 		pt.DueAt = timestamppb.New(*t)

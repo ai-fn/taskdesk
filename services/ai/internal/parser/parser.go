@@ -33,17 +33,21 @@ DATE PARSING: Use today's date for relative expressions ("next Friday", "tomorro
 Return dates as ISO 8601: "YYYY-MM-DDTHH:MM:SSZ". Use midnight UTC if no time is specified.
 
 LIST MATCHING: If a project/list is mentioned, return its name exactly as given in available_lists
-(case-insensitive match). If no lists are provided or no match found, return the raw name mentioned.`
+(case-insensitive match). If no lists are provided or no match found, return the raw name mentioned.
+
+SUBTASK DECOMPOSITION: If a task clearly involves 2–5 distinct, concrete steps, list them as short
+action-oriented subtask titles in the subtasks field. For simple single-action tasks, omit subtasks.`
 
 // ParsedTask holds the structured output from the Claude parse_task tool.
 type ParsedTask struct {
-	Title       string    `json:"title"`
-	Description string    `json:"description,omitempty"`
-	Priority    string    `json:"priority,omitempty"` // "low"|"medium"|"high"|"urgent"
-	DueAt       string    `json:"due_at,omitempty"`   // ISO 8601 or empty
-	ListName    string    `json:"list_name,omitempty"`
-	Tags        []string  `json:"tags,omitempty"`
-	Flagged     bool      `json:"flagged,omitempty"`
+	Title       string   `json:"title"`
+	Description string   `json:"description,omitempty"`
+	Priority    string   `json:"priority,omitempty"` // "low"|"medium"|"high"|"urgent"
+	DueAt       string   `json:"due_at,omitempty"`   // ISO 8601 or empty
+	ListName    string   `json:"list_name,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	Flagged     bool     `json:"flagged,omitempty"`
+	Subtasks    []string `json:"subtasks,omitempty"`
 }
 
 // PriorityInt converts the string priority to the proto int32 representation.
@@ -140,6 +144,11 @@ func (p *Parser) Parse(ctx context.Context, text, today string, listNames []stri
 							"flagged": map[string]any{
 								"type":        "boolean",
 								"description": "True if the task is flagged as urgent or critical.",
+							},
+							"subtasks": map[string]any{
+								"type":        "array",
+								"items":       map[string]any{"type": "string"},
+								"description": "2–5 short action-oriented subtask titles if the task has distinct concrete steps. Omit for simple tasks.",
 							},
 						},
 						Required: []string{"title", "description"},
