@@ -27,11 +27,12 @@ func New(db *pgxpool.Pool) *Store {
 // ── Task columns helper ───────────────────────────────────────────────────────
 
 // taskCols is used for single-row queries (GET, UPDATE RETURNING, etc.).
-// Subtask counts are placeholder zeros; only ListTasks computes real values.
+// Subtask counts and blocked/deps are placeholders; only ListTasks computes real values.
 const taskCols = `id, user_id, title, description, priority, status, tags,
                   due_at, created_at, updated_at, list_id, flagged, deleted_at,
                   completion_score, COALESCE(completion_insight, ''),
-                  parent_task_id, 0::int, 0::int`
+                  parent_task_id, 0::int, 0::int,
+                  false, ARRAY[]::text[]`
 
 func scanTask(row interface {
 	Scan(dest ...any) error
@@ -43,6 +44,7 @@ func scanTask(row interface {
 		&t.ListID, &t.Flagged, &t.DeletedAt,
 		&t.CompletionScore, &t.CompletionInsight,
 		&t.ParentTaskID, &t.SubtaskCount, &t.SubtaskDoneCount,
+		&t.Blocked, &t.DependsOnTaskIDs,
 	)
 }
 
@@ -97,6 +99,7 @@ type ListFilter struct {
 	DueTodayOnly   bool
 	HasDueDate     bool
 	ParentTaskID   *string // nil = root tasks only; set = subtasks of this parent
+	ExcludeBlocked bool    // true = omit tasks with any unfinished dependency
 	// Pagination
 	PageSize        int32
 	CursorCreatedAt *time.Time
@@ -114,7 +117,9 @@ func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, er
 		       t.completion_score, COALESCE(t.completion_insight, ''),
 		       t.parent_task_id,
 		       COALESCE(sc.subtask_count, 0)::int,
-		       COALESCE(sc.subtask_done_count, 0)::int
+		       COALESCE(sc.subtask_done_count, 0)::int,
+		       COALESCE(dep.blocked, false) AS blocked,
+		       COALESCE(dep.dep_ids, ARRAY[]::text[]) AS depends_on_task_ids
 		FROM todo.tasks t
 		LEFT JOIN (
 		  SELECT parent_task_id,
@@ -124,6 +129,14 @@ func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, er
 		  WHERE parent_task_id IS NOT NULL
 		  GROUP BY parent_task_id
 		) sc ON sc.parent_task_id = t.id
+		LEFT JOIN (
+		  SELECT d.task_id,
+		         ARRAY_AGG(d.depends_on_id) AS dep_ids,
+		         BOOL_OR(t2.status <> 3 AND t2.deleted_at IS NULL) AS blocked
+		  FROM todo.task_dependencies d
+		  JOIN todo.tasks t2 ON t2.id = d.depends_on_id
+		  GROUP BY d.task_id
+		) dep ON dep.task_id = t.id
 		WHERE t.user_id = $1
 		  AND ($2::int IS NULL OR t.status   = $2)
 		  AND ($3::int IS NULL OR t.priority = $3)
@@ -135,6 +148,7 @@ func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, er
 		  AND (NOT $11::boolean OR t.due_at IS NOT NULL)
 		  AND (CASE WHEN $12::text IS NULL THEN t.parent_task_id IS NULL
 		            ELSE t.parent_task_id = $12 END)
+		  AND (NOT $13::boolean OR COALESCE(dep.blocked, false) = FALSE)
 		ORDER BY t.created_at DESC, t.id DESC
 		LIMIT $6`,
 		f.UserID,
@@ -147,6 +161,7 @@ func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, er
 		f.DueTodayOnly,
 		f.HasDueDate,
 		f.ParentTaskID,
+		f.ExcludeBlocked,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)

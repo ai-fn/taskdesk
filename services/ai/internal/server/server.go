@@ -47,10 +47,12 @@ func (s *Server) GeneratePlan(ctx context.Context, req *aiv1.GeneratePlanRequest
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
 
-	// Fetch tasks from todo-service.
+	// Fetch tasks from todo-service. Blocked tasks are skipped — they can't be
+	// worked on until their dependencies clear, so they don't belong in today's plan.
 	listResp, err := s.todoClient.ListTasks(ctx, &todov1.ListTasksRequest{
-		UserId:   req.UserId,
-		PageSize: 200,
+		UserId:         req.UserId,
+		PageSize:       200,
+		ExcludeBlocked: true,
 	})
 	if err != nil {
 		s.log.Error("list tasks", "user_id", req.UserId, "err", err)
@@ -137,8 +139,9 @@ func (s *Server) GeneratePlanStream(req *aiv1.GeneratePlanRequest, stream aiv1.A
 	ctx := stream.Context()
 
 	listResp, err := s.todoClient.ListTasks(ctx, &todov1.ListTasksRequest{
-		UserId:   req.UserId,
-		PageSize: 200,
+		UserId:         req.UserId,
+		PageSize:       200,
+		ExcludeBlocked: true,
 	})
 	if err != nil {
 		s.log.Error("list tasks (stream)", "user_id", req.UserId, "err", err)

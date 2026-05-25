@@ -36,12 +36,14 @@ func (c *Consumer) Handle(ctx context.Context, r *kgo.Record) error {
 		return nil
 	}
 
-	// Only score newly created tasks.
-	if ev.EventType != events.TypeTaskCreated {
-		return nil
+	switch ev.EventType {
+	case events.TypeTaskCreated:
+		return c.scoreTask(ctx, ev)
+	case events.TypeTaskCompleted:
+		// Completing this task may have unblocked others — rescore them.
+		return c.rescoreUnblocked(ctx, ev)
 	}
-
-	return c.scoreTask(ctx, ev)
+	return nil
 }
 
 func (c *Consumer) scoreTask(ctx context.Context, ev events.TaskEvent) error {
@@ -54,6 +56,29 @@ func (c *Consumer) scoreTask(ctx context.Context, ev events.TaskEvent) error {
 		return fmt.Errorf("get task %s: %w", ev.TaskID, err)
 	}
 	t := taskResp.Task
+
+	// Blocked tasks: skip the Claude call entirely and emit a synthetic score.
+	// They'll be rescored once their last dependency clears (see rescoreUnblocked).
+	// NB: GetTask returns placeholder Blocked=false; we re-check via ListDependencies
+	// because the GetTask path doesn't run the LEFT JOIN that computes blocked.
+	deps, err := c.todoClient.ListDependencies(ctx, &todov1.ListDependenciesRequest{
+		UserId: ev.UserID,
+		TaskId: ev.TaskID,
+	})
+	if err != nil {
+		c.log.Warn("scorer: list dependencies", "task_id", ev.TaskID, "err", err)
+	} else if hasUnfinishedDep(deps.DependsOn) {
+		if _, err := c.todoClient.UpdateTaskScore(ctx, &todov1.UpdateTaskScoreRequest{
+			UserId:            ev.UserID,
+			TaskId:            ev.TaskID,
+			CompletionScore:   0,
+			CompletionInsight: "Blocked by unfinished dependencies",
+		}); err != nil {
+			return fmt.Errorf("write blocked score %s: %w", ev.TaskID, err)
+		}
+		c.log.Info("task skipped (blocked)", "task_id", ev.TaskID, "open_deps", countOpen(deps.DependsOn))
+		return nil
+	}
 
 	// Fetch recent task history (last 30 days) for behavioural context.
 	// We fetch completed + open tasks separately to build a richer picture.
@@ -108,6 +133,47 @@ func (c *Consumer) scoreTask(ctx context.Context, ev events.TaskEvent) error {
 	}
 
 	c.log.Info("task scored", "task_id", ev.TaskID, "score", result.Score, "insight", result.Insight)
+	return nil
+}
+
+// hasUnfinishedDep reports whether any task in `deps` is not yet Done.
+func hasUnfinishedDep(deps []*todov1.Task) bool {
+	for _, d := range deps {
+		if d.Status != todov1.Status_STATUS_DONE {
+			return true
+		}
+	}
+	return false
+}
+
+// countOpen counts unfinished tasks in a dep slice (for logging).
+func countOpen(deps []*todov1.Task) int {
+	n := 0
+	for _, d := range deps {
+		if d.Status != todov1.Status_STATUS_DONE {
+			n++
+		}
+	}
+	return n
+}
+
+// rescoreUnblocked is called when a task is completed. It looks up every task
+// that depended on this one and re-runs scoring for it — those tasks may have
+// just transitioned from blocked to actionable, and their score should now
+// reflect a real behavioural prediction instead of the synthetic "blocked" 0.
+func (c *Consumer) rescoreUnblocked(ctx context.Context, ev events.TaskEvent) error {
+	deps, err := c.todoClient.ListDependencies(ctx, &todov1.ListDependenciesRequest{
+		UserId: ev.UserID,
+		TaskId: ev.TaskID,
+	})
+	if err != nil {
+		return fmt.Errorf("list dependencies for completed task %s: %w", ev.TaskID, err)
+	}
+	for _, blocked := range deps.Blocking {
+		if err := c.scoreTask(ctx, events.TaskEvent{UserID: ev.UserID, TaskID: blocked.Id}); err != nil {
+			c.log.Warn("rescore unblocked task", "task_id", blocked.Id, "err", err)
+		}
+	}
 	return nil
 }
 

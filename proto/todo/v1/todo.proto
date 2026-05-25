@@ -36,6 +36,12 @@ service TodoService {
 
   // UpdateTaskScore stores the AI-generated completion probability for a task.
   rpc UpdateTaskScore(UpdateTaskScoreRequest) returns (UpdateTaskScoreResponse);
+
+  // Dependencies
+  rpc AddDependency(AddDependencyRequest)         returns (AddDependencyResponse);
+  rpc RemoveDependency(RemoveDependencyRequest)   returns (RemoveDependencyResponse);
+  rpc ListDependencies(ListDependenciesRequest)   returns (ListDependenciesResponse);
+  rpc GetDependencyTree(GetDependencyTreeRequest) returns (GetDependencyTreeResponse);
 }
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -76,6 +82,8 @@ message Task {
   string  parent_task_id     = 16; // empty = root task
   int32   subtask_count      = 17; // computed: total non-deleted subtasks
   int32   subtask_done_count = 18; // computed: done non-deleted subtasks
+  bool    blocked            = 19; // true if any depends_on task is not Done
+  repeated string depends_on_task_ids = 20; // task IDs this task is blocked by
 }
 
 // ── TaskList message ──────────────────────────────────────────────────────────
@@ -151,6 +159,7 @@ message ListTasksRequest {
   bool   due_today_only  = 9;
   bool   has_due_date    = 10;
   string parent_task_id  = 11; // when set: list subtasks of this task
+  bool   exclude_blocked = 12; // if true, omit tasks with unfinished dependencies
 }
 
 message ListTasksResponse {
@@ -355,4 +364,53 @@ message UpdateTaskScoreRequest {
 
 message UpdateTaskScoreResponse {
   Task task = 1;
+}
+
+// ── Dependencies ──────────────────────────────────────────────────────────────
+
+message AddDependencyRequest {
+  string user_id        = 1;
+  string task_id        = 2;
+  string depends_on_id  = 3;
+}
+
+message AddDependencyResponse {
+  Task task = 1;
+}
+
+message RemoveDependencyRequest {
+  string user_id        = 1;
+  string task_id        = 2;
+  string depends_on_id  = 3;
+}
+
+message RemoveDependencyResponse {}
+
+message ListDependenciesRequest {
+  string user_id = 1;
+  string task_id = 2;
+}
+
+message ListDependenciesResponse {
+  repeated Task depends_on = 1; // tasks this one is blocked by
+  repeated Task blocking   = 2; // tasks blocked by this one
+}
+
+// A node in the transitive dependency chain.
+// depth=1 means a direct dep; depth>1 means reached via via_task_id.
+message DependencyTreeNode {
+  Task   task        = 1;
+  int32  depth       = 2;
+  string via_task_id = 3; // direct predecessor in the chain (root task at depth=1)
+}
+
+message GetDependencyTreeRequest {
+  string user_id = 1;
+  string task_id = 2;
+}
+
+message GetDependencyTreeResponse {
+  Task root = 1;
+  repeated DependencyTreeNode depends_on = 2; // transitive upstream (blockers)
+  repeated DependencyTreeNode blocking   = 3; // transitive downstream
 }

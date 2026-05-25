@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { Task } from '@/types'
 import { Priority, Status, PriorityLabel } from '@/types'
 import { Button } from '@/components/ui/Button'
@@ -34,6 +35,7 @@ interface Props {
 }
 
 export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
+  const navigate = useNavigate()
   const del = useDeleteTask(filterKey)
   const updateStatus = useUpdateStatus(filterKey)
   const toggleFlagged = useToggleFlagged(filterKey)
@@ -49,8 +51,24 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
   const subtaskDone = task.subtask_done_count ?? 0
   const subtaskPct = subtaskCount > 0 ? Math.round((subtaskDone / subtaskCount) * 100) : 0
 
+  function openDetail() {
+    if (isTemp || isDeletedView) return
+    navigate(`/tasks/detail/${task.id}`)
+  }
+
+  // Stop click propagation on interactive elements so they don't trigger the
+  // card's navigation. Use onMouseDown too because some elements (selects)
+  // open menus on mousedown before click fires.
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation()
+
   return (
-    <div className={`rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm transition-opacity ${isDone ? 'opacity-60' : ''}`}>
+    <div
+      onClick={openDetail}
+      role={isTemp || isDeletedView ? undefined : 'button'}
+      tabIndex={isTemp || isDeletedView ? undefined : 0}
+      onKeyDown={(e) => { if (e.key === 'Enter') openDetail() }}
+      className={`rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm transition-opacity ${isDone ? 'opacity-60' : ''} ${!isTemp && !isDeletedView ? 'cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-600' : ''}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
@@ -58,6 +76,15 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
               {task.title}
             </p>
             {task.flagged && <span className="text-red-500 text-sm">⚑</span>}
+            {task.blocked && (
+              <span
+                title="Blocked by unfinished dependencies"
+                className="text-amber-500 dark:text-amber-400 text-sm"
+                aria-label="Blocked"
+              >
+                🔒
+              </span>
+            )}
           </div>
           {task.description && (
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 line-clamp-2">{task.description}</p>
@@ -76,14 +103,20 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
               <select
                 value={task.status}
                 disabled={isStatusPending || isDeletedView}
-                onChange={(e) =>
+                onClick={stop}
+                onMouseDown={stop}
+                onChange={(e) => {
+                  e.stopPropagation()
                   updateStatus.mutate({ id: task.id, status: Number(e.target.value) as Status })
-                }
+                }}
+                title={task.blocked ? 'Complete blocking tasks before marking this Done' : undefined}
                 className={`rounded-full px-2 py-0.5 text-xs font-medium cursor-pointer border-0 outline-none focus:ring-1 focus:ring-indigo-400 disabled:opacity-50 ${statusSelectColors[task.status]}`}
               >
                 <option value={Status.TODO}>To Do</option>
                 <option value={Status.IN_PROGRESS}>In Progress</option>
-                <option value={Status.DONE}>Done</option>
+                <option value={Status.DONE} disabled={task.blocked}>
+                  Done{task.blocked ? ' (blocked)' : ''}
+                </option>
               </select>
             )}
             {task.tags?.map((tag) => (
@@ -109,7 +142,7 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
           {/* Subtask progress bar — shown only when subtasks exist */}
           {!isTemp && subtaskCount > 0 && (
             <button
-              onClick={() => setSubtasksOpen((o) => !o)}
+              onClick={(e) => { e.stopPropagation(); setSubtasksOpen((o) => !o) }}
               className="mt-2 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
             >
               <svg
@@ -133,12 +166,14 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
 
           {/* Subtask list — also opens via "+" button when count is 0 */}
           {!isTemp && subtasksOpen && (
-            <SubtaskList parentTask={task} />
+            <div onClick={stop}>
+              <SubtaskList parentTask={task} />
+            </div>
           )}
         </div>
 
         {!isTemp && (
-          <div className="flex shrink-0 gap-1">
+          <div className="flex shrink-0 gap-1" onClick={stop}>
             {isDeletedView ? (
               <>
                 <Button

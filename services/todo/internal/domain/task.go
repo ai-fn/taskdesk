@@ -40,4 +40,6 @@ type Task struct {
 	ParentTaskID      *string    // nil = root task
 	SubtaskCount      int        // computed by store
 	SubtaskDoneCount  int        // computed by store
+	Blocked           bool       // computed by store: any unfinished dep
+	DependsOnTaskIDs  []string   // computed by store: aggregated dep IDs
 }

@@ -10,6 +10,7 @@ export interface ListTasksFilter {
   due_today?: boolean
   has_due_date?: boolean
   parent_task_id?: string
+  exclude_blocked?: boolean
 }
 
 export async function listTasks(filter?: ListTasksFilter): Promise<TaskListResponse> {
@@ -22,6 +23,7 @@ export async function listTasks(filter?: ListTasksFilter): Promise<TaskListRespo
   if (filter?.due_today) params.due_today = 'true'
   if (filter?.has_due_date) params.has_due_date = 'true'
   if (filter?.parent_task_id) params.parent_task_id = filter.parent_task_id
+  if (filter?.exclude_blocked) params.exclude_blocked = 'true'
   const { data } = await api.get<TaskListResponse>('/api/v1/tasks', { params })
   return data
 }
@@ -106,4 +108,46 @@ export async function parseTask(text: string, listNames: string[], signal?: Abor
     list_names: listNames,
   }, { signal })
   return data
+}
+
+export interface TaskDependencies {
+  depends_on: Task[]
+  blocking: Task[]
+}
+
+export async function listDependencies(taskId: string): Promise<TaskDependencies> {
+  const { data } = await api.get<TaskDependencies>(`/api/v1/tasks/${taskId}/dependencies`)
+  return { depends_on: data.depends_on ?? [], blocking: data.blocking ?? [] }
+}
+
+export async function addDependency(taskId: string, dependsOnId: string): Promise<Task> {
+  const { data } = await api.post<Task>(`/api/v1/tasks/${taskId}/dependencies`, {
+    depends_on_id: dependsOnId,
+  })
+  return data
+}
+
+export async function removeDependency(taskId: string, dependsOnId: string): Promise<void> {
+  await api.delete(`/api/v1/tasks/${taskId}/dependencies/${dependsOnId}`)
+}
+
+export interface DependencyTreeNode {
+  task: Task
+  depth: number
+  via_task_id: string
+}
+
+export interface DependencyTree {
+  root: Task
+  depends_on: DependencyTreeNode[]
+  blocking: DependencyTreeNode[]
+}
+
+export async function getDependencyTree(taskId: string): Promise<DependencyTree> {
+  const { data } = await api.get<DependencyTree>(`/api/v1/tasks/${taskId}/dependency-tree`)
+  return {
+    root: data.root,
+    depends_on: data.depends_on ?? [],
+    blocking: data.blocking ?? [],
+  }
 }
