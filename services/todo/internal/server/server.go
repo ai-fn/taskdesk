@@ -102,6 +102,7 @@ func (s *Server) ListTasks(ctx context.Context, req *todov1.ListTasksRequest) (*
 		FlaggedOnly:    req.FlaggedOnly,
 		DueTodayOnly:   req.DueTodayOnly,
 		HasDueDate:     req.HasDueDate,
+		ExcludeBlocked: req.ExcludeBlocked,
 	}
 	if req.Status != todov1.Status_STATUS_UNSPECIFIED {
 		st := domain.Status(req.Status)
@@ -207,6 +208,19 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 
 	existing.UpdatedAt = time.Now().UTC()
 
+	// Reject Done if any dependency is still open. Applies to direct Status=DONE
+	// updates as well as the CompleteTask RPC (which routes through here).
+	if existing.Status == domain.StatusDone {
+		blocked, err := s.store.HasUnfinishedDependencies(ctx, req.TaskId)
+		if err != nil {
+			s.log.Error("check unfinished deps", "err", err)
+			return nil, status.Error(codes.Internal, "check dependencies failed")
+		}
+		if blocked {
+			return nil, status.Error(codes.FailedPrecondition, "task is blocked by unfinished dependencies")
+		}
+	}
+
 	evType := events.TypeTaskUpdated
 	if existing.Status == domain.StatusDone {
 		evType = events.TypeTaskCompleted
@@ -245,6 +259,7 @@ func (s *Server) DeleteTask(ctx context.Context, req *todov1.DeleteTaskRequest) 
 // ── CompleteTask ──────────────────────────────────────────────────────────────
 
 func (s *Server) CompleteTask(ctx context.Context, req *todov1.CompleteTaskRequest) (*todov1.CompleteTaskResponse, error) {
+	// UpdateTask enforces the unfinished-dependency check below.
 	resp, err := s.UpdateTask(ctx, &todov1.UpdateTaskRequest{
 		UserId: req.UserId,
 		TaskId: req.TaskId,
@@ -580,6 +595,8 @@ func toProto(t *domain.Task) *todov1.Task {
 	}
 	p.SubtaskCount = int32(t.SubtaskCount)
 	p.SubtaskDoneCount = int32(t.SubtaskDoneCount)
+	p.Blocked = t.Blocked
+	p.DependsOnTaskIds = t.DependsOnTaskIDs
 	return p
 }
 
@@ -696,4 +713,98 @@ func (s *Server) UpdateTaskScore(ctx context.Context, req *todov1.UpdateTaskScor
 		return nil, status.Error(codes.Internal, "update score failed")
 	}
 	return &todov1.UpdateTaskScoreResponse{Task: toProto(t)}, nil
+}
+
+// ── Dependencies ──────────────────────────────────────────────────────────────
+
+func (s *Server) AddDependency(ctx context.Context, req *todov1.AddDependencyRequest) (*todov1.AddDependencyResponse, error) {
+	if req.UserId == "" || req.TaskId == "" || req.DependsOnId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id, task_id, depends_on_id are required")
+	}
+	if err := s.store.AddDependency(ctx, req.UserId, req.TaskId, req.DependsOnId); err != nil {
+		switch {
+		case errors.Is(err, store.ErrCycleDetected):
+			return nil, status.Error(codes.FailedPrecondition, "would create dependency cycle")
+		case errors.Is(err, store.ErrDependencyExists):
+			return nil, status.Error(codes.AlreadyExists, "dependency already exists")
+		case errors.Is(err, store.ErrNotFound):
+			return nil, status.Error(codes.NotFound, "task not found")
+		}
+		s.log.Error("add dependency", "task_id", req.TaskId, "depends_on", req.DependsOnId, "err", err)
+		return nil, status.Error(codes.Internal, "add dependency failed")
+	}
+	// Return the updated task so the client gets fresh Blocked/DependsOnTaskIDs.
+	t, err := s.store.GetTask(ctx, req.UserId, req.TaskId)
+	if err != nil {
+		s.log.Error("get task after add dep", "err", err)
+		return nil, status.Error(codes.Internal, "fetch updated task failed")
+	}
+	return &todov1.AddDependencyResponse{Task: toProto(t)}, nil
+}
+
+func (s *Server) RemoveDependency(ctx context.Context, req *todov1.RemoveDependencyRequest) (*todov1.RemoveDependencyResponse, error) {
+	if req.UserId == "" || req.TaskId == "" || req.DependsOnId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id, task_id, depends_on_id are required")
+	}
+	if err := s.store.RemoveDependency(ctx, req.UserId, req.TaskId, req.DependsOnId); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "dependency not found")
+		}
+		s.log.Error("remove dependency", "err", err)
+		return nil, status.Error(codes.Internal, "remove dependency failed")
+	}
+	return &todov1.RemoveDependencyResponse{}, nil
+}
+
+func (s *Server) GetDependencyTree(ctx context.Context, req *todov1.GetDependencyTreeRequest) (*todov1.GetDependencyTreeResponse, error) {
+	if req.UserId == "" || req.TaskId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
+	}
+
+	root, err := s.store.GetTask(ctx, req.UserId, req.TaskId)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "task not found")
+		}
+		s.log.Error("get task for dep tree", "err", err)
+		return nil, status.Error(codes.Internal, "fetch task failed")
+	}
+
+	dependsOn, blocking, err := s.store.GetDependencyTree(ctx, req.UserId, req.TaskId)
+	if err != nil {
+		s.log.Error("get dependency tree", "task_id", req.TaskId, "err", err)
+		return nil, status.Error(codes.Internal, "fetch dependency tree failed")
+	}
+
+	resp := &todov1.GetDependencyTreeResponse{Root: toProto(root)}
+	for _, n := range dependsOn {
+		resp.DependsOn = append(resp.DependsOn, &todov1.DependencyTreeNode{
+			Task: toProto(n.Task), Depth: int32(n.Depth), ViaTaskId: n.Via,
+		})
+	}
+	for _, n := range blocking {
+		resp.Blocking = append(resp.Blocking, &todov1.DependencyTreeNode{
+			Task: toProto(n.Task), Depth: int32(n.Depth), ViaTaskId: n.Via,
+		})
+	}
+	return resp, nil
+}
+
+func (s *Server) ListDependencies(ctx context.Context, req *todov1.ListDependenciesRequest) (*todov1.ListDependenciesResponse, error) {
+	if req.UserId == "" || req.TaskId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
+	}
+	dependsOn, blocking, err := s.store.ListDependencies(ctx, req.UserId, req.TaskId)
+	if err != nil {
+		s.log.Error("list dependencies", "task_id", req.TaskId, "err", err)
+		return nil, status.Error(codes.Internal, "list dependencies failed")
+	}
+	resp := &todov1.ListDependenciesResponse{}
+	for _, t := range dependsOn {
+		resp.DependsOn = append(resp.DependsOn, toProto(t))
+	}
+	for _, t := range blocking {
+		resp.Blocking = append(resp.Blocking, toProto(t))
+	}
+	return resp, nil
 }

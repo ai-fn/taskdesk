@@ -34,6 +34,8 @@ export interface Task {
   parent_task_id?: string      // absent = root task
   subtask_count?: number       // computed
   subtask_done_count?: number  // computed
+  blocked?: boolean              // computed: true if any dependency is unfinished
+  depends_on_task_ids?: string[] // computed: task IDs this is blocked by
 }
 
 export interface TaskList {

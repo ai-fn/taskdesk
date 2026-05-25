@@ -57,6 +57,11 @@ func New(
 		r.Post("/{taskID}/complete", todo.Complete)
 		r.Post("/{taskID}/restore",  todo.Restore)
 		r.Delete("/{taskID}/purge",  todo.Purge)
+
+		r.Get("/{taskID}/dependencies",                  todo.ListDependencies)
+		r.Get("/{taskID}/dependency-tree",               todo.GetDependencyTree)
+		r.Post("/{taskID}/dependencies",                 todo.AddDependency)
+		r.Delete("/{taskID}/dependencies/{dependsOnID}", todo.RemoveDependency)
 	})
 
 	lists := handler.NewListHandler(todoClient)

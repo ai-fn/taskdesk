@@ -132,10 +132,16 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
       {task && (
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Status</label>
-          <select className={fieldClass} {...register('status')}>
+          <select
+            className={fieldClass}
+            title={task.blocked ? 'Complete blocking tasks before marking this Done' : undefined}
+            {...register('status')}
+          >
             <option value={Status.TODO}>To Do</option>
             <option value={Status.IN_PROGRESS}>In Progress</option>
-            <option value={Status.DONE}>Done</option>
+            <option value={Status.DONE} disabled={task.blocked}>
+              Done{task.blocked ? ' (blocked)' : ''}
+            </option>
           </select>
         </div>
       )}

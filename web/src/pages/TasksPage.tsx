@@ -6,6 +6,7 @@ import type { ListTasksFilter } from '@/api/tasks'
 import { TaskList } from '@/components/tasks/TaskList'
 import { TaskForm, type TaskPrefill } from '@/components/tasks/TaskForm'
 import { SubtaskList } from '@/components/tasks/SubtaskList'
+import { DependencyPicker } from '@/components/tasks/DependencyPicker'
 import { NaturalLanguageInput } from '@/components/tasks/NaturalLanguageInput'
 import { DailyPlanPanel } from '@/components/tasks/DailyPlanPanel'
 import { Button } from '@/components/ui/Button'
@@ -225,10 +226,13 @@ export function TasksPage() {
                   isLoading={createTask.isPending || updateTask.isPending}
                 >
                   {modal.type === 'edit' && (
-                    <div className="border-t border-gray-100 dark:border-gray-700 pt-4">
-                      <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">Subtasks</p>
-                      <SubtaskList parentTask={modal.task} />
-                    </div>
+                    <>
+                      <div className="border-t border-gray-100 dark:border-gray-700 pt-4">
+                        <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">Subtasks</p>
+                        <SubtaskList parentTask={modal.task} />
+                      </div>
+                      <DependencyPicker task={modal.task} />
+                    </>
                   )}
                 </TaskForm>
               </>

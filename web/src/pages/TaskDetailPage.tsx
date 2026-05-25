@@ -1,0 +1,376 @@
+import { useMemo, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import axios from 'axios'
+import { getDependencyTree, getTask } from '@/api/tasks'
+import { taskKeys } from '@/api/queryKeys'
+import type { DependencyTreeNode } from '@/api/tasks'
+import { Priority, PriorityLabel, Status } from '@/types'
+import { useLists } from '@/hooks/useLists'
+import { useUpdateStatus, useToggleFlagged, useUpdateTask } from '@/hooks/useTaskMutations'
+import { SubtaskList } from '@/components/tasks/SubtaskList'
+import { DependencyPicker } from '@/components/tasks/DependencyPicker'
+import { TaskForm } from '@/components/tasks/TaskForm'
+import { Spinner } from '@/components/ui/Spinner'
+import { Button } from '@/components/ui/Button'
+import { Modal } from '@/components/ui/Modal'
+import { ErrorMessage } from '@/components/ui/ErrorMessage'
+
+const priorityColors: Record<Priority, string> = {
+  [Priority.UNSPECIFIED]: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
+  [Priority.LOW]: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  [Priority.MEDIUM]: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300',
+  [Priority.HIGH]: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
+  [Priority.URGENT]: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+}
+
+const statusColors: Record<Status, string> = {
+  [Status.UNSPECIFIED]: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
+  [Status.TODO]: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200',
+  [Status.IN_PROGRESS]: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+  [Status.DONE]: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300',
+}
+
+function scoreColor(score: number) {
+  if (score >= 70) return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+  if (score >= 40) return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300'
+  return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+}
+
+export function TaskDetailPage() {
+  const { taskId = '' } = useParams<{ taskId: string }>()
+  const navigate = useNavigate()
+  const { data: lists = [] } = useLists()
+
+  const { data: task, isLoading: taskLoading, isError: taskError } = useQuery({
+    queryKey: taskKeys.detail(taskId),
+    queryFn: () => getTask(taskId),
+    enabled: !!taskId,
+  })
+
+  const { data: tree, isLoading: treeLoading } = useQuery({
+    queryKey: taskKeys.dependencyTree(taskId),
+    queryFn: () => getDependencyTree(taskId),
+    enabled: !!taskId,
+  })
+
+  const updateStatus = useUpdateStatus()
+  const toggleFlagged = useToggleFlagged()
+  const updateTask = useUpdateTask()
+
+  const [editOpen, setEditOpen] = useState(false)
+  const [editError, setEditError] = useState('')
+
+  const list = useMemo(() => lists.find((l) => l.id === task?.list_id), [lists, task])
+
+  async function handleSave(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string; list_id?: string | null; flagged?: boolean }) {
+    if (!task) return
+    setEditError('')
+    try {
+      await updateTask.mutateAsync({ id: task.id, input: values })
+      setEditOpen(false)
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.data?.error) {
+        setEditError(err.response.data.error as string)
+      } else {
+        setEditError('Failed to update task.')
+      }
+    }
+  }
+
+  if (taskLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Spinner className="h-6 w-6 text-indigo-500" />
+      </div>
+    )
+  }
+  if (taskError || !task) {
+    return (
+      <div className="text-center py-20 text-gray-500 dark:text-gray-400">
+        <p>Task not found.</p>
+        <button onClick={() => navigate('/')} className="mt-4 text-indigo-600 dark:text-indigo-400 hover:underline">
+          ← Back to lists
+        </button>
+      </div>
+    )
+  }
+
+  const dependsOn = tree?.depends_on ?? []
+  const blocking  = tree?.blocking  ?? []
+  const dependsOnDone = dependsOn.filter((n) => n.task.status === Status.DONE).length
+  const blockingDone  = blocking.filter((n) => n.task.status === Status.DONE).length
+
+  return (
+    <div className="max-w-3xl mx-auto pb-12">
+      <button
+        onClick={() => navigate(-1)}
+        className="mb-4 inline-flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+      >
+        ‹ Back
+      </button>
+
+      {/* Hero */}
+      <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-sm">
+        <div className="flex items-start gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className={`text-xl font-semibold text-gray-900 dark:text-gray-100 ${task.status === Status.DONE ? 'line-through opacity-60' : ''}`}>
+                {task.title}
+              </h1>
+              {task.blocked && (
+                <span title="Blocked by unfinished dependencies" className="text-amber-500 dark:text-amber-400">🔒</span>
+              )}
+            </div>
+
+            {task.description && (
+              <p className="mt-2 text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap">
+                {task.description}
+              </p>
+            )}
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <select
+                value={task.status}
+                onChange={(e) => updateStatus.mutate({ id: task.id, status: Number(e.target.value) as Status })}
+                disabled={updateStatus.isPending}
+                title={task.blocked ? 'Complete blocking tasks before marking this Done' : undefined}
+                className={`rounded-full px-3 py-1 text-xs font-medium cursor-pointer border-0 outline-none focus:ring-1 focus:ring-indigo-400 ${statusColors[task.status]}`}
+              >
+                <option value={Status.TODO}>To Do</option>
+                <option value={Status.IN_PROGRESS}>In Progress</option>
+                <option value={Status.DONE} disabled={task.blocked}>
+                  Done{task.blocked ? ' (blocked)' : ''}
+                </option>
+              </select>
+
+              {task.priority !== Priority.UNSPECIFIED && (
+                <span className={`rounded-full px-3 py-1 text-xs font-medium ${priorityColors[task.priority]}`}>
+                  {PriorityLabel[task.priority]}
+                </span>
+              )}
+
+              {task.due_at && (
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  Due {new Date(task.due_at).toLocaleDateString()}
+                </span>
+              )}
+
+              {list && (
+                <span
+                  className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400"
+                  title={`In list: ${list.name}`}
+                >
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: list.color }} />
+                  {list.name}
+                </span>
+              )}
+
+              {task.completion_score != null && task.completion_score > 0 && (
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-medium cursor-default ${scoreColor(task.completion_score)}`}
+                  title={task.completion_insight || undefined}
+                >
+                  ✦ {task.completion_score}%
+                </span>
+              )}
+
+              {task.tags?.map((tag) => (
+                <span key={tag} className="rounded-full bg-indigo-50 dark:bg-indigo-900/40 px-2 py-0.5 text-xs text-indigo-600 dark:text-indigo-300">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-start gap-2">
+            <button
+              onClick={() => toggleFlagged.mutate({ id: task.id, flagged: !task.flagged })}
+              className={`rounded p-1 transition-colors ${
+                task.flagged
+                  ? 'text-red-500 hover:text-red-700 dark:text-red-400'
+                  : 'text-gray-300 dark:text-gray-600 hover:text-red-400'
+              }`}
+              title={task.flagged ? 'Unflag' : 'Flag'}
+            >
+              ⚑
+            </button>
+            <Button
+              variant="secondary"
+              className="text-xs"
+              onClick={() => { setEditError(''); setEditOpen(true) }}
+            >
+              Edit
+            </Button>
+          </div>
+        </div>
+
+        {task.completion_insight && (
+          <p className="mt-3 text-xs italic text-gray-500 dark:text-gray-400">
+            ✦ {task.completion_insight}
+          </p>
+        )}
+      </div>
+
+      {/* Subtasks */}
+      <section className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-sm">
+        <h2 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Subtasks</h2>
+        <SubtaskList parentTask={task} />
+      </section>
+
+      {/* Blocked by */}
+      <section className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-sm">
+        <div className="mb-3 flex items-baseline justify-between gap-3">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Blocked by</h2>
+          {dependsOn.length > 0 && (
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              {dependsOnDone} of {dependsOn.length} complete
+            </span>
+          )}
+        </div>
+
+        {treeLoading ? (
+          <Spinner className="h-4 w-4 text-indigo-500" />
+        ) : dependsOn.length === 0 ? (
+          <p className="text-sm text-gray-400 dark:text-gray-500">No dependencies.</p>
+        ) : (
+          <DependencyChain nodes={dependsOn} rootTitle={task.title} direction="up" />
+        )}
+
+        <div className="mt-4 border-t border-gray-100 dark:border-gray-700 pt-4">
+          <DependencyPicker task={task} />
+        </div>
+      </section>
+
+      {/* Blocking */}
+      {blocking.length > 0 && (
+        <section className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-sm">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Blocks</h2>
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              {blockingDone} of {blocking.length} complete
+            </span>
+          </div>
+          <DependencyChain nodes={blocking} rootTitle={task.title} direction="down" />
+        </section>
+      )}
+
+      {editOpen && (
+        <Modal onClose={() => setEditOpen(false)} className="max-w-xl">
+          <div className="rounded-xl bg-white dark:bg-gray-800 shadow-xl overflow-hidden">
+            <div className="max-h-[90vh] overflow-y-auto p-6">
+              <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">Edit task</h2>
+              {editError && <div className="mb-4"><ErrorMessage message={editError} /></div>}
+              <TaskForm
+                task={task}
+                lists={lists}
+                onSubmit={handleSave}
+                onCancel={() => setEditOpen(false)}
+                isLoading={updateTask.isPending}
+              />
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ── DependencyChain ─────────────────────────────────────────────────────────
+// Renders a flat-with-indentation tree from a flat node list keyed by `via`.
+
+function DependencyChain({
+  nodes,
+  rootTitle,
+  direction,
+}: {
+  nodes: DependencyTreeNode[]
+  rootTitle: string
+  direction: 'up' | 'down'
+}) {
+  // Group nodes by via_task_id so we can render a parent → child tree.
+  const childrenByVia = useMemo(() => {
+    const m = new Map<string, DependencyTreeNode[]>()
+    for (const n of nodes) {
+      const arr = m.get(n.via_task_id) ?? []
+      arr.push(n)
+      m.set(n.via_task_id, arr)
+    }
+    return m
+  }, [nodes])
+
+  // The "root" of this section is the task whose page we're on.
+  // For 'up' direction: depth=1 nodes have via=rootTaskID
+  // For 'down': same — via_task_id of depth=1 is the root task ID
+  // We don't have rootTaskID directly here; instead, render every depth=1
+  // node and recurse using each task's own ID as the via key.
+  const directDeps = useMemo(() => nodes.filter((n) => n.depth === 1), [nodes])
+
+  const arrow = direction === 'up' ? '↑' : '↓'
+
+  return (
+    <ul className="space-y-1.5">
+      {directDeps.map((n) => (
+        <DependencyChainNode
+          key={n.task.id}
+          node={n}
+          childrenByVia={childrenByVia}
+          rootArrow={arrow}
+        />
+      ))}
+      <li className="ml-1 mt-2 text-xs text-gray-400 dark:text-gray-500">
+        {arrow} {rootTitle}
+      </li>
+    </ul>
+  )
+}
+
+function DependencyChainNode({
+  node,
+  childrenByVia,
+  rootArrow,
+}: {
+  node: DependencyTreeNode
+  childrenByVia: Map<string, DependencyTreeNode[]>
+  rootArrow: string
+}) {
+  const t = node.task
+  const isDone = t.status === Status.DONE
+  const children = childrenByVia.get(t.id) ?? []
+
+  return (
+    <li>
+      <div className="flex items-center gap-2 group py-0.5">
+        <span
+          className={`h-2 w-2 rounded-full shrink-0 ${
+            isDone ? 'bg-green-500' : t.status === Status.IN_PROGRESS ? 'bg-purple-500' : 'bg-amber-500'
+          }`}
+          title={isDone ? 'Done' : t.status === Status.IN_PROGRESS ? 'In progress' : 'To do'}
+        />
+        <Link
+          to={`/tasks/detail/${t.id}`}
+          className={`flex-1 text-sm truncate hover:underline ${
+            isDone
+              ? 'line-through text-gray-400 dark:text-gray-500'
+              : 'text-gray-700 dark:text-gray-300'
+          }`}
+        >
+          {t.title}
+        </Link>
+        {t.blocked && <span className="text-amber-500 text-xs" title="This task is blocked too">🔒</span>}
+      </div>
+      {children.length > 0 && (
+        <ul className="ml-4 mt-1 space-y-1 border-l-2 border-gray-100 dark:border-gray-700 pl-3">
+          {children.map((c) => (
+            <DependencyChainNode
+              key={c.task.id}
+              node={c}
+              childrenByVia={childrenByVia}
+              rootArrow={rootArrow}
+            />
+          ))}
+        </ul>
+      )}
+    </li>
+  )
+}

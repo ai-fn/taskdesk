@@ -53,6 +53,9 @@ func (h *TodoHandler) List(w http.ResponseWriter, r *http.Request) {
 	if q.Get("parent_task_id") != "" {
 		req.ParentTaskId = q.Get("parent_task_id")
 	}
+	if q.Get("exclude_blocked") == "true" {
+		req.ExcludeBlocked = true
+	}
 
 	resp, err := h.client.ListTasks(r.Context(), req)
 	if err != nil {
@@ -234,4 +237,80 @@ func (h *TodoHandler) Purge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /api/v1/tasks/{taskID}/dependencies   body: {depends_on_id}
+func (h *TodoHandler) AddDependency(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromContext(r.Context())
+	taskID := chi.URLParam(r, "taskID")
+
+	var body struct {
+		DependsOnID string `json:"depends_on_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.DependsOnID == "" {
+		jsonError(w, "depends_on_id is required", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := h.client.AddDependency(r.Context(), &todov1.AddDependencyRequest{
+		UserId:      userID,
+		TaskId:      taskID,
+		DependsOnId: body.DependsOnID,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+	protoOK(w, resp.Task)
+}
+
+// DELETE /api/v1/tasks/{taskID}/dependencies/{dependsOnID}
+func (h *TodoHandler) RemoveDependency(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromContext(r.Context())
+	taskID := chi.URLParam(r, "taskID")
+	dependsOnID := chi.URLParam(r, "dependsOnID")
+
+	_, err := h.client.RemoveDependency(r.Context(), &todov1.RemoveDependencyRequest{
+		UserId:      userID,
+		TaskId:      taskID,
+		DependsOnId: dependsOnID,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GET /api/v1/tasks/{taskID}/dependencies  → {depends_on: Task[], blocking: Task[]}
+func (h *TodoHandler) ListDependencies(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromContext(r.Context())
+	taskID := chi.URLParam(r, "taskID")
+
+	resp, err := h.client.ListDependencies(r.Context(), &todov1.ListDependenciesRequest{
+		UserId: userID,
+		TaskId: taskID,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+	protoOK(w, resp)
+}
+
+// GET /api/v1/tasks/{taskID}/dependency-tree → {root, depends_on[], blocking[]}
+// Each tree node has {task, depth, via_task_id}, transitively walked.
+func (h *TodoHandler) GetDependencyTree(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromContext(r.Context())
+	taskID := chi.URLParam(r, "taskID")
+
+	resp, err := h.client.GetDependencyTree(r.Context(), &todov1.GetDependencyTreeRequest{
+		UserId: userID,
+		TaskId: taskID,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+	protoOK(w, resp)
 }

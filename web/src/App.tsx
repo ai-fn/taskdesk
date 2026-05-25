@@ -7,6 +7,7 @@ import { LoginPage } from '@/pages/LoginPage'
 import { SignupPage } from '@/pages/SignupPage'
 import { ListsHomePage } from '@/pages/ListsHomePage'
 import { TasksPage } from '@/pages/TasksPage'
+import { TaskDetailPage } from '@/pages/TaskDetailPage'
 import { useAuth } from '@/hooks/useAuth'
 
 function PublicRoute({ children }: { children: ReactNode }) {
@@ -44,6 +45,7 @@ export function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
             <Route path="/" element={<ListsHomePage />} />
+            <Route path="/tasks/detail/:taskId" element={<TaskDetailPage />} />
             <Route path="/tasks/:listId" element={<TasksPage />} />
           </Route>
         </Route>
