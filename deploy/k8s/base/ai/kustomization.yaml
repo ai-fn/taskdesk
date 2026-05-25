@@ -4,7 +4,12 @@ namespace: todo
 resources:
   - deployment.yaml
   - service.yaml
-  - secret.yaml
+# Secret generated from local .env (gitignored).
+# Copy .env.example → .env and fill in API keys before `tilt up`.
+secretGenerator:
+  - name: ai-secret
+    envs:
+      - .env
 configMapGenerator:
   - name: ai-migrations
     files:

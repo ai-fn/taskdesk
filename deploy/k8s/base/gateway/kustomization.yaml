@@ -6,3 +6,13 @@ namespace: todo
 resources:
 - deployment.yaml
 - service.yaml
+
+# Secret generated from local .env (gitignored).
+# Copy .env.example → .env and fill in values before `tilt up`.
+# Kustomize rewrites secretKeyRef.name in deployment.yaml automatically,
+# so the hash suffix is fine: rotating .env triggers a fresh secret name
+# and a pod restart on next reconcile.
+secretGenerator:
+- name: gateway-secret
+  envs:
+  - .env

@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { useAuth } from '@/hooks/useAuth'
 import { AuthLayout } from '@/components/layout/AuthLayout'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
+import { OAuthButtons, oauthErrorMessage } from '@/components/auth/OAuthButtons'
 import axios from 'axios'
 
 interface FormValues {
@@ -16,7 +17,9 @@ interface FormValues {
 export function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
-  const [apiError, setApiError] = useState('')
+  const [searchParams] = useSearchParams()
+  const oauthError = oauthErrorMessage(searchParams.get('oauth_error'))
+  const [apiError, setApiError] = useState(oauthError ?? '')
 
   const {
     register,
@@ -61,6 +64,7 @@ export function LoginPage() {
           Sign in
         </Button>
       </form>
+      <OAuthButtons />
       <p className="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
         No account?{' '}
         <Link to="/signup" className="text-indigo-600 dark:text-indigo-400 hover:underline">

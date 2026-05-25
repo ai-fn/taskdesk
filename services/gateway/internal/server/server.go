@@ -9,6 +9,7 @@ import (
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	"github.com/fsociety/todo/services/gateway/internal/handler"
 	"github.com/fsociety/todo/services/gateway/internal/middleware"
+	"github.com/fsociety/todo/services/gateway/internal/oauth"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
@@ -24,6 +25,7 @@ func New(
 	todoClient todov1.TodoServiceClient,
 	aiClient aiv1.AIServiceClient,
 	rdb *redis.Client,
+	oauthProviders oauth.Registry,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -38,11 +40,15 @@ func New(
 	})
 
 	auth := handler.NewAuthHandler(authClient, todoClient, log)
+	oauthH := handler.NewOAuthHandler(authClient, oauthProviders, log)
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/signup",  auth.SignUp)
 		r.Post("/login",   auth.Login)
 		r.Post("/refresh", auth.Refresh)
 		r.Post("/logout",  auth.Logout)
+
+		r.Get("/oauth/{provider}",          oauthH.Start)
+		r.Get("/oauth/{provider}/callback", oauthH.Callback)
 	})
 
 	todo := handler.NewTodoHandler(todoClient)

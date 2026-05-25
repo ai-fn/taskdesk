@@ -21,6 +21,9 @@ service AuthService {
   rpc ListUserIDs(ListUserIDsRequest) returns (ListUserIDsResponse);
   // GetUserByID returns a single user's public profile.
   rpc GetUserByID(GetUserByIDRequest) returns (GetUserByIDResponse);
+  // OAuthSignIn finds-or-creates a user from a verified OAuth identity and
+  // returns a fresh token pair, exactly like Login/SignUp.
+  rpc OAuthSignIn(OAuthSignInRequest) returns (OAuthSignInResponse);
 }
 
 // ── Sign up ──────────────────────────────────────────────────────────────────
@@ -122,4 +125,20 @@ message GetUserByIDRequest {
 
 message GetUserByIDResponse {
   UserSummary user = 1;
+}
+
+// ── OAuthSignIn ───────────────────────────────────────────────────────────────
+
+message OAuthSignInRequest {
+  string provider         = 1; // "google" | "discord"
+  string provider_user_id = 2; // stable, provider-issued ID (Google's sub, Discord's id)
+  string email            = 3;
+  string name             = 4;
+}
+
+message OAuthSignInResponse {
+  string user_id       = 1;
+  string access_token  = 2;
+  string refresh_token = 3;
+  bool   created       = 4; // true = new user record
 }

@@ -6,6 +6,7 @@ import { AuthLayout } from '@/components/layout/AuthLayout'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
+import { OAuthButtons } from '@/components/auth/OAuthButtons'
 import axios from 'axios'
 
 interface FormValues {
@@ -71,6 +72,7 @@ export function SignupPage() {
           Create account
         </Button>
       </form>
+      <OAuthButtons />
       <p className="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
         Already have an account?{' '}
         <Link to="/login" className="text-indigo-600 dark:text-indigo-400 hover:underline">
