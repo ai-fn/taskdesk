@@ -130,6 +130,59 @@ func (s *Store) ListUsers(ctx context.Context) ([]*domain.User, error) {
 	return users, rows.Err()
 }
 
+// ── OAuth identities ──────────────────────────────────────────────────────────
+
+// CreateUserNoPassword inserts an OAuth-only user (password_hash NULL).
+func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO auth.users (id, email, name, password_hash, created_at, updated_at)
+		VALUES ($1, $2, $3, NULL, $4, $5)`,
+		u.ID, u.Email, u.Name, u.CreatedAt, u.UpdatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrEmailTaken
+		}
+		return fmt.Errorf("insert oauth user: %w", err)
+	}
+	return nil
+}
+
+// FindByOAuth returns the user linked to (provider, providerUserID).
+// Returns (nil, ErrNotFound) when the identity is not linked yet.
+func (s *Store) FindByOAuth(ctx context.Context, provider, providerUserID string) (*domain.User, error) {
+	var u domain.User
+	err := s.db.QueryRow(ctx, `
+		SELECT u.id, u.email, u.name, u.password_hash, u.created_at, u.updated_at
+		FROM auth.oauth_identities oi
+		JOIN auth.users u ON u.id = oi.user_id
+		WHERE oi.provider = $1 AND oi.provider_user_id = $2`,
+		provider, providerUserID,
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("find by oauth: %w", err)
+	}
+	return &u, nil
+}
+
+// LinkOAuth attaches an OAuth identity to an existing user.
+// Idempotent: ON CONFLICT DO NOTHING so re-linking is a no-op.
+func (s *Store) LinkOAuth(ctx context.Context, userID, provider, providerUserID, email string) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO auth.oauth_identities (provider, provider_user_id, user_id, email)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (provider, provider_user_id) DO NOTHING`,
+		provider, providerUserID, userID, email,
+	)
+	if err != nil {
+		return fmt.Errorf("link oauth: %w", err)
+	}
+	return nil
+}
+
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"

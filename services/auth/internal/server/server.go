@@ -42,13 +42,14 @@ func (s *Server) SignUp(ctx context.Context, req *authv1.SignUpRequest) (*authv1
 	if err != nil {
 		return nil, status.Error(codes.Internal, "password hashing failed")
 	}
+	hashStr := string(hash)
 
 	now := time.Now().UTC()
 	user := &domain.User{
 		ID:           uuid.New().String(),
 		Email:        req.Email,
 		Name:         req.Name,
-		PasswordHash: string(hash),
+		PasswordHash: &hashStr,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -93,7 +94,11 @@ func (s *Server) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.L
 		return nil, status.Error(codes.Internal, "login failed")
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+	if user.PasswordHash == nil {
+		// OAuth-only account — no password to compare against.
+		return nil, status.Error(codes.Unauthenticated, "no password set for this account; use OAuth to sign in")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.Password)); err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid credentials")
 	}
 
@@ -233,6 +238,103 @@ func (s *Server) GetUserByID(ctx context.Context, req *authv1.GetUserByIDRequest
 			Email:  u.Email,
 			Name:   u.Name,
 		},
+	}, nil
+}
+
+// ── OAuthSignIn ───────────────────────────────────────────────────────────────
+
+// OAuthSignIn handles a verified OAuth identity from the gateway.
+// Decision tree:
+//  1. Identity already linked → return existing user, created=false.
+//  2. Email matches existing user → link identity, created=false.
+//  3. Otherwise → create user (no password) + link identity, created=true.
+func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest) (*authv1.OAuthSignInResponse, error) {
+	if req.Provider == "" || req.ProviderUserId == "" || req.Email == "" {
+		return nil, status.Error(codes.InvalidArgument, "provider, provider_user_id, email are required")
+	}
+
+	created := false
+	var user *domain.User
+
+	// 1. Existing OAuth link?
+	u, err := s.store.FindByOAuth(ctx, req.Provider, req.ProviderUserId)
+	if err == nil {
+		user = u
+	} else if !errors.Is(err, store.ErrNotFound) {
+		s.log.Error("find by oauth", "err", err)
+		return nil, status.Error(codes.Internal, "oauth signin failed")
+	}
+
+	// 2. Match by email?
+	if user == nil {
+		existing, err := s.store.GetUserByEmail(ctx, req.Email)
+		if err == nil {
+			if err := s.store.LinkOAuth(ctx, existing.ID, req.Provider, req.ProviderUserId, req.Email); err != nil {
+				s.log.Error("link oauth (existing user)", "err", err)
+				return nil, status.Error(codes.Internal, "oauth link failed")
+			}
+			user = existing
+		} else if !errors.Is(err, store.ErrNotFound) {
+			s.log.Error("get user by email (oauth)", "err", err)
+			return nil, status.Error(codes.Internal, "oauth signin failed")
+		}
+	}
+
+	// 3. Fresh user.
+	if user == nil {
+		now := time.Now().UTC()
+		newUser := &domain.User{
+			ID:        uuid.New().String(),
+			Email:     req.Email,
+			Name:      req.Name,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := s.store.CreateUserNoPassword(ctx, newUser); err != nil {
+			// Email may have been taken between our check and insert — retry the link path.
+			if errors.Is(err, store.ErrEmailTaken) {
+				existing, gerr := s.store.GetUserByEmail(ctx, req.Email)
+				if gerr != nil {
+					s.log.Error("get user after race", "err", gerr)
+					return nil, status.Error(codes.Internal, "oauth signin failed")
+				}
+				if err := s.store.LinkOAuth(ctx, existing.ID, req.Provider, req.ProviderUserId, req.Email); err != nil {
+					s.log.Error("link oauth (race resolution)", "err", err)
+					return nil, status.Error(codes.Internal, "oauth link failed")
+				}
+				user = existing
+			} else {
+				s.log.Error("create oauth user", "err", err)
+				return nil, status.Error(codes.Internal, "oauth signin failed")
+			}
+		} else {
+			if err := s.store.LinkOAuth(ctx, newUser.ID, req.Provider, req.ProviderUserId, req.Email); err != nil {
+				s.log.Error("link oauth (new user)", "err", err)
+				return nil, status.Error(codes.Internal, "oauth link failed")
+			}
+			user = newUser
+			created = true
+		}
+	}
+
+	access, refresh, err := s.mintTokens(user.ID, user.Email)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.saveRefreshToken(ctx, user.ID, refresh); err != nil {
+		return nil, err
+	}
+
+	s.log.Info("oauth signin",
+		"provider", req.Provider,
+		"user_id", user.ID,
+		"created", created,
+	)
+	return &authv1.OAuthSignInResponse{
+		UserId:       user.ID,
+		AccessToken:  access,
+		RefreshToken: refresh,
+		Created:      created,
 	}, nil
 }
 

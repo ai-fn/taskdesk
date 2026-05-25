@@ -38,6 +38,31 @@ spec:
           value: "ai.todo.svc.cluster.local:50054"
         - name: REDIS_ADDR
           value: "redis.data.svc.cluster.local:6379"
+        - name: OAUTH_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: gateway-secret
+              key: OAUTH_BASE_URL
+        - name: GOOGLE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: gateway-secret
+              key: GOOGLE_CLIENT_ID
+        - name: GOOGLE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: gateway-secret
+              key: GOOGLE_CLIENT_SECRET
+        - name: DISCORD_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: gateway-secret
+              key: DISCORD_CLIENT_ID
+        - name: DISCORD_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: gateway-secret
+              key: DISCORD_CLIENT_SECRET
         ports:
         - name: http
           containerPort: 8080
