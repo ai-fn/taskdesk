@@ -97,9 +97,10 @@ func main() {
 		log.Warn("oauth provider skipped: missing credentials", "name", "discord")
 	}
 
+	httpHandler, cleanup := server.New(log, authClient, todoClient, aiClient, rdb, providers)
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           server.New(log, authClient, todoClient, aiClient, rdb, providers),
+		Handler:           httpHandler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -131,5 +132,6 @@ func main() {
 		log.Error("graceful shutdown failed", "err", err)
 		os.Exit(1)
 	}
+	cleanup() // stop rate limiter background goroutines
 	log.Info("shutdown complete")
 }

@@ -9,6 +9,7 @@ import (
 
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -19,13 +20,31 @@ const refreshCookieName = "refresh_token"
 
 // AuthHandler bridges HTTP ↔ auth-service gRPC.
 type AuthHandler struct {
-	client     authv1.AuthServiceClient
-	todoClient todov1.TodoServiceClient
-	log        *slog.Logger
+	client       authv1.AuthServiceClient
+	todoClient   todov1.TodoServiceClient
+	log          *slog.Logger
+	emailLimiter *RateLimiter // 5 attempts / minute per email address
+	ipLimiter    *RateLimiter // 20 attempts / minute per IP address
 }
 
 func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, log *slog.Logger) *AuthHandler {
-	return &AuthHandler{client: c, todoClient: todo, log: log}
+	return &AuthHandler{
+		client:     c,
+		todoClient: todo,
+		log:        log,
+		// 5 logins per minute per email — targets credential stuffing.
+		// rate.Limit is tokens/second, so 5/60 = one token every 12 s.
+		emailLimiter: NewRateLimiter(rate.Limit(5.0/60.0), 5, 15*time.Minute, 10*time.Minute),
+		// 20 logins per minute per IP — targets origin scanning.
+		ipLimiter: NewRateLimiter(rate.Limit(20.0/60.0), 20, 15*time.Minute, 10*time.Minute),
+	}
+}
+
+// Stop shuts down the background cleanup goroutines started by the rate limiters.
+// Call it after the HTTP server has stopped accepting requests.
+func (h *AuthHandler) Stop() {
+	h.emailLimiter.Stop()
+	h.ipLimiter.Stop()
 }
 
 // POST /api/v1/auth/signup
@@ -40,11 +59,25 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rate-limit before touching the database. clientInfoFromRequest is called
+	// once and reused for both the limiter check and the gRPC request.
+	info := clientInfoFromRequest(r)
+	if !h.ipLimiter.Allow(info.IpAddress) {
+		h.log.Warn("signup rate limited by IP", "ip", info.IpAddress)
+		jsonError(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+	if !h.emailLimiter.Allow(req.Email) {
+		h.log.Warn("signup rate limited by email", "email", req.Email)
+		jsonError(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
 	resp, err := h.client.SignUp(r.Context(), &authv1.SignUpRequest{
 		Email:      req.Email,
 		Password:   req.Password,
 		Name:       req.Name,
-		ClientInfo: clientInfoFromRequest(r),
+		ClientInfo: info,
 	})
 	if err != nil {
 		handleGRPCError(w, err)
@@ -77,10 +110,25 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check IP first (no normalization), then email (tighter limit).
+	// Both checks happen before bcrypt — which is intentionally slow — so a
+	// blocked attacker never reaches the expensive path.
+	info := clientInfoFromRequest(r)
+	if !h.ipLimiter.Allow(info.IpAddress) {
+		h.log.Warn("login rate limited by IP", "ip", info.IpAddress)
+		jsonError(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+	if !h.emailLimiter.Allow(req.Email) {
+		h.log.Warn("login rate limited by email", "email", req.Email)
+		jsonError(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
 	resp, err := h.client.Login(r.Context(), &authv1.LoginRequest{
 		Email:      req.Email,
 		Password:   req.Password,
-		ClientInfo: clientInfoFromRequest(r),
+		ClientInfo: info,
 	})
 	if err != nil {
 		handleGRPCError(w, err)
