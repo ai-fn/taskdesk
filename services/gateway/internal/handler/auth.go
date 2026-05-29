@@ -41,9 +41,10 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.client.SignUp(r.Context(), &authv1.SignUpRequest{
-		Email:    req.Email,
-		Password: req.Password,
-		Name:     req.Name,
+		Email:      req.Email,
+		Password:   req.Password,
+		Name:       req.Name,
+		ClientInfo: clientInfoFromRequest(r),
 	})
 	if err != nil {
 		handleGRPCError(w, err)
@@ -77,8 +78,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.client.Login(r.Context(), &authv1.LoginRequest{
-		Email:    req.Email,
-		Password: req.Password,
+		Email:      req.Email,
+		Password:   req.Password,
+		ClientInfo: clientInfoFromRequest(r),
 	})
 	if err != nil {
 		handleGRPCError(w, err)

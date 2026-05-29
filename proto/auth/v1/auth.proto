@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package auth.v1;
 
+import "google/protobuf/timestamp.proto";
+
 option go_package = "github.com/fsociety/todo/proto/gen/auth/v1;authv1";
 
 // AuthService handles user registration, authentication, and token management.
@@ -24,14 +26,29 @@ service AuthService {
   // OAuthSignIn finds-or-creates a user from a verified OAuth identity and
   // returns a fresh token pair, exactly like Login/SignUp.
   rpc OAuthSignIn(OAuthSignInRequest) returns (OAuthSignInResponse);
+  // ListSessions returns all active sessions for the authenticated user.
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  // RevokeSession revokes a single session by ID (ownership-checked).
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
+  // RevokeOtherSessions revokes all sessions except the current one.
+  rpc RevokeOtherSessions(RevokeOtherSessionsRequest) returns (RevokeOtherSessionsResponse);
+}
+
+// ── Client info ───────────────────────────────────────────────────────────────
+
+// ClientInfo carries HTTP-layer metadata captured by the gateway at login time.
+message ClientInfo {
+  string ip_address = 1;
+  string user_agent = 2;
 }
 
 // ── Sign up ──────────────────────────────────────────────────────────────────
 
 message SignUpRequest {
-  string email    = 1;
-  string password = 2;
-  string name     = 3;
+  string email       = 1;
+  string password    = 2;
+  string name        = 3;
+  ClientInfo client_info = 4;
 }
 
 message SignUpResponse {
@@ -44,8 +61,9 @@ message SignUpResponse {
 // ── Login ────────────────────────────────────────────────────────────────────
 
 message LoginRequest {
-  string email    = 1;
-  string password = 2;
+  string email       = 1;
+  string password    = 2;
+  ClientInfo client_info = 3;
 }
 
 message LoginResponse {
@@ -99,8 +117,9 @@ message ValidateTokenRequest {
 }
 
 message ValidateTokenResponse {
-  string user_id = 1;
-  string email   = 2;
+  string user_id    = 1;
+  string email      = 2;
+  string session_id = 3;
 }
 
 // ── ListUserIDs ───────────────────────────────────────────────────────────────
@@ -134,6 +153,7 @@ message OAuthSignInRequest {
   string provider_user_id = 2; // stable, provider-issued ID (Google's sub, Discord's id)
   string email            = 3;
   string name             = 4;
+  ClientInfo client_info  = 5;
 }
 
 message OAuthSignInResponse {
@@ -141,4 +161,42 @@ message OAuthSignInResponse {
   string access_token  = 2;
   string refresh_token = 3;
   bool   created       = 4; // true = new user record
+}
+
+// ── Sessions ──────────────────────────────────────────────────────────────────
+
+message Session {
+  string id             = 1;
+  string browser        = 2;
+  string os             = 3;
+  string device         = 4;
+  string ip_address     = 5;
+  google.protobuf.Timestamp created_at      = 6;
+  google.protobuf.Timestamp last_active_at  = 7;
+  bool   current        = 8;
+}
+
+message ListSessionsRequest {
+  string user_id            = 1;
+  string current_session_id = 2;
+}
+
+message ListSessionsResponse {
+  repeated Session sessions = 1;
+}
+
+message RevokeSessionRequest {
+  string user_id    = 1;
+  string session_id = 2;
+}
+
+message RevokeSessionResponse {}
+
+message RevokeOtherSessionsRequest {
+  string user_id            = 1;
+  string current_session_id = 2;
+}
+
+message RevokeOtherSessionsResponse {
+  int64 revoked = 1;
 }

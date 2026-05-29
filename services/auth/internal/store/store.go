@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+
 var ErrNotFound = errors.New("not found")
 var ErrEmailTaken = errors.New("email already registered")
 
@@ -70,45 +71,103 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*domain.User, error
 	return &u, nil
 }
 
-// SaveRefreshToken stores a refresh token hash in Redis-backed session store.
-// For simplicity in Phase 1 we store in Postgres; Phase 2 moves to Redis.
-func (s *Store) SaveRefreshToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time) error {
+// CreateSession inserts a new session row with full metadata.
+func (s *Store) CreateSession(ctx context.Context, id, userID, tokenHash, ipAddress, userAgent string, expiresAt time.Time) error {
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO auth.refresh_tokens (user_id, token_hash, expires_at)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (token_hash) DO NOTHING`,
-		userID, tokenHash, expiresAt,
+		INSERT INTO auth.sessions (id, user_id, token_hash, ip_address, user_agent, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		id, userID, tokenHash, ipAddress, userAgent, expiresAt,
 	)
 	return err
 }
 
-// LookupRefreshToken returns the userID for a token hash, or ErrNotFound.
-// Also deletes the token (rotation: each refresh issues a new pair).
-func (s *Store) LookupRefreshToken(ctx context.Context, tokenHash string) (string, error) {
-	var userID string
+// RotateSession atomically rotates a session's token hash in-place (on refresh).
+// The session id stays stable; last_active_at is bumped. Returns the session id
+// and user id from the matched row, or ErrNotFound if no live row matched.
+func (s *Store) RotateSession(ctx context.Context, oldHash, newHash string, newExpiry time.Time) (sessionID, userID string, err error) {
 	var expiresAt time.Time
-	err := s.db.QueryRow(ctx, `
-		DELETE FROM auth.refresh_tokens
+	err = s.db.QueryRow(ctx, `
+		UPDATE auth.sessions
+		SET token_hash = $2, last_active_at = now(), expires_at = $3
 		WHERE token_hash = $1
-		RETURNING user_id, expires_at`,
-		tokenHash,
-	).Scan(&userID, &expiresAt)
+		RETURNING id, user_id, expires_at`,
+		oldHash, newHash, newExpiry,
+	).Scan(&sessionID, &userID, &expiresAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", ErrNotFound
+			return "", "", ErrNotFound
 		}
-		return "", fmt.Errorf("lookup refresh token: %w", err)
+		return "", "", fmt.Errorf("rotate session: %w", err)
 	}
 	if time.Now().After(expiresAt) {
-		return "", ErrNotFound
+		return "", "", ErrNotFound
 	}
-	return userID, nil
+	return sessionID, userID, nil
 }
 
-// DeleteRefreshToken revokes a specific token (used on logout).
-func (s *Store) DeleteRefreshToken(ctx context.Context, tokenHash string) error {
-	_, err := s.db.Exec(ctx, `DELETE FROM auth.refresh_tokens WHERE token_hash = $1`, tokenHash)
+// DeleteSessionByTokenHash deletes a session by its current token hash (logout).
+func (s *Store) DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error {
+	_, err := s.db.Exec(ctx, `DELETE FROM auth.sessions WHERE token_hash = $1`, tokenHash)
 	return err
+}
+
+// ListSessions returns all non-expired sessions for a user, newest-active first.
+func (s *Store) ListSessions(ctx context.Context, userID string) ([]*domain.Session, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, user_id, token_hash, COALESCE(ip_address::TEXT, ''), COALESCE(user_agent, ''),
+		       created_at, last_active_at, expires_at
+		FROM auth.sessions
+		WHERE user_id = $1 AND expires_at > now()
+		ORDER BY last_active_at DESC`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []*domain.Session
+	for rows.Next() {
+		var sess domain.Session
+		if err := rows.Scan(
+			&sess.ID, &sess.UserID, &sess.TokenHash,
+			&sess.IPAddress, &sess.UserAgent,
+			&sess.CreatedAt, &sess.LastActiveAt, &sess.ExpiresAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		sessions = append(sessions, &sess)
+	}
+	return sessions, rows.Err()
+}
+
+// RevokeSession deletes a session by id, scoped to the owning user.
+// Returns ErrNotFound if no matching row exists.
+func (s *Store) RevokeSession(ctx context.Context, userID, sessionID string) error {
+	tag, err := s.db.Exec(ctx, `
+		DELETE FROM auth.sessions WHERE id = $1 AND user_id = $2`,
+		sessionID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("revoke session: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RevokeOtherSessions deletes all sessions for a user except the current one.
+// Returns the number of rows deleted.
+func (s *Store) RevokeOtherSessions(ctx context.Context, userID, currentSessionID string) (int64, error) {
+	tag, err := s.db.Exec(ctx, `
+		DELETE FROM auth.sessions WHERE user_id = $1 AND id <> $2`,
+		userID, currentSessionID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("revoke other sessions: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 // ListUsers returns all users (id, email, name). Used by scheduler for fan-out.

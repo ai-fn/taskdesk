@@ -12,5 +12,7 @@ configMapGenerator:
       - 000001_init.down.sql
       - 000002_oauth.up.sql
       - 000002_oauth.down.sql
+      - 000003_sessions.up.sql
+      - 000003_sessions.down.sql
 generatorOptions:
   disableNameSuffixHash: true

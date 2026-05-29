@@ -9,6 +9,7 @@ import { ListsHomePage } from '@/pages/ListsHomePage'
 import { TasksPage } from '@/pages/TasksPage'
 import { TaskDetailPage } from '@/pages/TaskDetailPage'
 import { useAuth } from '@/hooks/useAuth'
+import { AccountPage } from '@/pages/AccountPage'
 
 function PublicRoute({ children }: { children: ReactNode }) {
   const { isInitializing, isAuthenticated } = useAuth()
@@ -45,6 +46,7 @@ export function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
             <Route path="/" element={<ListsHomePage />} />
+            <Route path="/account" element={<AccountPage />} />
             <Route path="/tasks/detail/:taskId" element={<TaskDetailPage />} />
             <Route path="/tasks/:listId" element={<TasksPage />} />
           </Route>

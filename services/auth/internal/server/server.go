@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"time"
 
+	ua "github.com/mileusna/useragent"
 	"github.com/fsociety/todo/pkg/tokens"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	"github.com/fsociety/todo/services/auth/internal/domain"
@@ -18,6 +19,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type Server struct {
@@ -62,12 +64,13 @@ func (s *Server) SignUp(ctx context.Context, req *authv1.SignUpRequest) (*authv1
 		return nil, status.Error(codes.Internal, "create user failed")
 	}
 
-	access, refresh, err := s.mintTokens(user.ID, user.Email)
+	sessionID := uuid.New().String()
+	access, refresh, err := s.mintTokens(user.ID, user.Email, sessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := s.saveRefreshToken(ctx, user.ID, refresh); err != nil {
+	if err := s.createSession(ctx, sessionID, user.ID, refresh, req.ClientInfo); err != nil {
 		return nil, err
 	}
 
@@ -102,12 +105,13 @@ func (s *Server) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.L
 		return nil, status.Error(codes.Unauthenticated, "invalid credentials")
 	}
 
-	access, refresh, err := s.mintTokens(user.ID, user.Email)
+	sessionID := uuid.New().String()
+	access, refresh, err := s.mintTokens(user.ID, user.Email, sessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := s.saveRefreshToken(ctx, user.ID, refresh); err != nil {
+	if err := s.createSession(ctx, sessionID, user.ID, refresh, req.ClientInfo); err != nil {
 		return nil, err
 	}
 
@@ -131,23 +135,21 @@ func (s *Server) RefreshToken(ctx context.Context, req *authv1.RefreshTokenReque
 		return nil, status.Error(codes.Unauthenticated, "invalid refresh token")
 	}
 
-	// Lookup + rotate (deletes old token atomically).
-	userID, err := s.store.LookupRefreshToken(ctx, hashToken(req.RefreshToken))
+	// Mint new tokens carrying the same session ID.
+	newExpiry := time.Now().UTC().Add(tokens.RefreshTokenTTL)
+	access, refresh, err := s.mintTokens(claims.UserID, claims.Email, claims.SessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Rotate in-place: updates token_hash + last_active_at; id stays stable.
+	_, _, err = s.store.RotateSession(ctx, hashToken(req.RefreshToken), hashToken(refresh), newExpiry)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Error(codes.Unauthenticated, "refresh token revoked or expired")
 		}
-		s.log.Error("lookup refresh token", "err", err)
+		s.log.Error("rotate session", "err", err)
 		return nil, status.Error(codes.Internal, "refresh failed")
-	}
-
-	access, refresh, err := s.mintTokens(userID, claims.Email)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := s.saveRefreshToken(ctx, userID, refresh); err != nil {
-		return nil, err
 	}
 
 	return &authv1.RefreshTokenResponse{
@@ -162,7 +164,7 @@ func (s *Server) Logout(ctx context.Context, req *authv1.LogoutRequest) (*authv1
 	if req.RefreshToken == "" {
 		return &authv1.LogoutResponse{}, nil
 	}
-	_ = s.store.DeleteRefreshToken(ctx, hashToken(req.RefreshToken))
+	_ = s.store.DeleteSessionByTokenHash(ctx, hashToken(req.RefreshToken))
 	return &authv1.LogoutResponse{}, nil
 }
 
@@ -194,8 +196,9 @@ func (s *Server) ValidateToken(_ context.Context, req *authv1.ValidateTokenReque
 		return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("invalid token: %v", err))
 	}
 	return &authv1.ValidateTokenResponse{
-		UserId: claims.UserID,
-		Email:  claims.Email,
+		UserId:    claims.UserID,
+		Email:     claims.Email,
+		SessionId: claims.SessionID,
 	}, nil
 }
 
@@ -317,11 +320,12 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 		}
 	}
 
-	access, refresh, err := s.mintTokens(user.ID, user.Email)
+	sessionID := uuid.New().String()
+	access, refresh, err := s.mintTokens(user.ID, user.Email, sessionID)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.saveRefreshToken(ctx, user.ID, refresh); err != nil {
+	if err := s.createSession(ctx, sessionID, user.ID, refresh, req.ClientInfo); err != nil {
 		return nil, err
 	}
 
@@ -338,15 +342,77 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 	}, nil
 }
 
+// ── ListSessions ──────────────────────────────────────────────────────────────
+
+func (s *Server) ListSessions(ctx context.Context, req *authv1.ListSessionsRequest) (*authv1.ListSessionsResponse, error) {
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+
+	sessions, err := s.store.ListSessions(ctx, req.UserId)
+	if err != nil {
+		s.log.Error("list sessions", "err", err)
+		return nil, status.Error(codes.Internal, "list sessions failed")
+	}
+
+	resp := &authv1.ListSessionsResponse{}
+	for _, sess := range sessions {
+		parsed := ua.Parse(sess.UserAgent)
+		resp.Sessions = append(resp.Sessions, &authv1.Session{
+			Id:           sess.ID,
+			Browser:      parsed.Name,
+			Os:           parsed.OS,
+			Device:       deviceLabel(parsed),
+			IpAddress:    sess.IPAddress,
+			CreatedAt:    timestamppb.New(sess.CreatedAt),
+			LastActiveAt: timestamppb.New(sess.LastActiveAt),
+			Current:      sess.ID == req.CurrentSessionId,
+		})
+	}
+	return resp, nil
+}
+
+// ── RevokeSession ─────────────────────────────────────────────────────────────
+
+func (s *Server) RevokeSession(ctx context.Context, req *authv1.RevokeSessionRequest) (*authv1.RevokeSessionResponse, error) {
+	if req.UserId == "" || req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and session_id are required")
+	}
+
+	if err := s.store.RevokeSession(ctx, req.UserId, req.SessionId); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "session not found")
+		}
+		s.log.Error("revoke session", "err", err)
+		return nil, status.Error(codes.Internal, "revoke session failed")
+	}
+	return &authv1.RevokeSessionResponse{}, nil
+}
+
+// ── RevokeOtherSessions ───────────────────────────────────────────────────────
+
+func (s *Server) RevokeOtherSessions(ctx context.Context, req *authv1.RevokeOtherSessionsRequest) (*authv1.RevokeOtherSessionsResponse, error) {
+	if req.UserId == "" || req.CurrentSessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and current_session_id are required")
+	}
+
+	n, err := s.store.RevokeOtherSessions(ctx, req.UserId, req.CurrentSessionId)
+	if err != nil {
+		s.log.Error("revoke other sessions", "err", err)
+		return nil, status.Error(codes.Internal, "revoke sessions failed")
+	}
+	return &authv1.RevokeOtherSessionsResponse{Revoked: n}, nil
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func (s *Server) mintTokens(userID, email string) (access, refresh string, err error) {
-	access, err = s.tokens.CreateAccessToken(userID, email)
+func (s *Server) mintTokens(userID, email, sessionID string) (access, refresh string, err error) {
+	access, err = s.tokens.CreateAccessToken(userID, email, sessionID)
 	if err != nil {
 		s.log.Error("create access token", "err", err)
 		return "", "", status.Error(codes.Internal, "token creation failed")
 	}
-	refresh, err = s.tokens.CreateRefreshToken(userID, email)
+	refresh, err = s.tokens.CreateRefreshToken(userID, email, sessionID)
 	if err != nil {
 		s.log.Error("create refresh token", "err", err)
 		return "", "", status.Error(codes.Internal, "token creation failed")
@@ -354,13 +420,35 @@ func (s *Server) mintTokens(userID, email string) (access, refresh string, err e
 	return access, refresh, nil
 }
 
-func (s *Server) saveRefreshToken(ctx context.Context, userID, refreshToken string) error {
+func (s *Server) createSession(ctx context.Context, sessionID, userID, refreshToken string, info *authv1.ClientInfo) error {
 	expiresAt := time.Now().UTC().Add(tokens.RefreshTokenTTL)
-	if err := s.store.SaveRefreshToken(ctx, userID, hashToken(refreshToken), expiresAt); err != nil {
-		s.log.Error("save refresh token", "err", err)
-		return status.Error(codes.Internal, "save token failed")
+	ip, agent := "", ""
+	if info != nil {
+		ip = info.IpAddress
+		agent = info.UserAgent
+	}
+	if err := s.store.CreateSession(ctx, sessionID, userID, hashToken(refreshToken), ip, agent, expiresAt); err != nil {
+		s.log.Error("create session", "err", err)
+		return status.Error(codes.Internal, "save session failed")
 	}
 	return nil
+}
+
+// deviceLabel returns a short human-readable label for the UA's device type.
+func deviceLabel(parsed ua.UserAgent) string {
+	if parsed.Mobile {
+		return "Mobile"
+	}
+	if parsed.Tablet {
+		return "Tablet"
+	}
+	if parsed.Desktop {
+		return "Desktop"
+	}
+	if parsed.Bot {
+		return "Bot"
+	}
+	return "Unknown"
 }
 
 // hashToken hashes a token for storage. We never store raw tokens.
