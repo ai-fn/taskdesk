@@ -355,6 +355,43 @@ go test ./pkg/... && go test ./services/auth/... -timeout 120s && go test ./serv
 
 ---
 
+## Internationalization (i18n)
+
+The project is fully multilingual (English + Simplified Chinese, extensible). **Every new feature must be built with i18n support from day one.**
+
+### Frontend rules
+
+- All user-facing strings use `react-i18next`. Never hardcode display text in components.
+- Get the translator: `const { t } = useTranslation()` (or `const { t, i18n } = useTranslation()` when you also need locale-aware dates).
+- Add keys to **both** locale files before using them:
+  - `web/src/locales/en/translation.json`
+  - `web/src/locales/zh/translation.json`
+- Key structure: dotted, grouped by feature — e.g. `tasks.form.titleLabel`, `account.sessions.revoke`, `common.save`.
+- **Pluralization**: use i18next plural suffixes (`_one` / `_other`). Chinese uses only `_other`. Pass `{ count }` to `t()`.
+- **Interpolation**: use `{{varName}}` in JSON, pass `{ varName: value }` to `t()`.
+- **Dates**: never pass `undefined` as locale to `toLocaleDateString`/`toLocaleString`. Use `toBCP47(i18n.language)` from `web/src/i18n/config.ts`.
+- **Label maps** (like priority/status): store i18n keys, not display strings. Resolve with `t(key)` at render time. See `PriorityLabelKey`, `StatusLabelKey`, `SYSTEM_LISTS[*].nameKey` in `web/src/types/index.ts`.
+- **Arrays of strings** (e.g. loading messages): store in JSON as arrays, retrieve with `t('key', { returnObjects: true }) as string[]`.
+- Supported locales constant: `SUPPORTED_LANGS` in `web/src/i18n/config.ts`.
+
+### Backend rules
+
+- **Language is persisted** in `auth.users.language` (default `'en'`). It flows via `ValidateToken` → gateway middleware → request context.
+- Use `pkg/i18n.Normalize(lang)` to canonicalize any incoming language string. Use `pkg/i18n.Supported(lang)` to validate before accepting user input.
+- **AI service**: inject language as a directive in the **user message** (never the cached system prompt — that would bust the Claude cache). See `planner.go` / `parser.go`.
+- **Kafka events**: denormalize language into the event payload at production time so consumers (notification-service) can localize without a sync auth lookup. Add `Language string \`json:"language"\`` to any new event struct in both the producer and consumer.
+- **New auth migrations**: add the `.up.sql` / `.down.sql` files to `migrations/auth/`, `deploy/k8s/base/auth/`, AND list them in `deploy/k8s/base/auth/kustomization.yaml` `configMapGenerator` — all three places, otherwise the cluster never runs the migration.
+
+### Checklist for any new UI feature
+
+1. Add all string keys to both JSON locale files.
+2. Use `t('key')` everywhere — no hardcoded English strings in JSX.
+3. For date/number display, pass `toBCP47(i18n.language)` as the locale.
+4. For plural strings, use `_one`/`_other` keys and pass `{ count }`.
+5. For ZH: review that translated text fits the UI layout (Chinese is typically shorter).
+
+---
+
 ## Conventions
 
 - **No ORM** — `pgx/v5` directly + `sqlc` for codegen. SQL lives in `services/todo/internal/store/store.go`.
@@ -370,3 +407,5 @@ go test ./pkg/... && go test ./services/auth/... -timeout 120s && go test ./serv
 - Don't publish Kafka events outside a DB transaction.
 - Don't store JWT access tokens in localStorage.
 - Don't add `dark:` Tailwind classes without also having the default (light) class.
+- Don't hardcode user-facing strings in React components — always use `t('key')` with entries in both locale files.
+- Don't interpolate language into a Claude system prompt that has `CacheControlEphemeral` — put the language directive in the user message instead.

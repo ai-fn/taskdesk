@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { listTasks } from '@/api/tasks'
 import { taskKeys } from '@/api/queryKeys'
 import type { Task } from '@/types'
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export function SubtaskList({ parentTask }: Props) {
+  const { t } = useTranslation()
   const subtaskKey = `subtasks:${parentTask.id}`
   const qc = useQueryClient()
 
@@ -48,7 +50,7 @@ export function SubtaskList({ parentTask }: Props) {
   return (
     <div className="mt-2 border-t border-gray-100 dark:border-gray-700 pt-2 space-y-1">
       {isLoading && (
-        <p className="text-xs text-gray-400 dark:text-gray-500 py-1">Loading…</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500 py-1">{t('common.loading')}</p>
       )}
 
       {subtasks.map((st) => (
@@ -72,7 +74,7 @@ export function SubtaskList({ parentTask }: Props) {
             if (e.key === 'Enter') handleAdd()
             if (e.key === 'Escape') setNewTitle('')
           }}
-          placeholder="Add subtask…"
+          placeholder={t('tasks.subtasks.addPlaceholder')}
           className="flex-1 bg-transparent text-xs text-gray-700 dark:text-gray-300 placeholder:text-gray-400 dark:placeholder:text-gray-500 outline-none border-b border-transparent focus:border-gray-200 dark:focus:border-gray-600 py-0.5"
         />
         {newTitle.trim() && (
@@ -80,7 +82,7 @@ export function SubtaskList({ parentTask }: Props) {
             onClick={handleAdd}
             className="shrink-0 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300"
           >
-            Add
+            {t('common.add')}
           </button>
         )}
       </div>
@@ -101,6 +103,7 @@ function SubtaskRow({
   isCompletePending: boolean
   isDeletePending: boolean
 }) {
+  const { t } = useTranslation()
   const isDone = task.status === Status.DONE
 
   return (
@@ -135,7 +138,7 @@ function SubtaskRow({
         onClick={onDelete}
         disabled={isDeletePending}
         className="opacity-0 group-hover:opacity-100 shrink-0 text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-opacity disabled:opacity-50"
-        title="Remove subtask"
+        title={t('tasks.subtasks.removeTitle')}
       >
         <svg viewBox="0 0 16 16" fill="none" className="w-3.5 h-3.5" stroke="currentColor" strokeWidth="2">
           <path d="M4 4l8 8M12 4l-8 8"/>

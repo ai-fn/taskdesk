@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/hooks/useAuth'
 import { AuthLayout } from '@/components/layout/AuthLayout'
 import { Input } from '@/components/ui/Input'
@@ -16,6 +17,7 @@ interface FormValues {
 }
 
 export function SignupPage() {
+  const { t } = useTranslation()
   const { signup } = useAuth()
   const navigate = useNavigate()
   const [apiError, setApiError] = useState('')
@@ -35,48 +37,48 @@ export function SignupPage() {
       if (axios.isAxiosError(err) && err.response?.data?.error) {
         setApiError(err.response.data.error as string)
       } else {
-        setApiError('Signup failed. Please try again.')
+        setApiError(t('auth.signup.failed'))
       }
     }
   }
 
   return (
     <AuthLayout>
-      <h1 className="mb-6 text-xl font-bold text-gray-900 dark:text-gray-100">Create account</h1>
+      <h1 className="mb-6 text-xl font-bold text-gray-900 dark:text-gray-100">{t('auth.signup.title')}</h1>
       {apiError && <div className="mb-4"><ErrorMessage message={apiError} /></div>}
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
         <Input
-          label="Name"
+          label={t('auth.fields.name')}
           autoComplete="name"
           error={errors.name?.message}
-          {...register('name', { required: 'Name is required' })}
+          {...register('name', { required: t('auth.signup.nameRequired') })}
         />
         <Input
-          label="Email"
+          label={t('auth.fields.email')}
           type="email"
           autoComplete="email"
           error={errors.email?.message}
-          {...register('email', { required: 'Email is required' })}
+          {...register('email', { required: t('auth.signup.emailRequired') })}
         />
         <Input
-          label="Password"
+          label={t('auth.fields.password')}
           type="password"
           autoComplete="new-password"
           error={errors.password?.message}
           {...register('password', {
-            required: 'Password is required',
-            minLength: { value: 8, message: 'Minimum 8 characters' },
+            required: t('auth.signup.passwordRequired'),
+            minLength: { value: 8, message: t('auth.signup.passwordMinLength') },
           })}
         />
         <Button type="submit" loading={isSubmitting} className="mt-2 w-full justify-center">
-          Create account
+          {t('auth.signup.submit')}
         </Button>
       </form>
       <OAuthButtons />
       <p className="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
-        Already have an account?{' '}
+        {t('auth.signup.haveAccount')}{' '}
         <Link to="/login" className="text-indigo-600 dark:text-indigo-400 hover:underline">
-          Sign in
+          {t('auth.signup.signIn')}
         </Link>
       </p>
     </AuthLayout>

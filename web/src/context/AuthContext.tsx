@@ -1,7 +1,9 @@
 import { createContext, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as authApi from '@/api/auth'
+import * as accountApi from '@/api/account'
 import { setToken, setOnUnauthenticated } from '@/api/client'
+import i18n from '@/i18n/config'
 
 // Decode the JWT payload (display-only — never used for auth decisions).
 function jwtEmail(token: string): string | null {
@@ -53,9 +55,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .refresh()
       .then((res) => {
         setToken(res.access_token)
-        // We don't have userId from the refresh response — that's fine, the
-        // access token itself carries the claims. We only need userId for display.
         setState({ accessToken: res.access_token, userId: null, email: jwtEmail(res.access_token), isInitializing: false })
+        // Reconcile language: DB preference wins over localStorage/navigator.
+        accountApi.getMe().then((me) => {
+          if (me.language && me.language !== i18n.language) {
+            i18n.changeLanguage(me.language)
+          }
+        }).catch(() => { /* non-fatal */ })
       })
       .catch(() => {
         setState({ accessToken: null, userId: null, email: null, isInitializing: false })
@@ -66,6 +72,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const res = await authApi.login(email, password)
     setToken(res.access_token)
     setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), isInitializing: false })
+    accountApi.getMe().then((me) => {
+      if (me.language && me.language !== i18n.language) i18n.changeLanguage(me.language)
+    }).catch(() => { /* non-fatal */ })
   }
 
   async function signup(email: string, password: string, name: string) {

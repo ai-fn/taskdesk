@@ -1,5 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
+import { useTranslation } from 'react-i18next'
 import type { Task, TaskList } from '@/types'
 import { Priority, Status } from '@/types'
 import { Input } from '@/components/ui/Input'
@@ -51,6 +52,7 @@ interface Props {
 const fieldClass = 'rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
 
 export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, onCancel, isLoading, children }: Props) {
+  const { t } = useTranslation()
   const isCreate = !task
   const [draftSubtasks, setDraftSubtasks] = useState<string[]>(isCreate ? (prefill?.subtasks ?? []) : [])
   const [newSubtask, setNewSubtask] = useState('')
@@ -105,51 +107,51 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
   return (
     <form onSubmit={handleSubmit(submit)} className="flex flex-col gap-4">
       <Input
-        label="Title"
-        placeholder="Task title"
+        label={t('tasks.form.titleLabel')}
+        placeholder={t('tasks.form.titlePlaceholder')}
         error={errors.title?.message}
-        {...register('title', { required: 'Title is required' })}
+        {...register('title', { required: t('tasks.form.titleLabel') })}
       />
       <div className="flex flex-col gap-1">
-        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
+        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('tasks.form.descriptionLabel')}</label>
         <textarea
           className={`${fieldClass} resize-none`}
           rows={3}
-          placeholder="Optional description"
+          placeholder={t('tasks.form.descriptionPlaceholder')}
           {...register('description')}
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Priority</label>
+        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('tasks.form.priorityLabel')}</label>
         <select className={fieldClass} {...register('priority')}>
-          <option value={Priority.UNSPECIFIED}>None</option>
-          <option value={Priority.LOW}>Low</option>
-          <option value={Priority.MEDIUM}>Medium</option>
-          <option value={Priority.HIGH}>High</option>
-          <option value={Priority.URGENT}>Urgent</option>
+          <option value={Priority.UNSPECIFIED}>{t('tasks.priority.none')}</option>
+          <option value={Priority.LOW}>{t('tasks.priority.low')}</option>
+          <option value={Priority.MEDIUM}>{t('tasks.priority.medium')}</option>
+          <option value={Priority.HIGH}>{t('tasks.priority.high')}</option>
+          <option value={Priority.URGENT}>{t('tasks.priority.urgent')}</option>
         </select>
       </div>
       {task && (
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Status</label>
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('tasks.form.statusLabel')}</label>
           <select
             className={fieldClass}
             title={task.blocked ? 'Complete blocking tasks before marking this Done' : undefined}
             {...register('status')}
           >
-            <option value={Status.TODO}>To Do</option>
-            <option value={Status.IN_PROGRESS}>In Progress</option>
+            <option value={Status.TODO}>{t('tasks.status.todo')}</option>
+            <option value={Status.IN_PROGRESS}>{t('tasks.status.inProgress')}</option>
             <option value={Status.DONE} disabled={task.blocked}>
-              Done{task.blocked ? ' (blocked)' : ''}
+              {task.blocked ? t('tasks.card.statusBlocked') : t('tasks.status.done')}
             </option>
           </select>
         </div>
       )}
       {lists.length > 0 && (
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">List</label>
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('tasks.form.listLabel')}</label>
           <select className={fieldClass} {...register('list_id')}>
-            <option value="">No list</option>
+            <option value="">{t('tasks.form.noList')}</option>
             {lists.map((l) => (
               <option key={l.id} value={l.id}>{l.name}</option>
             ))}
@@ -164,22 +166,22 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
           {...register('flagged')}
         />
         <label htmlFor="flagged" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          ⚑ Flagged
+          {t('tasks.form.flaggedLabel')}
         </label>
       </div>
       <Input
-        label="Tags (comma-separated)"
-        placeholder="work, personal, urgent"
+        label={t('tasks.form.tagsLabel')}
+        placeholder={t('tasks.form.tagsPlaceholder')}
         {...register('tags')}
       />
       <Input
-        label="Due date"
+        label={t('tasks.form.dueDateLabel')}
         type="datetime-local"
         {...register('due_at')}
       />
       {isCreate && (
         <div className="border-t border-gray-100 dark:border-gray-700 pt-4">
-          <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">Subtasks</p>
+          <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">{t('tasks.form.subtasksLabel')}</p>
           <div className="space-y-1">
             {draftSubtasks.map((st, i) => (
               <div key={i} className="flex items-center gap-2 group py-0.5">
@@ -189,7 +191,7 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
                   type="button"
                   onClick={() => removeSubtask(i)}
                   className="opacity-0 group-hover:opacity-100 shrink-0 text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-opacity"
-                  title="Remove subtask"
+                  title={t('tasks.subtasks.removeTitle')}
                 >
                   <svg viewBox="0 0 16 16" fill="none" className="w-3.5 h-3.5" stroke="currentColor" strokeWidth="2">
                     <path d="M4 4l8 8M12 4l-8 8" />
@@ -210,7 +212,7 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
                   }
                   if (e.key === 'Escape') setNewSubtask('')
                 }}
-                placeholder="Add subtask…"
+                placeholder={t('tasks.subtasks.addPlaceholder')}
                 className="flex-1 bg-transparent text-sm text-gray-700 dark:text-gray-300 placeholder:text-gray-400 dark:placeholder:text-gray-500 outline-none border-b border-transparent focus:border-gray-200 dark:focus:border-gray-600 py-0.5"
               />
               {newSubtask.trim() && (
@@ -219,7 +221,7 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
                   onClick={addSubtask}
                   className="shrink-0 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300"
                 >
-                  Add
+                  {t('common.add')}
                 </button>
               )}
             </div>
@@ -229,10 +231,10 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
       {children}
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="secondary" onClick={onCancel}>
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button type="submit" loading={isLoading}>
-          {task ? 'Save changes' : 'Create task'}
+          {task ? t('tasks.form.saveChanges') : t('tasks.form.createTask')}
         </Button>
       </div>
     </form>

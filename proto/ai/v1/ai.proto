@@ -23,7 +23,8 @@ service AIService {
 // ── GeneratePlan ──────────────────────────────────────────────────────────────
 
 message GeneratePlanRequest {
-  string user_id = 1;
+  string user_id  = 1;
+  string language = 2;
 }
 
 message GeneratePlanResponse {
@@ -91,6 +92,7 @@ message ParseTaskRequest {
   string text                 = 2; // natural language description
   string today                = 3; // ISO date "2026-05-19" for relative-date resolution
   repeated string list_names  = 4; // user's available list names for context
+  string language             = 5; // preferred language for parsed output
 }
 
 // ParsedTask holds the structured fields Claude extracted from free text.

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { useTheme, type Theme } from '@/context/ThemeContext'
 
 const cycle: Theme[] = ['light', 'dark', 'system']
@@ -22,14 +23,11 @@ const icons: Record<Theme, React.ReactNode> = {
   ),
 }
 
-const labels: Record<Theme, string> = {
-  light: 'Light',
-  dark: 'Dark',
-  system: 'System',
-}
-
 export function ThemeToggle() {
+  const { t } = useTranslation()
   const { theme, setTheme } = useTheme()
+
+  const themeLabel = t(`theme.${theme}`)
 
   function handleClick() {
     const next = cycle[(cycle.indexOf(theme) + 1) % cycle.length]
@@ -39,7 +37,7 @@ export function ThemeToggle() {
   return (
     <button
       onClick={handleClick}
-      title={`Theme: ${labels[theme]} — click to switch`}
+      title={t('theme.ariaLabel', { theme: themeLabel })}
       className="flex items-center justify-center rounded-lg p-1.5 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
     >
       {icons[theme]}

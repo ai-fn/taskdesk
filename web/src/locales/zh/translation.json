@@ -1,0 +1,251 @@
+{
+  "common": {
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "create": "创建",
+    "loading": "加载中…",
+    "confirm": "确认",
+    "error": "错误",
+    "unknown": "未知",
+    "add": "添加"
+  },
+  "auth": {
+    "fields": {
+      "name": "姓名",
+      "email": "邮箱",
+      "password": "密码"
+    },
+    "login": {
+      "title": "登录",
+      "submit": "登录",
+      "noAccount": "没有账户？",
+      "signUp": "注册",
+      "emailRequired": "请输入邮箱",
+      "passwordRequired": "请输入密码",
+      "failed": "登录失败，请重试。"
+    },
+    "signup": {
+      "title": "创建账户",
+      "submit": "创建账户",
+      "haveAccount": "已有账户？",
+      "signIn": "登录",
+      "nameRequired": "请输入姓名",
+      "emailRequired": "请输入邮箱",
+      "passwordRequired": "请输入密码",
+      "passwordMinLength": "最少 8 个字符",
+      "failed": "注册失败，请重试。"
+    },
+    "oauth": {
+      "or": "或",
+      "continueWithGoogle": "使用 Google 继续",
+      "continueWithDiscord": "使用 Discord 继续",
+      "errors": {
+        "state_mismatch": "会话已过期或请求被篡改，请重试。",
+        "provider_denied": "您已取消登录。",
+        "exchange_failed": "无法完成第三方登录。",
+        "signin_failed": "服务端登录失败，请重试。",
+        "missing_code": "第三方返回数据缺失。",
+        "state_gen_failed": "准备登录时发生内部错误。"
+      }
+    }
+  },
+  "tasks": {
+    "form": {
+      "titleLabel": "标题",
+      "titlePlaceholder": "任务标题",
+      "descriptionLabel": "描述",
+      "descriptionPlaceholder": "可选描述",
+      "priorityLabel": "优先级",
+      "statusLabel": "状态",
+      "listLabel": "列表",
+      "noList": "无列表",
+      "flaggedLabel": "⚑ 已标记",
+      "tagsLabel": "标签（逗号分隔）",
+      "tagsPlaceholder": "工作, 个人, 紧急",
+      "dueDateLabel": "截止日期",
+      "subtasksLabel": "子任务",
+      "newTask": "新任务",
+      "editTask": "编辑任务",
+      "saveChanges": "保存更改",
+      "createTask": "创建任务"
+    },
+    "card": {
+      "due": "截止 {{date}}",
+      "subtasksDone_other": "{{done}}/{{count}} 个子任务已完成",
+      "restore": "恢复",
+      "confirmPurge": "永久删除此任务？此操作无法撤销。",
+      "statusBlocked": "已完成（被阻塞）"
+    },
+    "list": {
+      "failedToLoad": "加载任务失败",
+      "noDeletedTasks": "没有最近删除的任务。",
+      "empty": "暂无任务，在上方创建第一个吧。"
+    },
+    "subtasks": {
+      "addPlaceholder": "添加子任务…",
+      "removeTitle": "删除子任务"
+    },
+    "parse": {
+      "couldNotParse": "无法解析任务，请换种说法。",
+      "describeLabel": "描述您的任务",
+      "parseBtn": "解析",
+      "hint": "包含标题、截止日期、优先级、列表 — Claude 会自动提取。⌘↵ 解析。",
+      "loadingMessages": [
+        "统计比特中",
+        "咨询神谕中",
+        "整理词元中",
+        "召唤 Claude",
+        "解码意图中",
+        "酝酿上下文",
+        "解析夸克中",
+        "组装任务中"
+      ],
+      "nlTooltip": "使用自然语言创建"
+    },
+    "priority": {
+      "none": "无",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "urgent": "紧急"
+    },
+    "status": {
+      "unknown": "未知",
+      "todo": "待办",
+      "inProgress": "进行中",
+      "done": "已完成"
+    },
+    "completed": "已完成：{{title}}",
+    "failedToCreate": "创建任务失败。",
+    "failedToUpdate": "更新任务失败。",
+    "notFound": "任务未找到。",
+    "backToLists": "← 返回列表",
+    "back": "‹ 返回",
+    "flag": "标记",
+    "unflag": "取消标记",
+    "detail": {
+      "blockedBy": "被阻塞",
+      "blocks": "阻塞了",
+      "ofComplete": "{{done}}/{{total}} 已完成",
+      "noDependencies": "暂无依赖。",
+      "blockedByTitle": "被未完成的依赖阻塞",
+      "blockedAriaLabel": "已阻塞",
+      "blockedToo": "此任务也被阻塞",
+      "completeBlockedTitle": "完成阻塞任务后才能标记为完成",
+      "inList": "所在列表：{{name}}"
+    },
+    "deps": {
+      "addPlaceholder": "搜索添加依赖…",
+      "noMatching": "没有匹配的任务",
+      "removeTitle": "删除依赖",
+      "failedToAdd": "无法添加依赖"
+    }
+  },
+  "search": {
+    "placeholder": "搜索任务…",
+    "filterPlaceholder": "筛选任务…",
+    "noResults": "无结果"
+  },
+  "editLists": {
+    "title": "编辑列表",
+    "newGroup": "+ 新建分组",
+    "newList": "+ 新列表",
+    "noGroup": "无分组",
+    "show": "显示",
+    "hide": "隐藏",
+    "edit": "编辑",
+    "delete": "删除",
+    "renameGroup": "重命名分组",
+    "deleteGroup": "删除分组",
+    "dragToReorder": "拖动排序"
+  },
+  "lists": {
+    "system": {
+      "all": "全部",
+      "today": "今天",
+      "scheduled": "已安排",
+      "flagged": "已标记",
+      "completed": "已完成",
+      "deleted": "最近删除"
+    },
+    "form": {
+      "editTitle": "编辑列表",
+      "newTitle": "新列表",
+      "nameLabel": "名称",
+      "namePlaceholder": "列表名称",
+      "colorLabel": "颜色",
+      "iconLabel": "图标",
+      "iconPickerPlaceholder": "选择任意表情",
+      "iconSearch": "搜索表情…",
+      "noIcon": "无图标",
+      "groupLabel": "分组",
+      "noGroup": "无分组"
+    },
+    "home": {
+      "myLists": "我的列表",
+      "newTask": "+ 新任务",
+      "newList": "+ 新列表"
+    }
+  },
+  "plan": {
+    "ready": "您的 AI 每日计划已就绪！",
+    "title": "AI 每日计划",
+    "generating": "生成中…",
+    "generate": "✦ 生成",
+    "addTasksFirst": "先添加一些任务，然后生成计划。",
+    "failed": "生成计划失败，请重试。",
+    "noplan": "今天还没有计划，点击「生成」获取 AI 优先级排序。",
+    "askingClaude": "正在询问 Claude",
+    "showLess": "▲ 收起",
+    "showMore": "▼ 显示更多 {{count}} 条"
+  },
+  "account": {
+    "title": "账户",
+    "language": {
+      "title": "语言",
+      "en": "English",
+      "zh": "中文",
+      "updateFailed": "语言更新失败"
+    },
+    "sessions": {
+      "title": "活跃会话",
+      "description": "当前登录您账户的设备",
+      "revokeOthers": "退出所有其他设备",
+      "empty": "未找到活跃会话。",
+      "unknownBrowser": "未知浏览器",
+      "current": "当前",
+      "ip": "IP：",
+      "lastActive": "最后活跃：",
+      "signedIn": "登录时间：",
+      "revoke": "退出",
+      "revokeConfirm": "退出会话",
+      "revokeOthersConfirm": "退出所有其他设备",
+      "revokeBody": "该会话将立即退出，设备需要重新登录。",
+      "revokeOthersBody": "所有其他会话将立即退出，仅保留当前会话。",
+      "revokeSuccess": "会话已退出",
+      "revokeFailed": "退出会话失败",
+      "revokeOthersFailed": "退出其他会话失败",
+      "signedOutOthers_other": "已退出其他 {{count}} 个会话",
+      "device": {
+        "desktop": "桌面端",
+        "mobile": "移动端",
+        "tablet": "平板",
+        "bot": "机器人",
+        "unknown": "未知设备"
+      }
+    }
+  },
+  "layout": {
+    "appName": "Todo",
+    "accountSettings": "账户设置",
+    "signOut": "退出登录"
+  },
+  "theme": {
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随系统",
+    "ariaLabel": "主题：{{theme}} — 点击切换"
+  }
+}

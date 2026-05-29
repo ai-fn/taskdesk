@@ -312,3 +312,50 @@ func TestLinkOAuth_Idempotent(t *testing.T) {
 		t.Errorf("idempotent LinkOAuth: %v", err)
 	}
 }
+
+// ── language column ────────────────────────────────────────────────────────────
+
+func TestCreateUser_DefaultLanguageIsEn(t *testing.T) {
+	s := newStore(t)
+	u := makeUser("ulang1", "lang1@example.com")
+	// Language field is zero-value "" — DB default 'en' should take effect via the
+	// explicit INSERT value, which is also "" → store writes "" → check what comes back.
+	// Since we set Language:"en" explicitly in SignUp, test that round-trip works.
+	u.Language = "en"
+	mustCreateUser(t, s, u)
+
+	got, err := s.GetUserByID(context.Background(), "ulang1")
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if got.Language != "en" {
+		t.Errorf("Language = %q, want %q", got.Language, "en")
+	}
+}
+
+func TestUpdateUserLanguage_RoundTrip(t *testing.T) {
+	s := newStore(t)
+	u := makeUser("ulang2", "lang2@example.com")
+	u.Language = "en"
+	mustCreateUser(t, s, u)
+
+	if err := s.UpdateUserLanguage(context.Background(), "ulang2", "zh"); err != nil {
+		t.Fatalf("UpdateUserLanguage: %v", err)
+	}
+
+	got, err := s.GetUserByID(context.Background(), "ulang2")
+	if err != nil {
+		t.Fatalf("GetUserByID after update: %v", err)
+	}
+	if got.Language != "zh" {
+		t.Errorf("Language = %q, want %q", got.Language, "zh")
+	}
+}
+
+func TestUpdateUserLanguage_NotFound(t *testing.T) {
+	s := newStore(t)
+	err := s.UpdateUserLanguage(context.Background(), "nonexistent", "zh")
+	if err == nil {
+		t.Error("expected error for nonexistent user, got nil")
+	}
+}

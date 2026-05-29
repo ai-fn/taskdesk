@@ -71,7 +71,7 @@ func main() {
 		}
 
 		planCtx, planCancel := context.WithTimeout(ctx, 2*time.Minute)
-		resp, err := aiClient.GeneratePlan(planCtx, &aiv1.GeneratePlanRequest{UserId: u.UserId})
+		resp, err := aiClient.GeneratePlan(planCtx, &aiv1.GeneratePlanRequest{UserId: u.UserId, Language: u.Language})
 		planCancel()
 
 		if err != nil {

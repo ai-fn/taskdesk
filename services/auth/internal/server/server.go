@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ua "github.com/mileusna/useragent"
+	"github.com/fsociety/todo/pkg/i18n"
 	"github.com/fsociety/todo/pkg/tokens"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	"github.com/fsociety/todo/services/auth/internal/domain"
@@ -52,6 +53,7 @@ func (s *Server) SignUp(ctx context.Context, req *authv1.SignUpRequest) (*authv1
 		Email:        req.Email,
 		Name:         req.Name,
 		PasswordHash: &hashStr,
+		Language:     "en",
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -187,7 +189,7 @@ func (s *Server) GetJWKS(_ context.Context, _ *authv1.GetJWKSRequest) (*authv1.G
 
 // ── ValidateToken ─────────────────────────────────────────────────────────────
 
-func (s *Server) ValidateToken(_ context.Context, req *authv1.ValidateTokenRequest) (*authv1.ValidateTokenResponse, error) {
+func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenRequest) (*authv1.ValidateTokenResponse, error) {
 	if req.AccessToken == "" {
 		return nil, status.Error(codes.InvalidArgument, "access_token is required")
 	}
@@ -195,10 +197,12 @@ func (s *Server) ValidateToken(_ context.Context, req *authv1.ValidateTokenReque
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("invalid token: %v", err))
 	}
+	lang, _ := s.store.GetUserLanguage(ctx, claims.UserID)
 	return &authv1.ValidateTokenResponse{
 		UserId:    claims.UserID,
 		Email:     claims.Email,
 		SessionId: claims.SessionID,
+		Language:  lang,
 	}, nil
 }
 
@@ -213,9 +217,10 @@ func (s *Server) ListUserIDs(ctx context.Context, _ *authv1.ListUserIDsRequest) 
 	resp := &authv1.ListUserIDsResponse{}
 	for _, u := range users {
 		resp.Users = append(resp.Users, &authv1.UserSummary{
-			UserId: u.ID,
-			Email:  u.Email,
-			Name:   u.Name,
+			UserId:   u.ID,
+			Email:    u.Email,
+			Name:     u.Name,
+			Language: u.Language,
 		})
 	}
 	return resp, nil
@@ -237,9 +242,10 @@ func (s *Server) GetUserByID(ctx context.Context, req *authv1.GetUserByIDRequest
 	}
 	return &authv1.GetUserByIDResponse{
 		User: &authv1.UserSummary{
-			UserId: u.ID,
-			Email:  u.Email,
-			Name:   u.Name,
+			UserId:   u.ID,
+			Email:    u.Email,
+			Name:     u.Name,
+			Language: u.Language,
 		},
 	}, nil
 }
@@ -290,6 +296,7 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 			ID:        uuid.New().String(),
 			Email:     req.Email,
 			Name:      req.Name,
+			Language:  "en",
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
@@ -340,6 +347,26 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 		RefreshToken: refresh,
 		Created:      created,
 	}, nil
+}
+
+// ── UpdateUserLanguage ────────────────────────────────────────────────────────
+
+func (s *Server) UpdateUserLanguage(ctx context.Context, req *authv1.UpdateUserLanguageRequest) (*authv1.UpdateUserLanguageResponse, error) {
+	if req.UserId == "" || req.Language == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and language are required")
+	}
+	if !i18n.Supported(req.Language) {
+		return nil, status.Error(codes.InvalidArgument, "unsupported language")
+	}
+	lang := i18n.Normalize(req.Language)
+	if err := s.store.UpdateUserLanguage(ctx, req.UserId, lang); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "user not found")
+		}
+		s.log.Error("update user language", "err", err)
+		return nil, status.Error(codes.Internal, "update language failed")
+	}
+	return &authv1.UpdateUserLanguageResponse{}, nil
 }
 
 // ── ListSessions ──────────────────────────────────────────────────────────────

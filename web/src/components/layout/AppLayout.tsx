@@ -1,10 +1,12 @@
 import { useRef, useState } from 'react'
-import { Outlet, useNavigate } from 'react-router-dom'
+import { Link, Outlet, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/hooks/useAuth'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { useClickOutside } from '@/hooks/useClickOutside'
 
 export function AppLayout() {
+  const { t } = useTranslation()
   const { logout, email } = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
@@ -19,7 +21,7 @@ export function AppLayout() {
     <div className="min-h-screen bg-gray-100 dark:bg-gray-950">
       <header className="bg-white dark:bg-gray-900 shadow-sm dark:shadow-gray-800/20">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3">
-          <span className="text-lg font-semibold text-indigo-600 dark:text-indigo-400">Todo</span>
+          <Link to="/" className="text-lg font-semibold text-indigo-600 dark:text-indigo-400 hover:opacity-80 transition-opacity">{t('layout.appName')}</Link>
           <div className="flex items-center gap-3">
             <ThemeToggle />
             <div className="relative" ref={menuRef}>
@@ -41,14 +43,14 @@ export function AppLayout() {
                     className="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                     onClick={() => { setOpen(false); navigate('/account') }}
                   >
-                    Account settings
+                    {t('layout.accountSettings')}
                   </button>
                   <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
                   <button
                     className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
                     onClick={() => { setOpen(false); void logout() }}
                   >
-                    Sign out
+                    {t('layout.signOut')}
                   </button>
                 </div>
               )}

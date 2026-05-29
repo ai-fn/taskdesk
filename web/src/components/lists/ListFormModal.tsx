@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, lazy, Suspense } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { EmojiClickData, Theme as EmojiTheme } from 'emoji-picker-react'
 
 const EmojiPicker = lazy(() => import('emoji-picker-react'))
@@ -32,6 +33,7 @@ interface Props {
 }
 
 export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }: Props) {
+  const { t } = useTranslation()
   const [name, setName]       = useState(list?.name ?? '')
   const [color, setColor]     = useState(list?.color ?? '#007AFF')
   const [groupId, setGroupId] = useState(list?.group_id ?? '')
@@ -71,21 +73,21 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
     <Modal onClose={onCancel} className="max-w-sm">
       <div className="rounded-2xl bg-white dark:bg-gray-800 p-6 shadow-xl">
         <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {list ? 'Edit list' : 'New list'}
+          {list ? t('lists.form.editTitle') : t('lists.form.newTitle')}
         </h2>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <Input
-            label="Name"
+            label={t('lists.form.nameLabel')}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="List name"
+            placeholder={t('lists.form.namePlaceholder')}
             autoFocus
           />
 
           {/* Color picker */}
           <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Color</label>
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('lists.form.colorLabel')}</label>
             <div className="grid grid-cols-6 gap-2">
               {COLORS.map((c) => (
                 <button
@@ -105,14 +107,14 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
 
           {/* Icon picker */}
           <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Icon</label>
+            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('lists.form.iconLabel')}</label>
 
             <div className="grid grid-cols-7 gap-1">
               {/* Slot 0 — opens emoji board */}
               <div className="relative" ref={pickerRef}>
                 <button
                   type="button"
-                  title="Pick any emoji"
+                  title={t('lists.form.iconPickerPlaceholder')}
                   onClick={() => setShowPicker((v) => !v)}
                   className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-base transition-colors ${
                     showPicker || isCustom
@@ -125,13 +127,13 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
 
                 {showPicker && (
                   <div className="absolute left-0 top-11 z-[60]">
-                    <Suspense fallback={<div className="flex h-[380px] w-[320px] items-center justify-center rounded-lg border bg-white dark:bg-gray-800 dark:border-gray-700 text-sm text-gray-400">Loading…</div>}>
+                    <Suspense fallback={<div className="flex h-[380px] w-[320px] items-center justify-center rounded-lg border bg-white dark:bg-gray-800 dark:border-gray-700 text-sm text-gray-400">{t('common.loading')}</div>}>
                       <EmojiPicker
                         onEmojiClick={handleEmojiClick}
                         theme={emojiTheme}
                         width={320}
                         height={380}
-                        searchPlaceholder="Search emoji..."
+                        searchPlaceholder={t('lists.form.iconSearch')}
                         lazyLoadEmojis
                       />
                     </Suspense>
@@ -161,7 +163,7 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
                   // "No icon" clear button in position 0 of row 2
                   <button
                     type="button"
-                    title="No icon"
+                    title={t('lists.form.noIcon')}
                     onClick={() => setIcon('')}
                     className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-xs text-gray-400 dark:text-gray-500 transition-colors ${
                       !icon ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30' : 'border-dashed border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
@@ -191,13 +193,13 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
           {/* Group selector */}
           {groups.length > 0 && (
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Group</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('lists.form.groupLabel')}</label>
               <select
                 value={groupId}
                 onChange={(e) => setGroupId(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               >
-                <option value="">No group</option>
+                <option value="">{t('lists.form.noGroup')}</option>
                 {groups.map((g) => (
                   <option key={g.id} value={g.id}>{g.name}</option>
                 ))}
@@ -206,9 +208,9 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
           )}
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+            <Button type="button" variant="secondary" onClick={onCancel}>{t('common.cancel')}</Button>
             <Button type="submit" loading={isLoading} disabled={!name.trim()}>
-              {list ? 'Save' : 'Create'}
+              {list ? t('common.save') : t('common.create')}
             </Button>
           </div>
         </form>

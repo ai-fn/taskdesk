@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { Task } from '@/types'
 import { Status } from '@/types'
 import { useTasks } from '@/hooks/useTasks'
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export function DependencyPicker({ task }: Props) {
+  const { t } = useTranslation()
   const { data: depData, isLoading } = useDependencies(task.id)
   const add = useAddDependency(task.id)
   const remove = useRemoveDependency(task.id)
@@ -40,17 +42,17 @@ export function DependencyPicker({ task }: Props) {
       },
       onError: (err: unknown) => {
         const e = err as { response?: { data?: { error?: string } } }
-        setError(e.response?.data?.error ?? 'Could not add dependency')
+        setError(e.response?.data?.error ?? t('tasks.deps.failedToAdd'))
       },
     })
   }
 
   return (
     <div className="border-t border-gray-100 dark:border-gray-700 pt-4">
-      <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">Blocked by</p>
+      <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">{t('tasks.detail.blockedBy')}</p>
 
       {isLoading && (
-        <p className="text-xs text-gray-400 dark:text-gray-500 py-1">Loading…</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500 py-1">{t('common.loading')}</p>
       )}
 
       <div className="space-y-1">
@@ -67,7 +69,7 @@ export function DependencyPicker({ task }: Props) {
                 onClick={() => remove.mutate(d.id)}
                 disabled={remove.isPending}
                 className="opacity-0 group-hover:opacity-100 shrink-0 text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-opacity disabled:opacity-50"
-                title="Remove dependency"
+                title={t('tasks.deps.removeTitle')}
               >
                 <svg viewBox="0 0 16 16" fill="none" className="w-3.5 h-3.5" stroke="currentColor" strokeWidth="2">
                   <path d="M4 4l8 8M12 4l-8 8" />
@@ -87,7 +89,7 @@ export function DependencyPicker({ task }: Props) {
             onChange={(e) => { setQuery(e.target.value); setError('') }}
             onFocus={() => setFocused(true)}
             onBlur={() => setTimeout(() => setFocused(false), 150)}
-            placeholder="Search to add dependency…"
+            placeholder={t('tasks.deps.addPlaceholder')}
             className="flex-1 bg-transparent text-sm text-gray-700 dark:text-gray-300 placeholder:text-gray-400 dark:placeholder:text-gray-500 outline-none border-b border-transparent focus:border-gray-200 dark:focus:border-gray-600 py-0.5"
           />
         </div>
@@ -110,7 +112,7 @@ export function DependencyPicker({ task }: Props) {
         )}
 
         {focused && query.trim() && candidates.length === 0 && !isLoading && (
-          <p className="mt-1 ml-6 text-xs text-gray-400 dark:text-gray-500">No matching tasks</p>
+          <p className="mt-1 ml-6 text-xs text-gray-400 dark:text-gray-500">{t('tasks.deps.noMatching')}</p>
         )}
       </div>
 

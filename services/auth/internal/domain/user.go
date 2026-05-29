@@ -7,6 +7,7 @@ type User struct {
 	Email        string
 	Name         string
 	PasswordHash *string // nil for OAuth-only users
+	Language     string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }

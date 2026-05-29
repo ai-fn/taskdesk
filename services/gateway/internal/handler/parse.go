@@ -49,13 +49,13 @@ func (h *ParseHandler) Parse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := mw.UserIDFromContext(r.Context())
-	_ = userID // included for future personalisation (e.g. passing user's timezone)
 
 	resp, err := h.aiClient.ParseTask(r.Context(), &aiv1.ParseTaskRequest{
 		UserId:    userID,
 		Text:      body.Text,
 		Today:     time.Now().UTC().Format("2006-01-02"),
 		ListNames: body.ListNames,
+		Language:  mw.LanguageFromContext(r.Context()),
 	})
 	if err != nil {
 		handleGRPCError(w, err)

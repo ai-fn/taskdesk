@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	pki18n "github.com/fsociety/todo/pkg/i18n"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
@@ -82,7 +83,8 @@ func (s *Server) GeneratePlan(ctx context.Context, req *aiv1.GeneratePlanRequest
 		RecentlyCompleted: tasksToInput(completedResp.Tasks),
 	}
 
-	plan, err := s.planner.Generate(ctx, uc)
+	lang := pki18n.Normalize(req.Language)
+	plan, err := s.planner.Generate(ctx, uc, lang)
 	if err != nil {
 		s.log.Error("generate plan", "user_id", req.UserId, "err", err)
 		return nil, status.Error(codes.Internal, fmt.Sprintf("plan generation failed: %v", err))
@@ -122,7 +124,7 @@ func (s *Server) GeneratePlan(ctx context.Context, req *aiv1.GeneratePlanRequest
 	}
 
 	// Publish to Kafka.
-	if err := s.publish(ctx, planID, req.UserId, dp); err != nil {
+	if err := s.publish(ctx, planID, req.UserId, lang, dp); err != nil {
 		s.log.Error("publish plan event", "plan_id", planID, "err", err)
 	}
 
@@ -175,7 +177,8 @@ func (s *Server) GeneratePlanStream(req *aiv1.GeneratePlanRequest, stream aiv1.A
 		})
 	}
 
-	plan, err := s.planner.GenerateStream(ctx, uc, onText)
+	lang := pki18n.Normalize(req.Language)
+	plan, err := s.planner.GenerateStream(ctx, uc, lang, onText)
 	if err != nil {
 		s.log.Error("generate plan stream", "user_id", req.UserId, "err", err)
 		_ = stream.Send(&aiv1.PlanStreamChunk{
@@ -214,7 +217,7 @@ func (s *Server) GeneratePlanStream(req *aiv1.GeneratePlanRequest, stream aiv1.A
 		s.log.Error("save plan (stream)", "plan_id", planID, "err", err)
 	}
 
-	if err := s.publish(ctx, planID, req.UserId, dp); err != nil {
+	if err := s.publish(ctx, planID, req.UserId, lang, dp); err != nil {
 		s.log.Error("publish plan event (stream)", "plan_id", planID, "err", err)
 	}
 
@@ -262,15 +265,16 @@ func (s *Server) GetLatestPlan(ctx context.Context, req *aiv1.GetLatestPlanReque
 
 // DailyPlanEvent is the Kafka payload for daily-plan.generated.v1.
 type DailyPlanEvent struct {
-	EventID   string           `json:"event_id"`
-	UserID    string           `json:"user_id"`
-	PlanID    string           `json:"plan_id"`
-	Summary   string           `json:"summary"`
-	Items     []planner.PlanItem `json:"items"`
-	GeneratedAt time.Time      `json:"generated_at"`
+	EventID     string             `json:"event_id"`
+	UserID      string             `json:"user_id"`
+	PlanID      string             `json:"plan_id"`
+	Summary     string             `json:"summary"`
+	Items       []planner.PlanItem `json:"items"`
+	GeneratedAt time.Time          `json:"generated_at"`
+	Language    string             `json:"language"`
 }
 
-func (s *Server) publish(ctx context.Context, planID, userID string, dp *aiv1.DailyPlan) error {
+func (s *Server) publish(ctx context.Context, planID, userID, lang string, dp *aiv1.DailyPlan) error {
 	items := make([]planner.PlanItem, len(dp.Items))
 	for i, it := range dp.Items {
 		items[i] = planner.PlanItem{
@@ -287,6 +291,7 @@ func (s *Server) publish(ctx context.Context, planID, userID string, dp *aiv1.Da
 		Summary:     dp.Summary,
 		Items:       items,
 		GeneratedAt: dp.GeneratedAt.AsTime(),
+		Language:    lang,
 	}
 	return s.kafka.Publish(ctx, DailyPlanTopic, userID, ev)
 }
@@ -341,7 +346,7 @@ func (s *Server) ParseTask(ctx context.Context, req *aiv1.ParseTaskRequest) (*ai
 		today = time.Now().UTC().Format("2006-01-02")
 	}
 
-	result, err := s.parser.Parse(ctx, req.Text, today, req.ListNames)
+	result, err := s.parser.Parse(ctx, req.Text, today, pki18n.Normalize(req.Language), req.ListNames)
 	if err != nil {
 		s.log.Error("parse task", "err", err)
 		return nil, status.Error(codes.Internal, "parse failed")

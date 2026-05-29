@@ -197,8 +197,9 @@ func (h *TodoHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskID")
 
 	resp, err := h.client.CompleteTask(r.Context(), &todov1.CompleteTaskRequest{
-		UserId: userID,
-		TaskId: taskID,
+		UserId:   userID,
+		TaskId:   taskID,
+		Language: mw.LanguageFromContext(r.Context()),
 	})
 	if err != nil {
 		handleGRPCError(w, err)

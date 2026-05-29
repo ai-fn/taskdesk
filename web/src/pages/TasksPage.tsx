@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import type { Task } from '@/types'
 import { SYSTEM_LISTS, Status } from '@/types'
 import type { ListTasksFilter } from '@/api/tasks'
@@ -39,6 +40,7 @@ function filterForListId(listId: string): ListTasksFilter {
 }
 
 export function TasksPage() {
+  const { t } = useTranslation()
   const { listId = 'all' } = useParams<{ listId: string }>()
   const navigate = useNavigate()
 
@@ -58,7 +60,7 @@ export function TasksPage() {
 
   const systemList = Object.values(SYSTEM_LISTS).find((s) => s.id === listId)
   const customList = lists.find((l) => l.id === listId)
-  const listName = systemList?.name ?? customList?.name ?? 'Tasks'
+  const listName = systemList ? t(systemList.nameKey) : (customList?.name ?? 'Tasks')
   const listColor = systemList?.color ?? customList?.color ?? '#007AFF'
 
   const dismissToast = useCallback((id: number) => {
@@ -68,14 +70,14 @@ export function TasksPage() {
   const handleNotification = useCallback((n: TaskNotification) => {
     let text: string
     if (n.type === 'daily_plan_ready') {
-      text = 'Your AI daily plan is ready!'
+      text = t('plan.ready')
     } else if (n.event_type === 'task.completed') {
-      text = `Completed: ${n.task_title ?? ''}`
+      text = t('tasks.completed', { title: n.task_title ?? '' })
     } else {
       return
     }
     setToasts((prev) => [...prev, { id: Date.now(), text }])
-  }, [])
+  }, [t])
 
   useNotifications(handleNotification)
 
@@ -105,7 +107,7 @@ export function TasksPage() {
       if (axios.isAxiosError(err) && err.response?.data?.error) {
         setFormError(err.response.data.error as string)
       } else {
-        setFormError('Failed to create task.')
+        setFormError(t('tasks.failedToCreate'))
       }
     }
   }
@@ -120,7 +122,7 @@ export function TasksPage() {
       if (axios.isAxiosError(err) && err.response?.data?.error) {
         setFormError(err.response.data.error as string)
       } else {
-        setFormError('Failed to update task.')
+        setFormError(t('tasks.failedToUpdate'))
       }
     }
   }
@@ -132,7 +134,7 @@ export function TasksPage() {
         <button
           onClick={() => navigate('/')}
           className="rounded-lg p-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
-          aria-label="Back to lists"
+          aria-label={t('tasks.backToLists')}
         >
           ‹
         </button>
@@ -148,12 +150,12 @@ export function TasksPage() {
             <button
               onClick={() => { setFormError(''); setModal({ type: 'nl' }) }}
               className="rounded-lg p-1.5 text-gray-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
-              title="Create from natural language"
+              title={t('tasks.parse.nlTooltip')}
             >
               ✨
             </button>
             <Button onClick={() => { setFormError(''); setModal({ type: 'create' }) }}>
-              + New task
+              {t('lists.home.newTask')}
             </Button>
           </div>
         )}
@@ -169,7 +171,7 @@ export function TasksPage() {
         <input
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Filter tasks..."
+          placeholder={t('search.filterPlaceholder')}
           className="flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400 dark:placeholder:text-gray-500 text-gray-900 dark:text-gray-100"
         />
         {searchQuery && (
@@ -199,7 +201,7 @@ export function TasksPage() {
             {modal.type === 'nl' ? (
               <>
                 <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
-                  New task
+                  {t('tasks.form.newTask')}
                 </h2>
                 <NaturalLanguageInput
                   lists={lists}
@@ -213,7 +215,7 @@ export function TasksPage() {
             ) : (
               <>
                 <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
-                  {modal.type === 'create' ? 'New task' : 'Edit task'}
+                  {modal.type === 'create' ? t('tasks.form.newTask') : t('tasks.form.editTask')}
                 </h2>
                 {formError && <div className="mb-4"><ErrorMessage message={formError} /></div>}
                 <TaskForm
@@ -228,7 +230,7 @@ export function TasksPage() {
                   {modal.type === 'edit' && (
                     <>
                       <div className="border-t border-gray-100 dark:border-gray-700 pt-4">
-                        <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">Subtasks</p>
+                        <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">{t('tasks.form.subtasksLabel')}</p>
                         <SubtaskList parentTask={modal.task} />
                       </div>
                       <DependencyPicker task={modal.task} />

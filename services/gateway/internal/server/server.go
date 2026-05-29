@@ -116,6 +116,13 @@ func New(
 		r.Post("/revoke-others", sessions.RevokeOthers)
 	})
 
+	account := handler.NewAccountHandler(authClient)
+	r.Route("/api/v1/account", func(r chi.Router) {
+		r.Use(middleware.Authenticate(authClient))
+		r.Get("/me", account.Me)
+		r.Patch("/language", account.UpdateLanguage)
+	})
+
 	// WebSocket: authenticated users subscribe to their real-time notifications.
 	ws := handler.NewWSHandler(rdb, log)
 	r.With(middleware.Authenticate(authClient)).Get("/api/v1/ws", ws.ServeHTTP)

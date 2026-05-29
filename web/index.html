@@ -10,6 +10,9 @@
         var t = localStorage.getItem('theme') || 'system'
         var dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
         if (dark) document.documentElement.classList.add('dark')
+        // Apply stored language to <html lang> before React mounts (prevents flash)
+        var lang = localStorage.getItem('lang') || 'en'
+        document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'
       })()
     </script>
   </head>

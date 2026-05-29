@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { Task } from '@/types'
 import type { ListTasksFilter } from '@/api/tasks'
 import { TaskCard } from './TaskCard'
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export function TaskList({ onEdit, filter, filterKey, isDeletedView, searchQuery }: Props) {
+  const { t } = useTranslation()
   const { data, isLoading, isError, error } = useTasks(filter)
 
   if (isLoading) {
@@ -25,7 +27,7 @@ export function TaskList({ onEdit, filter, filterKey, isDeletedView, searchQuery
   }
 
   if (isError) {
-    return <ErrorMessage message={(error as Error).message ?? 'Failed to load tasks'} />
+    return <ErrorMessage message={(error as Error).message ?? t('tasks.list.failedToLoad')} />
   }
 
   const allTasks = data?.tasks ?? []
@@ -41,7 +43,7 @@ export function TaskList({ onEdit, filter, filterKey, isDeletedView, searchQuery
   if (allTasks.length === 0) {
     return (
       <p className="py-12 text-center text-gray-400 dark:text-gray-500">
-        {isDeletedView ? 'No recently deleted tasks.' : 'No tasks yet. Create your first one above.'}
+        {isDeletedView ? t('tasks.list.noDeletedTasks') : t('tasks.list.empty')}
       </p>
     )
   }

@@ -201,8 +201,9 @@ message DeleteTaskResponse {}
 // ── Complete task ─────────────────────────────────────────────────────────────
 
 message CompleteTaskRequest {
-  string user_id = 1;
-  string task_id = 2;
+  string user_id  = 1;
+  string task_id  = 2;
+  string language = 3; // user's preferred language, stamped onto the outbox event
 }
 
 message CompleteTaskResponse {

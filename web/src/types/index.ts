@@ -62,12 +62,12 @@ export interface ListGroup {
 }
 
 export const SYSTEM_LISTS = {
-  ALL:       { id: 'all',       name: 'All',              color: '#8E8E93', icon: '∞' },
-  TODAY:     { id: 'today',     name: 'Today',            color: '#FF9500', icon: '☀' },
-  SCHEDULED: { id: 'scheduled', name: 'Scheduled',        color: '#007AFF', icon: '📅' },
-  FLAGGED:   { id: 'flagged',   name: 'Flagged',          color: '#FF3B30', icon: '⚑' },
-  COMPLETED: { id: 'completed', name: 'Completed',        color: '#34C759', icon: '✓' },
-  DELETED:   { id: 'deleted',   name: 'Recently Deleted', color: '#8E8E93', icon: '🗑' },
+  ALL:       { id: 'all',       nameKey: 'lists.system.all',       color: '#8E8E93', icon: '∞' },
+  TODAY:     { id: 'today',     nameKey: 'lists.system.today',     color: '#FF9500', icon: '☀' },
+  SCHEDULED: { id: 'scheduled', nameKey: 'lists.system.scheduled', color: '#007AFF', icon: '📅' },
+  FLAGGED:   { id: 'flagged',   nameKey: 'lists.system.flagged',   color: '#FF3B30', icon: '⚑' },
+  COMPLETED: { id: 'completed', nameKey: 'lists.system.completed', color: '#34C759', icon: '✓' },
+  DELETED:   { id: 'deleted',   nameKey: 'lists.system.deleted',   color: '#8E8E93', icon: '🗑' },
 } as const
 
 export type SystemListId = typeof SYSTEM_LISTS[keyof typeof SYSTEM_LISTS]['id']
@@ -106,17 +106,20 @@ export interface GetLatestPlanResponse {
   plan?: DailyPlan
 }
 
-export const PriorityLabel: Record<Priority, string> = {
-  [Priority.UNSPECIFIED]: 'None',
-  [Priority.LOW]: 'Low',
-  [Priority.MEDIUM]: 'Medium',
-  [Priority.HIGH]: 'High',
-  [Priority.URGENT]: 'Urgent',
+// PriorityLabelKey maps each priority to its i18n key.
+// In components: const { t } = useTranslation(); t(PriorityLabelKey[task.priority])
+export const PriorityLabelKey: Record<Priority, string> = {
+  [Priority.UNSPECIFIED]: 'tasks.priority.none',
+  [Priority.LOW]:         'tasks.priority.low',
+  [Priority.MEDIUM]:      'tasks.priority.medium',
+  [Priority.HIGH]:        'tasks.priority.high',
+  [Priority.URGENT]:      'tasks.priority.urgent',
 }
 
-export const StatusLabel: Record<Status, string> = {
-  [Status.UNSPECIFIED]: 'Unknown',
-  [Status.TODO]: 'To Do',
-  [Status.IN_PROGRESS]: 'In Progress',
-  [Status.DONE]: 'Done',
+// StatusLabelKey maps each status to its i18n key.
+export const StatusLabelKey: Record<Status, string> = {
+  [Status.UNSPECIFIED]: 'tasks.status.unknown',
+  [Status.TODO]:        'tasks.status.todo',
+  [Status.IN_PROGRESS]: 'tasks.status.inProgress',
+  [Status.DONE]:        'tasks.status.done',
 }

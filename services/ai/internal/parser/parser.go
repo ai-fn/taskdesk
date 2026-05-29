@@ -94,12 +94,28 @@ func New(apiKey string) *Parser {
 	return &Parser{client: &c}
 }
 
+// languageDirectives steers Claude's output language via the user message.
+// The system prompt is never modified so the cache prefix stays stable.
+var languageDirectives = map[string]string{
+	"en": "Respond in English.",
+	"zh": "Respond in Simplified Chinese (简体中文). Title, description, and all text fields must be in Simplified Chinese.",
+}
+
+func languageDirective(lang string) string {
+	if d, ok := languageDirectives[lang]; ok {
+		return d
+	}
+	return languageDirectives["en"]
+}
+
 // Parse calls Claude to extract structured task fields from free text.
-func (p *Parser) Parse(ctx context.Context, text, today string, listNames []string) (*ParsedTask, error) {
-	userMsg := fmt.Sprintf("today: %s\navailable_lists: %s\n\nTask description:\n%s",
+// lang steers output language without touching the cached system-prompt block.
+func (p *Parser) Parse(ctx context.Context, text, today, lang string, listNames []string) (*ParsedTask, error) {
+	userMsg := fmt.Sprintf("today: %s\navailable_lists: %s\n\nTask description:\n%s\n\n%s",
 		today,
 		strings.Join(listNames, ", "),
 		text,
+		languageDirective(lang),
 	)
 
 	resp, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{

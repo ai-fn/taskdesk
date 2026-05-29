@@ -1,9 +1,12 @@
 import { useCallback, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { ToastContainer, type ToastMessage } from '@/components/ui/Toast'
+import { LanguageSwitcher } from '@/components/account/LanguageSwitcher'
 import { useSessions, useRevokeSession, useRevokeOtherSessions } from '@/hooks/useSessions'
+import { toBCP47 } from '@/i18n/config'
 
 type Confirm =
   | { type: 'revoke'; sessionId: string }
@@ -11,6 +14,7 @@ type Confirm =
   | null
 
 export function AccountPage() {
+  const { t, i18n } = useTranslation()
   const { data: sessions = [], isLoading } = useSessions()
   const revokeSession = useRevokeSession()
   const revokeOthers = useRevokeOtherSessions()
@@ -24,17 +28,19 @@ export function AccountPage() {
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }, [])
 
+  const locale = toBCP47(i18n.language)
+
   function handleConfirm() {
     if (!confirm) return
     if (confirm.type === 'revoke') {
       revokeSession.mutate(confirm.sessionId, {
-        onSuccess: () => addToast('Session signed out'),
-        onError: () => addToast('Failed to sign out session'),
+        onSuccess: () => addToast(t('account.sessions.revokeSuccess')),
+        onError: () => addToast(t('account.sessions.revokeFailed')),
       })
     } else {
       revokeOthers.mutate(undefined, {
-        onSuccess: (n) => addToast(`Signed out ${n} other ${n === 1 ? 'session' : 'sessions'}`),
-        onError: () => addToast('Failed to sign out other sessions'),
+        onSuccess: (n) => addToast(t('account.sessions.signedOutOthers', { count: n })),
+        onError: () => addToast(t('account.sessions.revokeOthersFailed')),
       })
     }
     setConfirm(null)
@@ -44,14 +50,21 @@ export function AccountPage() {
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Account</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{t('account.title')}</h1>
 
+      {/* Language */}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{t('account.language.title')}</h2>
+        <LanguageSwitcher />
+      </section>
+
+      {/* Sessions */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Active sessions</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{t('account.sessions.title')}</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Devices currently signed in to your account
+              {t('account.sessions.description')}
             </p>
           </div>
           {sessions.length > 1 && (
@@ -60,7 +73,7 @@ export function AccountPage() {
               onClick={() => setConfirm({ type: 'revoke-others' })}
               disabled={isPending}
             >
-              Sign out all other devices
+              {t('account.sessions.revokeOthers')}
             </Button>
           )}
         </div>
@@ -70,7 +83,7 @@ export function AccountPage() {
             <Spinner className="h-6 w-6 text-indigo-500" />
           </div>
         ) : sessions.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">No active sessions found.</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">{t('account.sessions.empty')}</p>
         ) : (
           <div className="space-y-2">
             {sessions.map((session) => (
@@ -82,30 +95,32 @@ export function AccountPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-gray-900 dark:text-gray-100 truncate">
-                        {session.browser || 'Unknown browser'}
-                        {session.os ? ` on ${session.os}` : ''}
+                        {session.browser || t('account.sessions.unknownBrowser')}
+                        {session.os ? ` ${session.os}` : ''}
                       </span>
                       <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {session.device}
+                        {t(`account.sessions.device.${session.device.toLowerCase()}`, { defaultValue: session.device })}
                       </span>
                       {session.current && (
                         <span className="inline-flex items-center rounded-full bg-indigo-100 dark:bg-indigo-900 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300">
-                          Current
+                          {t('account.sessions.current')}
                         </span>
                       )}
                     </div>
                     <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-                      {session.ip_address && <span>IP: {session.ip_address}</span>}
+                      {session.ip_address && (
+                        <span>{t('account.sessions.ip')} {session.ip_address}</span>
+                      )}
                       <span>
-                        Last active:{' '}
-                        {new Date(session.last_active_at).toLocaleString(undefined, {
+                        {t('account.sessions.lastActive')}{' '}
+                        {new Date(session.last_active_at).toLocaleString(locale, {
                           dateStyle: 'medium',
                           timeStyle: 'short',
                         })}
                       </span>
                       <span>
-                        Signed in:{' '}
-                        {new Date(session.created_at).toLocaleString(undefined, {
+                        {t('account.sessions.signedIn')}{' '}
+                        {new Date(session.created_at).toLocaleString(locale, {
                           dateStyle: 'medium',
                           timeStyle: 'short',
                         })}
@@ -119,7 +134,7 @@ export function AccountPage() {
                       onClick={() => setConfirm({ type: 'revoke', sessionId: session.id })}
                       disabled={isPending}
                     >
-                      Sign out
+                      {t('account.sessions.revoke')}
                     </Button>
                   )}
                 </div>
@@ -131,13 +146,15 @@ export function AccountPage() {
 
       {confirm && (
         <ConfirmDialog
-          title={confirm.type === 'revoke' ? 'Sign out session' : 'Sign out all other devices'}
-          message={
-            confirm.type === 'revoke'
-              ? 'This session will be signed out immediately. The device will need to log in again.'
-              : 'All other sessions will be signed out immediately. Only your current session will remain active.'
-          }
-          confirmText={confirm.type === 'revoke' ? 'Sign out' : 'Sign out all others'}
+          title={confirm.type === 'revoke'
+            ? t('account.sessions.revokeConfirm')
+            : t('account.sessions.revokeOthersConfirm')}
+          message={confirm.type === 'revoke'
+            ? t('account.sessions.revokeBody')
+            : t('account.sessions.revokeOthersBody')}
+          confirmText={confirm.type === 'revoke'
+            ? t('account.sessions.revoke')
+            : t('account.sessions.revokeOthers')}
           variant="danger"
           isLoading={isPending}
           onConfirm={handleConfirm}
