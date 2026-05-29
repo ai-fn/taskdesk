@@ -18,7 +18,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// New returns the gateway's HTTP handler with all routes mounted.
+// New returns the gateway's HTTP handler with all routes mounted, and a cleanup
+// function that stops background goroutines started by the handlers.
+// Call cleanup() after the HTTP server has stopped accepting requests.
 func New(
 	log *slog.Logger,
 	authClient authv1.AuthServiceClient,
@@ -26,7 +28,7 @@ func New(
 	aiClient aiv1.AIServiceClient,
 	rdb *redis.Client,
 	oauthProviders oauth.Registry,
-) http.Handler {
+) (http.Handler, func()) {
 	r := chi.NewRouter()
 
 	r.Use(chimw.Recoverer)
@@ -40,6 +42,7 @@ func New(
 	})
 
 	auth := handler.NewAuthHandler(authClient, todoClient, log)
+	cleanup := auth.Stop
 	oauthH := handler.NewOAuthHandler(authClient, oauthProviders, log)
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/signup",  auth.SignUp)
@@ -127,7 +130,7 @@ func New(
 	ws := handler.NewWSHandler(rdb, log)
 	r.With(middleware.Authenticate(authClient)).Get("/api/v1/ws", ws.ServeHTTP)
 
-	return r
+	return r, cleanup
 }
 
 func accessLog(log *slog.Logger) func(http.Handler) http.Handler {
