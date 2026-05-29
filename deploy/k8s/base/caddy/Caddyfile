@@ -13,6 +13,13 @@
 	# and we don't want Caddy trying to fetch real certs.
 	auto_https off
 	admin off
+
+	# Trust upstream proxies in private ranges (k8s node IPs, LB, ingress).
+	# This allows {client_ip} to resolve the real client IP from X-Forwarded-For
+	# instead of returning the internal pod/node address.
+	servers {
+		trusted_proxies static private_ranges
+	}
 }
 
 :80 {
@@ -30,7 +37,7 @@
 	handle /api/v1/ws {
 		reverse_proxy gateway.todo.svc.cluster.local:8080 {
 			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
+			header_up X-Real-IP {client_ip}
 		}
 	}
 
@@ -38,7 +45,7 @@
 	handle /api/v1/* {
 		reverse_proxy gateway.todo.svc.cluster.local:8080 {
 			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
+			header_up X-Real-IP {client_ip}
 		}
 	}
 

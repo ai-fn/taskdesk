@@ -131,6 +131,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		ProviderUserId: info.ProviderUserID,
 		Email:          info.Email,
 		Name:           info.Name,
+		ClientInfo:     clientInfoFromRequest(r),
 	})
 	if err != nil {
 		h.log.Error("oauth: auth-service signin", "provider", name, "err", err)

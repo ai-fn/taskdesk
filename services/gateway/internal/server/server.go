@@ -108,6 +108,14 @@ func New(
 	parseH := handler.NewParseHandler(aiClient)
 	r.With(middleware.Authenticate(authClient)).Post("/api/v1/tasks/parse", parseH.Parse)
 
+	sessions := handler.NewSessionsHandler(authClient)
+	r.Route("/api/v1/sessions", func(r chi.Router) {
+		r.Use(middleware.Authenticate(authClient))
+		r.Get("/", sessions.List)
+		r.Delete("/{sessionID}", sessions.Revoke)
+		r.Post("/revoke-others", sessions.RevokeOthers)
+	})
+
 	// WebSocket: authenticated users subscribe to their real-time notifications.
 	ws := handler.NewWSHandler(rdb, log)
 	r.With(middleware.Authenticate(authClient)).Get("/api/v1/ws", ws.ServeHTTP)
