@@ -79,6 +79,21 @@ type UserContext struct {
 	RecentlyCompleted []TaskInput `json:"recently_completed"`
 }
 
+// languageDirectives contains per-language instructions injected into the USER
+// message (not the cached system prompt) to steer Claude's output language.
+// Placing the directive here preserves the stable system-prompt cache prefix.
+var languageDirectives = map[string]string{
+	"en": "Respond in English.",
+	"zh": "Respond in Simplified Chinese (简体中文). All summary and rationale text must be in Simplified Chinese.",
+}
+
+func languageDirective(lang string) string {
+	if d, ok := languageDirectives[lang]; ok {
+		return d
+	}
+	return languageDirectives["en"]
+}
+
 // Planner wraps the Anthropic client.
 type Planner struct {
 	client *anthropic.Client
@@ -95,11 +110,16 @@ func New(apiKey string) *Planner {
 }
 
 // Generate calls Claude and returns a prioritized plan for the user.
-func (p *Planner) Generate(ctx context.Context, uc UserContext) (*SubmitDailyPlanInput, error) {
+// lang is normalized (e.g. "en", "zh"); it steers the output language without
+// touching the cached system prompt.
+func (p *Planner) Generate(ctx context.Context, uc UserContext, lang string) (*SubmitDailyPlanInput, error) {
 	userJSON, err := json.Marshal(uc)
 	if err != nil {
 		return nil, fmt.Errorf("marshal user context: %w", err)
 	}
+	// Append language directive at end of user message for recency — this ensures
+	// the cached systemPrompt block stays byte-for-byte stable across locales.
+	userText := string(userJSON) + "\n\n" + languageDirective(lang)
 
 	resp, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeSonnet4_6,
@@ -146,7 +166,7 @@ func (p *Planner) Generate(ctx context.Context, uc UserContext) (*SubmitDailyPla
 		ToolChoice: anthropic.ToolChoiceParamOfTool("submit_daily_plan"),
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(
-				anthropic.NewTextBlock(string(userJSON)),
+				anthropic.NewTextBlock(userText),
 			),
 		},
 	})
@@ -173,11 +193,13 @@ func (p *Planner) Generate(ctx context.Context, uc UserContext) (*SubmitDailyPla
 // GenerateStream calls Claude with streaming enabled. Text deltas are forwarded
 // to onText as they arrive; the final parsed plan is returned when the stream ends.
 // ToolChoice is auto so Claude can write visible narrative text before calling the tool.
-func (p *Planner) GenerateStream(ctx context.Context, uc UserContext, onText func(string)) (*SubmitDailyPlanInput, error) {
+// lang steers output language without touching the cached system-prompt block.
+func (p *Planner) GenerateStream(ctx context.Context, uc UserContext, lang string, onText func(string)) (*SubmitDailyPlanInput, error) {
 	userJSON, err := json.Marshal(uc)
 	if err != nil {
 		return nil, fmt.Errorf("marshal user context: %w", err)
 	}
+	userText := string(userJSON) + "\n\n" + languageDirective(lang)
 
 	stream := p.client.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeSonnet4_6,
@@ -223,7 +245,7 @@ func (p *Planner) GenerateStream(ctx context.Context, uc UserContext, onText fun
 		ToolChoice: anthropic.ToolChoiceUnionParam{OfAuto: &anthropic.ToolChoiceAutoParam{}},
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(
-				anthropic.NewTextBlock(string(userJSON)),
+				anthropic.NewTextBlock(userText),
 			),
 		},
 	})

@@ -409,6 +409,42 @@ func TestOAuthSignIn_ExistingLink(t *testing.T) {
 	}
 }
 
+// ── UpdateUserLanguage ────────────────────────────────────────────────────────
+
+func TestUpdateUserLanguage_Success(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "lang@test.com", "pass123", "Lang User")
+
+	_, err := svc.UpdateUserLanguage(context.Background(), &authv1.UpdateUserLanguageRequest{
+		UserId:   su.UserId,
+		Language: "zh",
+	})
+	if err != nil {
+		t.Fatalf("UpdateUserLanguage: %v", err)
+	}
+}
+
+func TestUpdateUserLanguage_UnsupportedLang_InvalidArgument(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "lang2@test.com", "pass123", "Lang User 2")
+
+	_, err := svc.UpdateUserLanguage(context.Background(), &authv1.UpdateUserLanguageRequest{
+		UserId:   su.UserId,
+		Language: "fr", // not in supported set
+	})
+	if grpcCode(err) != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument, got %v", err)
+	}
+}
+
+func TestUpdateUserLanguage_MissingFields(t *testing.T) {
+	svc, _ := newServer(t)
+	_, err := svc.UpdateUserLanguage(context.Background(), &authv1.UpdateUserLanguageRequest{})
+	if grpcCode(err) != codes.InvalidArgument {
+		t.Errorf("expected InvalidArgument for empty request, got %v", err)
+	}
+}
+
 func TestOAuthSignIn_EmailMatch(t *testing.T) {
 	svc, _ := newServer(t)
 	su := signUp(t, svc, "m@test.com", "pass", "Mia")

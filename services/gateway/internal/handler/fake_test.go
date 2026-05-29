@@ -12,10 +12,12 @@ import (
 // else panics with a clear message to catch accidental calls.
 
 type fakeAuthClient struct {
-	validateToken      func(ctx context.Context, req *authv1.ValidateTokenRequest, opts ...grpc.CallOption) (*authv1.ValidateTokenResponse, error)
-	listSessions       func(ctx context.Context, req *authv1.ListSessionsRequest, opts ...grpc.CallOption) (*authv1.ListSessionsResponse, error)
-	revokeSession      func(ctx context.Context, req *authv1.RevokeSessionRequest, opts ...grpc.CallOption) (*authv1.RevokeSessionResponse, error)
-	revokeOtherSessions func(ctx context.Context, req *authv1.RevokeOtherSessionsRequest, opts ...grpc.CallOption) (*authv1.RevokeOtherSessionsResponse, error)
+	validateToken        func(ctx context.Context, req *authv1.ValidateTokenRequest, opts ...grpc.CallOption) (*authv1.ValidateTokenResponse, error)
+	listSessions         func(ctx context.Context, req *authv1.ListSessionsRequest, opts ...grpc.CallOption) (*authv1.ListSessionsResponse, error)
+	revokeSession        func(ctx context.Context, req *authv1.RevokeSessionRequest, opts ...grpc.CallOption) (*authv1.RevokeSessionResponse, error)
+	revokeOtherSessions  func(ctx context.Context, req *authv1.RevokeOtherSessionsRequest, opts ...grpc.CallOption) (*authv1.RevokeOtherSessionsResponse, error)
+	updateUserLanguage   func(ctx context.Context, req *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error)
+	getUserByID          func(ctx context.Context, req *authv1.GetUserByIDRequest, opts ...grpc.CallOption) (*authv1.GetUserByIDResponse, error)
 }
 
 func (f *fakeAuthClient) ValidateToken(ctx context.Context, req *authv1.ValidateTokenRequest, opts ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
@@ -67,7 +69,17 @@ func (f *fakeAuthClient) ListUserIDs(ctx context.Context, in *authv1.ListUserIDs
 	panic("not used in handler tests")
 }
 func (f *fakeAuthClient) GetUserByID(ctx context.Context, in *authv1.GetUserByIDRequest, opts ...grpc.CallOption) (*authv1.GetUserByIDResponse, error) {
+	if f.getUserByID != nil {
+		return f.getUserByID(ctx, in, opts...)
+	}
 	panic("not used in handler tests")
+}
+
+func (f *fakeAuthClient) UpdateUserLanguage(ctx context.Context, in *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error) {
+	if f.updateUserLanguage != nil {
+		return f.updateUserLanguage(ctx, in, opts...)
+	}
+	panic("fakeAuthClient.UpdateUserLanguage not configured")
 }
 func (f *fakeAuthClient) OAuthSignIn(ctx context.Context, in *authv1.OAuthSignInRequest, opts ...grpc.CallOption) (*authv1.OAuthSignInResponse, error) {
 	panic("not used in handler tests")

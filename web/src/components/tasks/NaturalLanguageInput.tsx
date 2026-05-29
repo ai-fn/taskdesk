@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { TaskList } from '@/types'
 import type { TaskPrefill } from './TaskForm'
 import { parseTask } from '@/api/tasks'
@@ -7,17 +8,6 @@ import { ErrorMessage } from '@/components/ui/ErrorMessage'
 import { Spinner } from '@/components/ui/Spinner'
 import axios from 'axios'
 
-const LOADING_MESSAGES = [
-  'Counting bits',
-  'Consulting oracle',
-  'Wrangling tokens',
-  'Summoning Claude',
-  'Decoding intent',
-  'Brewing context',
-  'Parsing quarks',
-  'Assembling task',
-]
-
 interface Props {
   lists: TaskList[]
   onParsed: (prefill: TaskPrefill) => void
@@ -25,6 +15,8 @@ interface Props {
 }
 
 export function NaturalLanguageInput({ lists, onParsed, onCancel }: Props) {
+  const { t } = useTranslation()
+  const LOADING_MESSAGES: string[] = t('tasks.parse.loadingMessages', { returnObjects: true }) as string[]
   const [text, setText] = useState('')
   const [isParsing, setIsParsing] = useState(false)
   const [error, setError] = useState('')
@@ -99,7 +91,7 @@ export function NaturalLanguageInput({ lists, onParsed, onCancel }: Props) {
       } else if (axios.isAxiosError(err) && err.response?.data?.error) {
         setError(err.response.data.error as string)
       } else {
-        setError('Could not parse task. Try rephrasing.')
+        setError(t('tasks.parse.couldNotParse'))
       }
     } finally {
       setIsParsing(false)
@@ -119,7 +111,7 @@ export function NaturalLanguageInput({ lists, onParsed, onCancel }: Props) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Describe your task
+          {t('tasks.parse.describeLabel')}
         </label>
         <textarea
           ref={textareaRef}
@@ -128,7 +120,7 @@ export function NaturalLanguageInput({ lists, onParsed, onCancel }: Props) {
           onKeyDown={handleKeyDown}
           rows={4}
           disabled={isParsing}
-          placeholder='e.g. "Prepare deck for Meridian pitch next Friday, high priority, Client Work list"'
+          placeholder={t('tasks.parse.hint')}
           className="resize-none rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 disabled:opacity-60"
         />
 
@@ -142,7 +134,7 @@ export function NaturalLanguageInput({ lists, onParsed, onCancel }: Props) {
                 <span className="inline-block w-4 text-left">{'.'.repeat(dots)}</span>
               </span>
             ) : (
-              'Include title, due date, priority, list — Claude will extract them. ⌘↵ to parse.'
+              t('tasks.parse.hint')
             )}
           </p>
         </div>
@@ -157,7 +149,7 @@ export function NaturalLanguageInput({ lists, onParsed, onCancel }: Props) {
           onClick={handleClick}
           disabled={!isParsing && !text.trim()}
         >
-          {isParsing ? '✕ Cancel' : '✨ Parse'}
+          {isParsing ? `✕ ${t('common.cancel')}` : `✨ ${t('tasks.parse.parseBtn')}`}
         </Button>
       </div>
     </div>

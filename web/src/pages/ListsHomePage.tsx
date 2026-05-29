@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { listTasks } from '@/api/tasks'
 import { taskKeys } from '@/api/queryKeys'
@@ -28,6 +29,7 @@ function useSystemCount(filter: Parameters<typeof listTasks>[0]) {
 }
 
 export function ListsHomePage() {
+  const { t } = useTranslation()
   const [showEdit, setShowEdit] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [showCreateTask, setShowCreateTask] = useState(false)
@@ -91,14 +93,14 @@ export function ListsHomePage() {
             <button
               onClick={() => setShowEdit(true)}
               className="rounded-lg p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800"
-              title="Edit lists"
+              title={t('editLists.title')}
             >
               ☰
             </button>
             <button
               onClick={() => setShowNLTask(true)}
               className="rounded-lg p-1.5 text-gray-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
-              title="Create from natural language"
+              title={t('tasks.parse.nlTooltip')}
             >
               ✨
             </button>
@@ -106,15 +108,15 @@ export function ListsHomePage() {
               onClick={() => setShowCreateTask(true)}
               className="rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
             >
-              + New task
+              {t('lists.home.newTask')}
             </button>
           </div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">My Lists</h1>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{t('lists.home.myLists')}</h1>
           <button
             onClick={() => setShowCreate(true)}
             className="rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
           >
-            + New List
+            {t('lists.home.newList')}
           </button>
         </div>
 
@@ -130,7 +132,7 @@ export function ListsHomePage() {
             <SystemListCard
               key={sl.id}
               id={sl.id}
-              name={sl.name}
+              name={t(sl.nameKey)}
               color={sl.color}
               icon={sl.icon}
               count={systemCounts[sl.id] ?? 0}
@@ -148,7 +150,7 @@ export function ListsHomePage() {
           sectionLists.length === 0 ? null : (
             <div key={group?.id ?? '__ungrouped'} className="mb-6">
               <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                {group?.name ?? 'My Lists'}
+                {group?.name ?? t('lists.home.myLists')}
               </h2>
               <div className="grid grid-cols-2 gap-3">
                 {sectionLists.map((list) => (

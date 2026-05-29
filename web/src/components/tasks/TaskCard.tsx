@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import type { Task } from '@/types'
-import { Priority, Status, PriorityLabel } from '@/types'
+import { Priority, Status, PriorityLabelKey, StatusLabelKey } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { useDeleteTask, useUpdateStatus, useToggleFlagged, useRestoreTask, usePurgeTask } from '@/hooks/useTaskMutations'
 import { SubtaskList } from './SubtaskList'
+import { toBCP47 } from '@/i18n/config'
 
 const priorityColors: Record<Priority, string> = {
   [Priority.UNSPECIFIED]: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
@@ -35,6 +37,7 @@ interface Props {
 }
 
 export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
+  const { t, i18n } = useTranslation()
   const navigate = useNavigate()
   const del = useDeleteTask(filterKey)
   const updateStatus = useUpdateStatus(filterKey)
@@ -78,9 +81,9 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
             {task.flagged && <span className="text-red-500 text-sm">⚑</span>}
             {task.blocked && (
               <span
-                title="Blocked by unfinished dependencies"
+                title={t('tasks.detail.blockedByTitle')}
                 className="text-amber-500 dark:text-amber-400 text-sm"
-                aria-label="Blocked"
+                aria-label={t('tasks.detail.blockedAriaLabel')}
               >
                 🔒
               </span>
@@ -92,12 +95,12 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {task.priority !== Priority.UNSPECIFIED && (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${priorityColors[task.priority]}`}>
-                {PriorityLabel[task.priority]}
+                {t(PriorityLabelKey[task.priority])}
               </span>
             )}
             {isTemp ? (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusSelectColors[task.status]}`}>
-                To Do
+                {t('tasks.status.todo')}
               </span>
             ) : (
               <select
@@ -109,13 +112,13 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
                   e.stopPropagation()
                   updateStatus.mutate({ id: task.id, status: Number(e.target.value) as Status })
                 }}
-                title={task.blocked ? 'Complete blocking tasks before marking this Done' : undefined}
+                title={task.blocked ? t('tasks.detail.completeBlockedTitle') : undefined}
                 className={`rounded-full px-2 py-0.5 text-xs font-medium cursor-pointer border-0 outline-none focus:ring-1 focus:ring-indigo-400 disabled:opacity-50 ${statusSelectColors[task.status]}`}
               >
-                <option value={Status.TODO}>To Do</option>
-                <option value={Status.IN_PROGRESS}>In Progress</option>
+                <option value={Status.TODO}>{t(StatusLabelKey[Status.TODO])}</option>
+                <option value={Status.IN_PROGRESS}>{t(StatusLabelKey[Status.IN_PROGRESS])}</option>
                 <option value={Status.DONE} disabled={task.blocked}>
-                  Done{task.blocked ? ' (blocked)' : ''}
+                  {task.blocked ? t('tasks.card.statusBlocked') : t(StatusLabelKey[Status.DONE])}
                 </option>
               </select>
             )}
@@ -126,7 +129,7 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
             ))}
             {task.due_at && (
               <span className="text-xs text-gray-400 dark:text-gray-500">
-                Due {new Date(task.due_at).toLocaleDateString()}
+                {t('tasks.card.due', { date: new Date(task.due_at).toLocaleDateString(toBCP47(i18n.language)) })}
               </span>
             )}
             {task.completion_score != null && task.completion_score > 0 && (
@@ -154,7 +157,7 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
               >
                 <path d="M6 4l4 4-4 4"/>
               </svg>
-              <span>{subtaskDone}/{subtaskCount} subtasks done</span>
+              <span>{t('tasks.card.subtasksDone', { done: subtaskDone, count: subtaskCount })}</span>
               <div className="w-16 h-1 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
                 <div
                   className="h-full rounded-full bg-indigo-400 dark:bg-indigo-500 transition-all"
@@ -182,19 +185,19 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
                   loading={restore.isPending && restore.variables === task.id}
                   onClick={() => restore.mutate(task.id)}
                 >
-                  Restore
+                  {t('tasks.card.restore')}
                 </Button>
                 <Button
                   variant="ghost"
                   className="text-xs text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
                   loading={purge.isPending && purge.variables === task.id}
                   onClick={() => {
-                    if (confirm('Permanently delete this task? This cannot be undone.')) {
+                    if (confirm(t('tasks.card.confirmPurge'))) {
                       purge.mutate(task.id)
                     }
                   }}
                 >
-                  Delete
+                  {t('common.delete')}
                 </Button>
               </>
             ) : (
@@ -206,14 +209,14 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
                       ? 'text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300'
                       : 'text-gray-300 dark:text-gray-600 hover:text-red-400 dark:hover:text-red-500'
                   }`}
-                  title={task.flagged ? 'Unflag' : 'Flag'}
+                  title={task.flagged ? t('tasks.unflag') : t('tasks.flag')}
                 >
                   ⚑
                 </button>
                 <button
                   onClick={() => setSubtasksOpen((o) => !o)}
                   className="rounded p-1 text-xs text-gray-300 dark:text-gray-600 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
-                  title="Subtasks"
+                  title={t('tasks.form.subtasksLabel')}
                 >
                   ⊕
                 </button>
@@ -222,7 +225,7 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
                   className="text-xs"
                   onClick={() => onEdit(task)}
                 >
-                  Edit
+                  {t('common.edit')}
                 </Button>
                 <Button
                   variant="ghost"
@@ -230,7 +233,7 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
                   loading={del.isPending && del.variables === task.id}
                   onClick={() => del.mutate(task.id)}
                 >
-                  Del
+                  {t('common.delete')}
                 </Button>
               </>
             )}

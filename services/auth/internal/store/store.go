@@ -28,9 +28,9 @@ func New(db *pgxpool.Pool) *Store {
 
 func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO auth.users (id, email, name, password_hash, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		u.ID, u.Email, u.Name, u.PasswordHash, u.CreatedAt, u.UpdatedAt,
+		INSERT INTO auth.users (id, email, name, password_hash, language, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		u.ID, u.Email, u.Name, u.PasswordHash, u.Language, u.CreatedAt, u.UpdatedAt,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -44,9 +44,9 @@ func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, created_at, updated_at
+		SELECT id, email, name, password_hash, language, created_at, updated_at
 		FROM auth.users WHERE email = $1`, email,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -59,9 +59,9 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*domain.User,
 func (s *Store) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, created_at, updated_at
+		SELECT id, email, name, password_hash, language, created_at, updated_at
 		FROM auth.users WHERE id = $1`, id,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -170,9 +170,9 @@ func (s *Store) RevokeOtherSessions(ctx context.Context, userID, currentSessionI
 	return tag.RowsAffected(), nil
 }
 
-// ListUsers returns all users (id, email, name). Used by scheduler for fan-out.
+// ListUsers returns all users. Used by scheduler for fan-out.
 func (s *Store) ListUsers(ctx context.Context) ([]*domain.User, error) {
-	rows, err := s.db.Query(ctx, `SELECT id, email, name, password_hash, created_at, updated_at FROM auth.users ORDER BY created_at`)
+	rows, err := s.db.Query(ctx, `SELECT id, email, name, password_hash, language, created_at, updated_at FROM auth.users ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
@@ -181,7 +181,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]*domain.User, error) {
 	var users []*domain.User
 	for rows.Next() {
 		var u domain.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		users = append(users, &u)
@@ -189,14 +189,43 @@ func (s *Store) ListUsers(ctx context.Context) ([]*domain.User, error) {
 	return users, rows.Err()
 }
 
+// GetUserLanguage returns only the language preference for the given user.
+// Used by ValidateToken so every authenticated request picks up the current setting.
+func (s *Store) GetUserLanguage(ctx context.Context, userID string) (string, error) {
+	var lang string
+	err := s.db.QueryRow(ctx, `SELECT language FROM auth.users WHERE id = $1`, userID).Scan(&lang)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "en", nil
+		}
+		return "en", fmt.Errorf("get user language: %w", err)
+	}
+	return lang, nil
+}
+
+// UpdateUserLanguage sets the preferred language for the given user.
+func (s *Store) UpdateUserLanguage(ctx context.Context, userID, lang string) error {
+	tag, err := s.db.Exec(ctx, `
+		UPDATE auth.users SET language = $2, updated_at = now() WHERE id = $1`,
+		userID, lang,
+	)
+	if err != nil {
+		return fmt.Errorf("update user language: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ── OAuth identities ──────────────────────────────────────────────────────────
 
 // CreateUserNoPassword inserts an OAuth-only user (password_hash NULL).
 func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error {
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO auth.users (id, email, name, password_hash, created_at, updated_at)
-		VALUES ($1, $2, $3, NULL, $4, $5)`,
-		u.ID, u.Email, u.Name, u.CreatedAt, u.UpdatedAt,
+		INSERT INTO auth.users (id, email, name, password_hash, language, created_at, updated_at)
+		VALUES ($1, $2, $3, NULL, $4, $5, $6)`,
+		u.ID, u.Email, u.Name, u.Language, u.CreatedAt, u.UpdatedAt,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -212,12 +241,12 @@ func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error 
 func (s *Store) FindByOAuth(ctx context.Context, provider, providerUserID string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT u.id, u.email, u.name, u.password_hash, u.created_at, u.updated_at
+		SELECT u.id, u.email, u.name, u.password_hash, u.language, u.created_at, u.updated_at
 		FROM auth.oauth_identities oi
 		JOIN auth.users u ON u.id = oi.user_id
 		WHERE oi.provider = $1 AND oi.provider_user_id = $2`,
 		provider, providerUserID,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

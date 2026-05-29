@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { listTasks, searchTasks } from '@/api/tasks'
 import { taskKeys } from '@/api/queryKeys'
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export function SearchBar({ lists }: Props) {
+  const { t } = useTranslation()
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [isOpen, setIsOpen] = useState(false)
@@ -127,7 +129,7 @@ export function SearchBar({ lists }: Props) {
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => setIsOpen(true)}
           onKeyDown={handleKeyDown}
-          placeholder="Search tasks..."
+          placeholder={t('search.placeholder')}
           className="flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400 dark:placeholder:text-gray-500 text-gray-900 dark:text-gray-100"
         />
         {query && (

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '@/hooks/useAuth'
 import { AuthLayout } from '@/components/layout/AuthLayout'
 import { Input } from '@/components/ui/Input'
@@ -15,11 +16,12 @@ interface FormValues {
 }
 
 export function LoginPage() {
+  const { t } = useTranslation()
   const { login } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const oauthError = oauthErrorMessage(searchParams.get('oauth_error'))
-  const [apiError, setApiError] = useState(oauthError ?? '')
+  const oauthErrorKey = oauthErrorMessage(searchParams.get('oauth_error'))
+  const [apiError, setApiError] = useState(oauthErrorKey ? t(oauthErrorKey) : '')
 
   const {
     register,
@@ -36,39 +38,39 @@ export function LoginPage() {
       if (axios.isAxiosError(err) && err.response?.data?.error) {
         setApiError(err.response.data.error as string)
       } else {
-        setApiError('Login failed. Please try again.')
+        setApiError(t('auth.login.failed'))
       }
     }
   }
 
   return (
     <AuthLayout>
-      <h1 className="mb-6 text-xl font-bold text-gray-900 dark:text-gray-100">Sign in</h1>
+      <h1 className="mb-6 text-xl font-bold text-gray-900 dark:text-gray-100">{t('auth.login.title')}</h1>
       {apiError && <div className="mb-4"><ErrorMessage message={apiError} /></div>}
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
         <Input
-          label="Email"
+          label={t('auth.fields.email')}
           type="email"
           autoComplete="email"
           error={errors.email?.message}
-          {...register('email', { required: 'Email is required' })}
+          {...register('email', { required: t('auth.login.emailRequired') })}
         />
         <Input
-          label="Password"
+          label={t('auth.fields.password')}
           type="password"
           autoComplete="current-password"
           error={errors.password?.message}
-          {...register('password', { required: 'Password is required' })}
+          {...register('password', { required: t('auth.login.passwordRequired') })}
         />
         <Button type="submit" loading={isSubmitting} className="mt-2 w-full justify-center">
-          Sign in
+          {t('auth.login.submit')}
         </Button>
       </form>
       <OAuthButtons />
       <p className="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
-        No account?{' '}
+        {t('auth.login.noAccount')}{' '}
         <Link to="/signup" className="text-indigo-600 dark:text-indigo-400 hover:underline">
-          Sign up
+          {t('auth.login.signUp')}
         </Link>
       </p>
     </AuthLayout>

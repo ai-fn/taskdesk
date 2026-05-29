@@ -17,6 +17,7 @@ const (
 	ctxUserID    contextKey = "user_id"
 	ctxEmail     contextKey = "email"
 	ctxSessionID contextKey = "session_id"
+	ctxLanguage  contextKey = "language"
 )
 
 // Authenticate validates the Bearer token from the Authorization header
@@ -46,6 +47,7 @@ func Authenticate(authClient authv1.AuthServiceClient) func(http.Handler) http.H
 			ctx := context.WithValue(r.Context(), ctxUserID, resp.UserId)
 			ctx = context.WithValue(ctx, ctxEmail, resp.Email)
 			ctx = context.WithValue(ctx, ctxSessionID, resp.SessionId)
+			ctx = context.WithValue(ctx, ctxLanguage, resp.Language)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -66,6 +68,15 @@ func EmailFromContext(ctx context.Context) string {
 // SessionIDFromContext returns the authenticated user's current session ID.
 func SessionIDFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(ctxSessionID).(string)
+	return v
+}
+
+// LanguageFromContext returns the authenticated user's preferred language ("en" if absent).
+func LanguageFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(ctxLanguage).(string)
+	if v == "" {
+		return "en"
+	}
 	return v
 }
 

@@ -2,13 +2,16 @@
 package consumer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"text/template"
 	"time"
 
 	"github.com/fsociety/todo/pkg/events"
+	pki18n "github.com/fsociety/todo/pkg/i18n"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	"github.com/fsociety/todo/services/notification/internal/mailer"
 	"github.com/redis/go-redis/v9"
@@ -56,6 +59,32 @@ func (h *Handler) Handle(ctx context.Context, r *kgo.Record) error {
 
 // ── task events ───────────────────────────────────────────────────────────────
 
+// taskCompletedTmpl holds localized subject+body templates for task.completed.
+// Dates use ISO format (2006-01-02 15:04) — locale-neutral and readable in both EN/ZH.
+// Adding a new locale: add an entry here and in pkg/i18n.
+type taskCompletedTmpl struct {
+	Subject *template.Template
+	Body    *template.Template
+}
+
+var taskCompletedTemplates = map[string]taskCompletedTmpl{
+	"en": {
+		Subject: template.Must(template.New("").Parse(`[todo] Task completed: {{.Title}}`)),
+		Body:    template.Must(template.New("").Parse("Great work! You completed task \"{{.Title}}\" at {{.Date}}.")),
+	},
+	"zh": {
+		Subject: template.Must(template.New("").Parse(`[todo] 任务已完成：{{.Title}}`)),
+		Body:    template.Must(template.New("").Parse(`做得好！您于 {{.Date}} 完成了任务「{{.Title}}」。`)),
+	},
+}
+
+func pickTaskCompletedTmpl(lang string) taskCompletedTmpl {
+	if t, ok := taskCompletedTemplates[pki18n.Normalize(lang)]; ok {
+		return t
+	}
+	return taskCompletedTemplates["en"]
+}
+
 func (h *Handler) handleTaskEvent(ctx context.Context, r *kgo.Record) error {
 	var ev events.TaskEvent
 	if err := json.Unmarshal(r.Value, &ev); err != nil {
@@ -68,11 +97,18 @@ func (h *Handler) handleTaskEvent(ctx context.Context, r *kgo.Record) error {
 		return nil
 	}
 
-	subject := fmt.Sprintf("[todo] Task completed: %s", ev.TaskTitle)
-	body := fmt.Sprintf("Great work! You completed task \"%s\" at %s.", ev.TaskTitle, ev.OccurredAt.Format("2006-01-02 15:04"))
+	tmpl := pickTaskCompletedTmpl(ev.Language)
+	data := map[string]string{
+		"Title": ev.TaskTitle,
+		"Date":  ev.OccurredAt.Format("2006-01-02 15:04"),
+	}
+
+	var subjectBuf, bodyBuf bytes.Buffer
+	_ = tmpl.Subject.Execute(&subjectBuf, data)
+	_ = tmpl.Body.Execute(&bodyBuf, data)
 
 	email := h.notifyEmail(ev.UserID)
-	if err := h.mailer.Send(email, subject, body); err != nil {
+	if err := h.mailer.Send(email, subjectBuf.String(), bodyBuf.String()); err != nil {
 		h.log.Error("send email", "user_id", ev.UserID, "err", err)
 	}
 
@@ -90,6 +126,8 @@ func (h *Handler) handleTaskEvent(ctx context.Context, r *kgo.Record) error {
 // ── daily plan events ─────────────────────────────────────────────────────────
 
 // DailyPlanEvent mirrors the payload published by ai-service.
+// Language is denormalized by the producer (ai-service) so we can localize
+// emails without a synchronous auth lookup.
 type DailyPlanEvent struct {
 	EventID     string          `json:"event_id"`
 	UserID      string          `json:"user_id"`
@@ -97,6 +135,7 @@ type DailyPlanEvent struct {
 	Summary     string          `json:"summary"`
 	Items       []DailyPlanItem `json:"items"`
 	GeneratedAt time.Time       `json:"generated_at"`
+	Language    string          `json:"language"`
 }
 
 type DailyPlanItem struct {
@@ -106,6 +145,33 @@ type DailyPlanItem struct {
 	Rationale string `json:"rationale"`
 }
 
+// dailyPlanTmpl holds localized subject+body-header templates.
+type dailyPlanTmpl struct {
+	Subject    *template.Template
+	BodyHeader *template.Template
+	Footer     string
+}
+
+var dailyPlanTemplates = map[string]dailyPlanTmpl{
+	"en": {
+		Subject:    template.Must(template.New("").Parse(`[todo] Your daily plan is ready — {{.Date}}`)),
+		BodyHeader: template.Must(template.New("").Parse("Your AI-powered daily plan for {{.Date}}:\n\n{{.Summary}}\n\nTop tasks:\n")),
+		Footer:     "\nOpen the app to see the full plan.",
+	},
+	"zh": {
+		Subject:    template.Must(template.New("").Parse(`[todo] 您的每日计划已就绪 — {{.Date}}`)),
+		BodyHeader: template.Must(template.New("").Parse("您 {{.Date}} 的 AI 每日计划：\n\n{{.Summary}}\n\n重点任务：\n")),
+		Footer:     "\n打开应用查看完整计划。",
+	},
+}
+
+func pickDailyPlanTmpl(lang string) dailyPlanTmpl {
+	if t, ok := dailyPlanTemplates[pki18n.Normalize(lang)]; ok {
+		return t
+	}
+	return dailyPlanTemplates["en"]
+}
+
 func (h *Handler) handleDailyPlan(ctx context.Context, r *kgo.Record) error {
 	var ev DailyPlanEvent
 	if err := json.Unmarshal(r.Value, &ev); err != nil {
@@ -113,10 +179,8 @@ func (h *Handler) handleDailyPlan(ctx context.Context, r *kgo.Record) error {
 		return nil
 	}
 
-	// Email notification with today's plan.
 	email := h.notifyEmail(ev.UserID)
-	subject := fmt.Sprintf("[todo] Your daily plan is ready — %s", ev.GeneratedAt.Format("2006-01-02"))
-	body := buildPlanEmail(ev)
+	subject, body := buildPlanEmail(ev)
 	if err := h.mailer.Send(email, subject, body); err != nil {
 		h.log.Error("send plan email", "user_id", ev.UserID, "err", err)
 	}
@@ -141,16 +205,26 @@ func (h *Handler) handleDailyPlan(ctx context.Context, r *kgo.Record) error {
 	return nil
 }
 
-func buildPlanEmail(ev DailyPlanEvent) string {
-	body := fmt.Sprintf("Your AI-powered daily plan for %s:\n\n%s\n\nTop tasks:\n", ev.GeneratedAt.Format("2006-01-02"), ev.Summary)
+func buildPlanEmail(ev DailyPlanEvent) (subject, body string) {
+	tmpl := pickDailyPlanTmpl(ev.Language)
+	data := map[string]string{
+		"Date":    ev.GeneratedAt.Format("2006-01-02"),
+		"Summary": ev.Summary,
+	}
+
+	var subjectBuf, bodyBuf bytes.Buffer
+	_ = tmpl.Subject.Execute(&subjectBuf, data)
+	_ = tmpl.BodyHeader.Execute(&bodyBuf, data)
+
 	for _, item := range ev.Items {
 		if item.Rank > 5 {
 			break
 		}
-		body += fmt.Sprintf("  %d. %s — %s\n", item.Rank, item.TaskTitle, item.Rationale)
+		fmt.Fprintf(&bodyBuf, "  %d. %s — %s\n", item.Rank, item.TaskTitle, item.Rationale)
 	}
-	body += "\nOpen the app to see the full plan."
-	return body
+	bodyBuf.WriteString(tmpl.Footer)
+
+	return subjectBuf.String(), bodyBuf.String()
 }
 
 // Run starts the Kafka consumer loop until ctx is cancelled.

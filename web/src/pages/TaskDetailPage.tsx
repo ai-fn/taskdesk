@@ -5,7 +5,9 @@ import axios from 'axios'
 import { getDependencyTree, getTask } from '@/api/tasks'
 import { taskKeys } from '@/api/queryKeys'
 import type { DependencyTreeNode } from '@/api/tasks'
-import { Priority, PriorityLabel, Status } from '@/types'
+import { useTranslation } from 'react-i18next'
+import { Priority, PriorityLabelKey, Status, StatusLabelKey } from '@/types'
+import { toBCP47 } from '@/i18n/config'
 import { useLists } from '@/hooks/useLists'
 import { useUpdateStatus, useToggleFlagged, useUpdateTask } from '@/hooks/useTaskMutations'
 import { SubtaskList } from '@/components/tasks/SubtaskList'
@@ -38,6 +40,7 @@ function scoreColor(score: number) {
 }
 
 export function TaskDetailPage() {
+  const { t, i18n } = useTranslation()
   const { taskId = '' } = useParams<{ taskId: string }>()
   const navigate = useNavigate()
   const { data: lists = [] } = useLists()
@@ -73,7 +76,7 @@ export function TaskDetailPage() {
       if (axios.isAxiosError(err) && err.response?.data?.error) {
         setEditError(err.response.data.error as string)
       } else {
-        setEditError('Failed to update task.')
+        setEditError(t('tasks.failedToUpdate'))
       }
     }
   }
@@ -88,9 +91,9 @@ export function TaskDetailPage() {
   if (taskError || !task) {
     return (
       <div className="text-center py-20 text-gray-500 dark:text-gray-400">
-        <p>Task not found.</p>
+        <p>{t('tasks.notFound')}</p>
         <button onClick={() => navigate('/')} className="mt-4 text-indigo-600 dark:text-indigo-400 hover:underline">
-          ← Back to lists
+          {t('tasks.backToLists')}
         </button>
       </div>
     )
@@ -107,7 +110,7 @@ export function TaskDetailPage() {
         onClick={() => navigate(-1)}
         className="mb-4 inline-flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
       >
-        ‹ Back
+        {t('tasks.back')}
       </button>
 
       {/* Hero */}
@@ -119,7 +122,7 @@ export function TaskDetailPage() {
                 {task.title}
               </h1>
               {task.blocked && (
-                <span title="Blocked by unfinished dependencies" className="text-amber-500 dark:text-amber-400">🔒</span>
+                <span title={t('tasks.detail.blockedByTitle')} className="text-amber-500 dark:text-amber-400">🔒</span>
               )}
             </div>
 
@@ -134,32 +137,32 @@ export function TaskDetailPage() {
                 value={task.status}
                 onChange={(e) => updateStatus.mutate({ id: task.id, status: Number(e.target.value) as Status })}
                 disabled={updateStatus.isPending}
-                title={task.blocked ? 'Complete blocking tasks before marking this Done' : undefined}
+                title={task.blocked ? t('tasks.detail.completeBlockedTitle') : undefined}
                 className={`rounded-full px-3 py-1 text-xs font-medium cursor-pointer border-0 outline-none focus:ring-1 focus:ring-indigo-400 ${statusColors[task.status]}`}
               >
-                <option value={Status.TODO}>To Do</option>
-                <option value={Status.IN_PROGRESS}>In Progress</option>
+                <option value={Status.TODO}>{t(StatusLabelKey[Status.TODO])}</option>
+                <option value={Status.IN_PROGRESS}>{t(StatusLabelKey[Status.IN_PROGRESS])}</option>
                 <option value={Status.DONE} disabled={task.blocked}>
-                  Done{task.blocked ? ' (blocked)' : ''}
+                  {task.blocked ? t('tasks.card.statusBlocked') : t(StatusLabelKey[Status.DONE])}
                 </option>
               </select>
 
               {task.priority !== Priority.UNSPECIFIED && (
                 <span className={`rounded-full px-3 py-1 text-xs font-medium ${priorityColors[task.priority]}`}>
-                  {PriorityLabel[task.priority]}
+                  {t(PriorityLabelKey[task.priority])}
                 </span>
               )}
 
               {task.due_at && (
                 <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Due {new Date(task.due_at).toLocaleDateString()}
+                  {t('tasks.card.due', { date: new Date(task.due_at).toLocaleDateString(toBCP47(i18n.language)) })}
                 </span>
               )}
 
               {list && (
                 <span
                   className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400"
-                  title={`In list: ${list.name}`}
+                  title={t('tasks.detail.inList', { name: list.name })}
                 >
                   <span className="h-2 w-2 rounded-full" style={{ backgroundColor: list.color }} />
                   {list.name}
@@ -191,7 +194,7 @@ export function TaskDetailPage() {
                   ? 'text-red-500 hover:text-red-700 dark:text-red-400'
                   : 'text-gray-300 dark:text-gray-600 hover:text-red-400'
               }`}
-              title={task.flagged ? 'Unflag' : 'Flag'}
+              title={task.flagged ? t('tasks.unflag') : t('tasks.flag')}
             >
               ⚑
             </button>
@@ -200,7 +203,7 @@ export function TaskDetailPage() {
               className="text-xs"
               onClick={() => { setEditError(''); setEditOpen(true) }}
             >
-              Edit
+              {t('common.edit')}
             </Button>
           </div>
         </div>
@@ -214,17 +217,17 @@ export function TaskDetailPage() {
 
       {/* Subtasks */}
       <section className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-sm">
-        <h2 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Subtasks</h2>
+        <h2 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">{t('tasks.form.subtasksLabel')}</h2>
         <SubtaskList parentTask={task} />
       </section>
 
       {/* Blocked by */}
       <section className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-sm">
         <div className="mb-3 flex items-baseline justify-between gap-3">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Blocked by</h2>
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">{t('tasks.detail.blockedBy')}</h2>
           {dependsOn.length > 0 && (
             <span className="text-xs text-gray-500 dark:text-gray-400">
-              {dependsOnDone} of {dependsOn.length} complete
+              {t('tasks.detail.ofComplete', { done: dependsOnDone, total: dependsOn.length })}
             </span>
           )}
         </div>
@@ -232,7 +235,7 @@ export function TaskDetailPage() {
         {treeLoading ? (
           <Spinner className="h-4 w-4 text-indigo-500" />
         ) : dependsOn.length === 0 ? (
-          <p className="text-sm text-gray-400 dark:text-gray-500">No dependencies.</p>
+          <p className="text-sm text-gray-400 dark:text-gray-500">{t('tasks.detail.noDependencies')}</p>
         ) : (
           <DependencyChain nodes={dependsOn} rootTitle={task.title} direction="up" />
         )}
@@ -246,9 +249,9 @@ export function TaskDetailPage() {
       {blocking.length > 0 && (
         <section className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-sm">
           <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Blocks</h2>
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">{t('tasks.detail.blocks')}</h2>
             <span className="text-xs text-gray-500 dark:text-gray-400">
-              {blockingDone} of {blocking.length} complete
+              {t('tasks.detail.ofComplete', { done: blockingDone, total: blocking.length })}
             </span>
           </div>
           <DependencyChain nodes={blocking} rootTitle={task.title} direction="down" />
@@ -259,7 +262,7 @@ export function TaskDetailPage() {
         <Modal onClose={() => setEditOpen(false)} className="max-w-xl">
           <div className="rounded-xl bg-white dark:bg-gray-800 shadow-xl overflow-hidden">
             <div className="max-h-[90vh] overflow-y-auto p-6">
-              <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">Edit task</h2>
+              <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">{t('tasks.form.editTask')}</h2>
               {editError && <div className="mb-4"><ErrorMessage message={editError} /></div>}
               <TaskForm
                 task={task}
@@ -334,30 +337,31 @@ function DependencyChainNode({
   childrenByVia: Map<string, DependencyTreeNode[]>
   rootArrow: string
 }) {
-  const t = node.task
-  const isDone = t.status === Status.DONE
-  const children = childrenByVia.get(t.id) ?? []
+  const { t } = useTranslation()
+  const dep = node.task
+  const isDone = dep.status === Status.DONE
+  const children = childrenByVia.get(dep.id) ?? []
 
   return (
     <li>
       <div className="flex items-center gap-2 group py-0.5">
         <span
           className={`h-2 w-2 rounded-full shrink-0 ${
-            isDone ? 'bg-green-500' : t.status === Status.IN_PROGRESS ? 'bg-purple-500' : 'bg-amber-500'
+            isDone ? 'bg-green-500' : dep.status === Status.IN_PROGRESS ? 'bg-purple-500' : 'bg-amber-500'
           }`}
-          title={isDone ? 'Done' : t.status === Status.IN_PROGRESS ? 'In progress' : 'To do'}
+          title={isDone ? t(StatusLabelKey[Status.DONE]) : dep.status === Status.IN_PROGRESS ? t(StatusLabelKey[Status.IN_PROGRESS]) : t(StatusLabelKey[Status.TODO])}
         />
         <Link
-          to={`/tasks/detail/${t.id}`}
+          to={`/tasks/detail/${dep.id}`}
           className={`flex-1 text-sm truncate hover:underline ${
             isDone
               ? 'line-through text-gray-400 dark:text-gray-500'
               : 'text-gray-700 dark:text-gray-300'
           }`}
         >
-          {t.title}
+          {dep.title}
         </Link>
-        {t.blocked && <span className="text-amber-500 text-xs" title="This task is blocked too">🔒</span>}
+        {dep.blocked && <span className="text-amber-500 text-xs" title={t('tasks.detail.blockedToo')}>🔒</span>}
       </div>
       {children.length > 0 && (
         <ul className="ml-4 mt-1 space-y-1 border-l-2 border-gray-100 dark:border-gray-700 pl-3">

@@ -55,11 +55,14 @@ func (m *minimalAuthClient) RevokeSession(ctx context.Context, in *authv1.Revoke
 func (m *minimalAuthClient) RevokeOtherSessions(ctx context.Context, in *authv1.RevokeOtherSessionsRequest, opts ...grpc.CallOption) (*authv1.RevokeOtherSessionsResponse, error) {
 	panic("not implemented")
 }
+func (m *minimalAuthClient) UpdateUserLanguage(ctx context.Context, in *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error) {
+	panic("not implemented")
+}
 
 // probe is a simple next handler that captures the context values set by Authenticate.
 type probeResult struct {
-	userID, email, sessionID string
-	called                   bool
+	userID, email, sessionID, language string
+	called                             bool
 }
 
 func probeHandler(result *probeResult) http.Handler {
@@ -68,6 +71,7 @@ func probeHandler(result *probeResult) http.Handler {
 		result.userID = middleware.UserIDFromContext(r.Context())
 		result.email = middleware.EmailFromContext(r.Context())
 		result.sessionID = middleware.SessionIDFromContext(r.Context())
+		result.language = middleware.LanguageFromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	})
 }
@@ -123,6 +127,36 @@ func TestAuthenticate_ValidToken_PopulatesContext(t *testing.T) {
 	}
 	if probe.sessionID != "sess456" {
 		t.Errorf("SessionID = %q, want sess456", probe.sessionID)
+	}
+}
+
+func TestAuthenticate_ValidToken_PopulatesLanguage(t *testing.T) {
+	mw := makeAuthMiddleware(func(_ context.Context, _ *authv1.ValidateTokenRequest, _ ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
+		return &authv1.ValidateTokenResponse{UserId: "u", Email: "u@x.com", SessionId: "s", Language: "zh"}, nil
+	})
+	probe := &probeResult{}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Bearer tok")
+	mw(probeHandler(probe)).ServeHTTP(w, r)
+
+	if probe.language != "zh" {
+		t.Errorf("Language = %q, want %q", probe.language, "zh")
+	}
+}
+
+func TestAuthenticate_MissingLanguage_DefaultsToEn(t *testing.T) {
+	mw := makeAuthMiddleware(func(_ context.Context, _ *authv1.ValidateTokenRequest, _ ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
+		return &authv1.ValidateTokenResponse{UserId: "u", Email: "u@x.com", SessionId: "s"}, nil
+	})
+	probe := &probeResult{}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Bearer tok")
+	mw(probeHandler(probe)).ServeHTTP(w, r)
+
+	if probe.language != "en" {
+		t.Errorf("Language = %q, want %q", probe.language, "en")
 	}
 }
 

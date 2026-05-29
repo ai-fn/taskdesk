@@ -16,6 +16,8 @@ const (
 
 // TaskEvent is the JSON payload written to todo.outbox and published to Kafka.
 // Key is always the user_id so events for one user land on the same partition.
+// Language is denormalized from the user's preference at production time so that
+// notification-service can localize emails without a synchronous auth lookup.
 type TaskEvent struct {
 	EventID    string    `json:"event_id"`
 	EventType  string    `json:"event_type"`
@@ -23,4 +25,5 @@ type TaskEvent struct {
 	TaskID     string    `json:"task_id"`
 	TaskTitle  string    `json:"task_title"`
 	OccurredAt time.Time `json:"occurred_at"`
+	Language   string    `json:"language"`
 }

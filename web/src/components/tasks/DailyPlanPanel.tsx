@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { usePlan, useGeneratePlan } from '@/hooks/usePlan'
 import { Spinner } from '@/components/ui/Spinner'
+import { toBCP47 } from '@/i18n/config'
 
 // useDots returns a string that cycles "." → ".." → "..." every 350ms
 // while `active` is true. Stops and resets when `active` goes false.
@@ -18,6 +20,7 @@ function useDots(active: boolean) {
 }
 
 export function DailyPlanPanel() {
+  const { t, i18n } = useTranslation()
   const { data, isLoading } = usePlan()
   const generate = useGeneratePlan()
   const [expanded, setExpanded] = useState(false)
@@ -28,7 +31,7 @@ export function DailyPlanPanel() {
   return (
     <div className="mb-6 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/30 p-4">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <h2 className="font-semibold text-indigo-900 dark:text-indigo-300">AI Daily Plan</h2>
+        <h2 className="font-semibold text-indigo-900 dark:text-indigo-300">{t('plan.title')}</h2>
         <div className="flex items-center gap-2">
           <button
             onClick={generate.isPending ? generate.cancel : generate.mutate}
@@ -42,10 +45,10 @@ export function DailyPlanPanel() {
                     <rect x="4" y="4" width="16" height="16" rx="1" />
                   </svg>
                 </div>
-                Generating…
+                {t('plan.generating')}
               </>
             ) : (
-              '✦ Generate'
+              t('plan.generate')
             )}
           </button>
         </div>
@@ -54,21 +57,21 @@ export function DailyPlanPanel() {
       {generate.errorMessage && (
         <p className="mb-2 text-xs text-red-600 dark:text-red-400">
           {generate.errorMessage.includes('no tasks')
-            ? 'Add some tasks first, then generate a plan.'
-            : 'Failed to generate plan. Try again.'}
+            ? t('plan.addTasksFirst')
+            : t('plan.failed')}
         </p>
       )}
 
       {isLoading && (
         <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
           <Spinner className="h-4 w-4" />
-          <span className="text-sm">Loading…</span>
+          <span className="text-sm">{t('common.loading')}</span>
         </div>
       )}
 
       {!isLoading && !plan && !generate.isPending && (
         <p className="text-sm text-indigo-600 dark:text-indigo-400">
-          No plan yet for today. Hit Generate to get AI-powered prioritization.
+          {t('plan.noplan')}
         </p>
       )}
 
@@ -76,7 +79,7 @@ export function DailyPlanPanel() {
         <div className="text-indigo-700 dark:text-indigo-300">
           <p className="text-sm italic">
             {generate.deltas.length === 0 ? (
-              <>Asking Claude<span className="inline-block w-4 text-left">{dots}</span></>
+              <>{t('plan.askingClaude')}<span className="inline-block w-4 text-left">{dots}</span></>
             ) : (
               <>
                 {generate.deltas.map((d, i) => (
@@ -100,7 +103,7 @@ export function DailyPlanPanel() {
               className="ml-2 shrink-0 animate-fade-in text-xs text-indigo-400 dark:text-indigo-500"
               style={{ animationDelay: '60ms' }}
             >
-              {new Date(plan.generated_at).toLocaleDateString(undefined, {
+              {new Date(plan.generated_at).toLocaleDateString(toBCP47(i18n.language), {
                 weekday: 'short', month: 'short', day: 'numeric',
               })}
             </span>
@@ -156,7 +159,7 @@ export function DailyPlanPanel() {
                 onClick={() => setExpanded((v) => !v)}
                 className="mt-2 pl-7 text-xs font-medium text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300"
               >
-                {expanded ? '▲ Show less' : `▼ Show ${plan.items.length - 5} more`}
+                {expanded ? t('plan.showLess') : t('plan.showMore', { count: plan.items.length - 5 })}
               </button>
             </>
           )}

@@ -226,7 +226,7 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 		evType = events.TypeTaskCompleted
 	}
 
-	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, evType)
+	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, evType, "")
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "task not found")
@@ -259,24 +259,43 @@ func (s *Server) DeleteTask(ctx context.Context, req *todov1.DeleteTaskRequest) 
 // ── CompleteTask ──────────────────────────────────────────────────────────────
 
 func (s *Server) CompleteTask(ctx context.Context, req *todov1.CompleteTaskRequest) (*todov1.CompleteTaskResponse, error) {
-	// UpdateTask enforces the unfinished-dependency check below.
-	resp, err := s.UpdateTask(ctx, &todov1.UpdateTaskRequest{
-		UserId: req.UserId,
-		TaskId: req.TaskId,
-		Status: todov1.Status_STATUS_DONE,
-	})
+	existing, err := s.store.GetTask(ctx, req.UserId, req.TaskId)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "task not found")
+		}
+		return nil, status.Error(codes.Internal, "get task failed")
+	}
+
+	blocked, err := s.store.HasUnfinishedDependencies(ctx, req.TaskId)
+	if err != nil {
+		s.log.Error("check unfinished deps", "err", err)
+		return nil, status.Error(codes.Internal, "check dependencies failed")
+	}
+	if blocked {
+		return nil, status.Error(codes.FailedPrecondition, "task is blocked by unfinished dependencies")
+	}
+
+	existing.Status = domain.StatusDone
+	existing.UpdatedAt = time.Now().UTC()
+
+	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, events.TypeTaskCompleted, req.Language)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "task not found")
+		}
+		s.log.Error("complete task", "err", err)
+		return nil, status.Error(codes.Internal, "complete task failed")
 	}
 
 	// If this is a subtask, auto-complete the parent when all siblings are done.
-	if resp.Task.ParentTaskId != "" {
-		if _, err := s.store.AutoCompleteParent(ctx, req.UserId, resp.Task.ParentTaskId); err != nil {
-			s.log.Warn("auto-complete parent", "parent_id", resp.Task.ParentTaskId, "err", err)
+	if updated.ParentTaskID != nil {
+		if _, err := s.store.AutoCompleteParent(ctx, req.UserId, *updated.ParentTaskID); err != nil {
+			s.log.Warn("auto-complete parent", "parent_id", *updated.ParentTaskID, "err", err)
 		}
 	}
 
-	return &todov1.CompleteTaskResponse{Task: resp.Task}, nil
+	return &todov1.CompleteTaskResponse{Task: toProto(updated)}, nil
 }
 
 // ── RestoreTask ───────────────────────────────────────────────────────────────

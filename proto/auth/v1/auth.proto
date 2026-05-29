@@ -32,6 +32,8 @@ service AuthService {
   rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
   // RevokeOtherSessions revokes all sessions except the current one.
   rpc RevokeOtherSessions(RevokeOtherSessionsRequest) returns (RevokeOtherSessionsResponse);
+  // UpdateUserLanguage sets the user's preferred UI language.
+  rpc UpdateUserLanguage(UpdateUserLanguageRequest) returns (UpdateUserLanguageResponse);
 }
 
 // ── Client info ───────────────────────────────────────────────────────────────
@@ -120,6 +122,7 @@ message ValidateTokenResponse {
   string user_id    = 1;
   string email      = 2;
   string session_id = 3;
+  string language   = 4;
 }
 
 // ── ListUserIDs ───────────────────────────────────────────────────────────────
@@ -127,9 +130,10 @@ message ValidateTokenResponse {
 message ListUserIDsRequest {}
 
 message UserSummary {
-  string user_id = 1;
-  string email   = 2;
-  string name    = 3;
+  string user_id  = 1;
+  string email    = 2;
+  string name     = 3;
+  string language = 4;
 }
 
 message ListUserIDsResponse {
@@ -200,3 +204,12 @@ message RevokeOtherSessionsRequest {
 message RevokeOtherSessionsResponse {
   int64 revoked = 1;
 }
+
+// ── UpdateUserLanguage ────────────────────────────────────────────────────────
+
+message UpdateUserLanguageRequest {
+  string user_id  = 1;
+  string language = 2;
+}
+
+message UpdateUserLanguageResponse {}

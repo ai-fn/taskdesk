@@ -1,33 +1,25 @@
 // OAuthButtons renders the "Continue with Google / Discord" pair shown on
-// both the Login and Signup pages. Each button is a plain anchor so the
-// browser performs a top-level navigation (OAuth start endpoint must be
-// reached as a full request, not an XHR).
-//
-// The buttons send the browser straight to the gateway start endpoint.
-// The flow then bounces through the provider and back to "/" via the
-// callback. No JS state, no client-side routing.
-
-const OAUTH_ERROR_MESSAGES: Record<string, string> = {
-  state_mismatch:     'Session expired or tampered request. Please try again.',
-  provider_denied:    'You cancelled the sign-in.',
-  exchange_failed:    'Could not complete sign-in with the provider.',
-  signin_failed:      'Sign-in failed on our side. Please try again.',
-  missing_code:       'Provider response was missing data.',
-  state_gen_failed:   'Internal error preparing sign-in.',
-}
+// both the Login and Signup pages.
+import { useTranslation } from 'react-i18next'
 
 export function oauthErrorMessage(code: string | null): string | null {
   if (!code) return null
-  return OAUTH_ERROR_MESSAGES[code] ?? 'Sign-in failed. Please try again.'
+  // Keys are resolved at render time via t(); return the raw key here.
+  const known = [
+    'state_mismatch', 'provider_denied', 'exchange_failed',
+    'signin_failed', 'missing_code', 'state_gen_failed',
+  ]
+  return known.includes(code) ? `auth.oauth.errors.${code}` : 'auth.login.failed'
 }
 
 export function OAuthButtons() {
+  const { t } = useTranslation()
   return (
     <>
       <div className="relative my-4 flex items-center">
         <div className="flex-1 border-t border-gray-200 dark:border-gray-700" />
         <span className="mx-3 text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
-          or
+          {t('auth.oauth.or')}
         </span>
         <div className="flex-1 border-t border-gray-200 dark:border-gray-700" />
       </div>
@@ -38,14 +30,14 @@ export function OAuthButtons() {
           className="flex items-center justify-center gap-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
         >
           <GoogleIcon />
-          Continue with Google
+          {t('auth.oauth.continueWithGoogle')}
         </a>
         <a
           href="/api/v1/auth/oauth/discord"
           className="flex items-center justify-center gap-2 rounded-md border border-transparent bg-[#5865F2] hover:bg-[#4752C4] px-4 py-2 text-sm font-medium text-white transition-colors"
         >
           <DiscordIcon />
-          Continue with Discord
+          {t('auth.oauth.continueWithDiscord')}
         </a>
       </div>
     </>

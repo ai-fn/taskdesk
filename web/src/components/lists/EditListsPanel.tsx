@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   DndContext,
   closestCenter,
@@ -34,6 +35,7 @@ interface SortableItemProps {
 }
 
 function SortableItem({ list, groups, onEdit, onDelete, onToggleHide, onMoveToGroup }: SortableItemProps) {
+  const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: list.id })
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -47,7 +49,7 @@ function SortableItem({ list, groups, onEdit, onDelete, onToggleHide, onMoveToGr
         {...attributes}
         {...listeners}
         className="cursor-grab text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 active:cursor-grabbing"
-        aria-label="Drag to reorder"
+        aria-label={t('editLists.dragToReorder')}
       >
         ⠿
       </button>
@@ -61,17 +63,17 @@ function SortableItem({ list, groups, onEdit, onDelete, onToggleHide, onMoveToGr
           className="max-w-[90px] truncate rounded border border-gray-200 dark:border-gray-600 px-1 py-0.5 text-xs text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-700"
           onClick={(e) => e.stopPropagation()}
         >
-          <option value="">No group</option>
+          <option value="">{t('editLists.noGroup')}</option>
           {groups.map((g) => (
             <option key={g.id} value={g.id}>{g.name}</option>
           ))}
         </select>
       )}
-      <button onClick={() => onToggleHide(list)} className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300" title={list.is_hidden ? 'Show' : 'Hide'}>
+      <button onClick={() => onToggleHide(list)} className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300" title={list.is_hidden ? t('editLists.show') : t('editLists.hide')}>
         {list.is_hidden ? '👁' : '🙈'}
       </button>
-      <button onClick={() => onEdit(list)} className="text-gray-400 hover:text-indigo-500 dark:text-gray-500 dark:hover:text-indigo-400" title="Edit">✎</button>
-      <button onClick={() => onDelete(list.id)} className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400" title="Delete">✕</button>
+      <button onClick={() => onEdit(list)} className="text-gray-400 hover:text-indigo-500 dark:text-gray-500 dark:hover:text-indigo-400" title={t('editLists.edit')}>✎</button>
+      <button onClick={() => onDelete(list.id)} className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400" title={t('editLists.delete')}>✕</button>
     </div>
   )
 }
@@ -85,14 +87,15 @@ interface GroupHeaderProps {
 }
 
 function GroupHeader({ group, onRename, onDelete }: GroupHeaderProps) {
+  const { t } = useTranslation()
   return (
     <div className="mt-4 mb-1 flex items-center gap-2">
       <span className="flex-1 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">{group.name}</span>
-      <button onClick={() => onRename(group)} className="text-gray-400 hover:text-indigo-500 dark:text-gray-500 dark:hover:text-indigo-400 text-xs" title="Rename group">✎</button>
+      <button onClick={() => onRename(group)} className="text-gray-400 hover:text-indigo-500 dark:text-gray-500 dark:hover:text-indigo-400 text-xs" title={t('editLists.renameGroup')}>✎</button>
       <button
         onClick={() => onDelete(group)}
         className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400 text-xs"
-        title="Delete group"
+        title={t('editLists.deleteGroup')}
       >✕</button>
     </div>
   )
@@ -108,6 +111,7 @@ interface Props {
 }
 
 export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
+  const { t } = useTranslation()
   const [items, setItems] = useState(lists.map((l) => l.id))
   const [editingList, setEditingList] = useState<TaskList | null>(null)
   const [renamingGroup, setRenamingGroup] = useState<ListGroup | null>(null)
@@ -198,7 +202,7 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
       <div className="fixed inset-0 z-40 bg-black/30 dark:bg-black/50" onClick={onClose} />
       <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-sm flex-col bg-gray-50 dark:bg-gray-900 shadow-2xl">
         <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-3">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Edit Lists</h2>
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('editLists.title')}</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-xl">✕</button>
         </div>
 
@@ -217,8 +221,8 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
                           onKeyDown={(e) => { if (e.key === 'Enter') submitRenameGroup(); if (e.key === 'Escape') setRenamingGroup(null) }}
                           autoFocus
                         />
-                        <button onClick={submitRenameGroup} className="text-xs text-indigo-600 dark:text-indigo-400 font-medium">Save</button>
-                        <button onClick={() => setRenamingGroup(null)} className="text-xs text-gray-400 dark:text-gray-500">Cancel</button>
+                        <button onClick={submitRenameGroup} className="text-xs text-indigo-600 dark:text-indigo-400 font-medium">{t('common.save')}</button>
+                        <button onClick={() => setRenamingGroup(null)} className="text-xs text-gray-400 dark:text-gray-500">{t('common.cancel')}</button>
                       </div>
                     ) : (
                       <GroupHeader group={group} onRename={handleRenameGroup} onDelete={handleDeleteGroup} />
@@ -226,7 +230,7 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
                   ) : (
                     groups.length > 0 && (
                       <div className="mt-4 mb-1">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-gray-300 dark:text-gray-600">Ungrouped</span>
+                        <span className="text-xs font-semibold uppercase tracking-wide text-gray-300 dark:text-gray-600">{t('editLists.noGroup')}</span>
                       </div>
                     )
                   )}
@@ -243,7 +247,7 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
                       />
                     ))}
                     {sectionLists.length === 0 && (
-                      <p className="pl-1 text-xs text-gray-300 dark:text-gray-600 italic">No lists</p>
+                      <p className="pl-1 text-xs text-gray-300 dark:text-gray-600 italic">{t('tasks.list.empty')}</p>
                     )}
                   </div>
                 </div>
@@ -257,7 +261,7 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
             <div className="flex gap-2">
               <input
                 className="flex-1 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                placeholder="Group name"
+                placeholder={t('lists.form.namePlaceholder')}
                 value={newGroupName}
                 onChange={(e) => setNewGroupName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleCreateGroup(); if (e.key === 'Escape') setShowNewGroup(false) }}
@@ -267,7 +271,7 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
                 onClick={handleCreateGroup}
                 className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
               >
-                Add
+                {t('common.create')}
               </button>
             </div>
           ) : (
@@ -275,14 +279,14 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
               onClick={() => { setShowNewGroup(true); setNewGroupName('') }}
               className="w-full rounded-xl border border-dashed border-indigo-300 dark:border-indigo-700 px-4 py-2 text-sm font-medium text-indigo-500 dark:text-indigo-400 hover:border-indigo-400 dark:hover:border-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-300"
             >
-              + New Group
+              {t('editLists.newGroup')}
             </button>
           )}
           <button
             onClick={onCreateNew}
             className="w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
           >
-            + New List
+            {t('editLists.newList')}
           </button>
         </div>
       </div>
