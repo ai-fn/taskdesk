@@ -13,6 +13,8 @@ See [`CLAUDE.md`](./CLAUDE.md) for architecture decisions and `~/.claude/plans/n
 | 2 | Kafka backbone, notification service, WebSocket, email | ✅ done |
 | 3 | AI daily prioritization via Claude (scheduler CronJob) | ✅ done |
 | 4 | Observability: trace IDs, Prometheus + Grafana, ELK stack | ✅ done |
+| — | Sessions management: device/IP list, per-session revoke, real-IP chain | ✅ done |
+| — | Backend tests: pure unit, store/server integration (testcontainers), gateway httptest | ✅ done |
 | 5 | CI/CD (GitHub Actions), Helm chart, k6 load tests | planned |
 
 ## Prerequisites
@@ -137,6 +139,29 @@ kubectl logs -n todo -l job-name=test-plan-... -f
 ```
 
 The plan appears in the SPA under "Today's Plan" and is also emailed to the user.
+
+## Running tests
+
+```sh
+# Layer 1 — pure unit, no Docker needed (fast)
+go test ./pkg/tokens/
+go test ./services/gateway/...
+
+# Layer 2 — integration against real Postgres (requires Docker + postgres:16-alpine pulled)
+go test ./services/auth/... -timeout 120s
+
+# Everything at once
+go test ./pkg/... && go test ./services/auth/... -timeout 120s && go test ./services/gateway/...
+```
+
+The integration tests spin up an ephemeral `postgres:16-alpine` container via
+[testcontainers-go](https://testcontainers.com/), run all three auth migrations, and tear down
+after the suite. Ryuk is disabled automatically (`TESTCONTAINERS_RYUK_DISABLED=true`) — only the
+postgres image needs to be pre-pulled.
+
+See [CLAUDE.md](./CLAUDE.md#testing) for the full three-layer breakdown and design notes.
+
+---
 
 ## Restricted-network / VPN note
 

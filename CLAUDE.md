@@ -17,6 +17,8 @@ Phases 0–4 complete. The full stack is running in a kind cluster with Tilt liv
 | 4 — Observability | ✅ | ELK stack, Prometheus/Grafana, slog JSON with trace IDs |
 | Lists + Groups | ✅ | Custom task lists, list groups, system virtual lists, drag-to-reorder |
 | UI polish | ✅ | Dark/light/system theme, SSE word-by-word streaming, user identity in header |
+| Sessions | ✅ | Session management page (list devices/IPs, revoke, sign-out-all), `externalTrafficPolicy: Local` real-IP chain |
+| Backend tests | ✅ | Three-layer test suite: pure unit, store/server integration (testcontainers), gateway httptest+fakes |
 
 ---
 
@@ -291,6 +293,65 @@ scripts/seed-olivia.sh       # seed yan.olivia@gmail.com (business consultant, 4
 All `.proto` files live in `proto/{auth,todo,ai}/v1/`. Generated Go code goes to `proto/gen/`.
 After editing a proto: `./scripts/proto-gen.sh`
 The `proto/gen/go.mod` must be kept consistent with the versions in go.work.
+
+---
+
+## Testing
+
+Three layers, all stdlib `testing` (no testify), table-driven where applicable.
+
+### Layer 1 — Pure unit (no Docker, fast)
+
+```bash
+go test ./pkg/tokens/                                     # JWT mint/verify, KID, pubkey
+go test ./services/auth/internal/server/ -run "TestHash|TestDevice"  # hashToken, deviceLabel
+go test ./services/gateway/internal/handler/              # clientInfoFromRequest, handleGRPCError
+go test ./services/gateway/internal/middleware/           # Authenticate middleware
+```
+
+### Layer 2 — Integration (testcontainers + real Postgres)
+
+Requires Docker. Uses `postgres:16-alpine` (must be pre-pulled). Ryuk reaper disabled via
+`TESTCONTAINERS_RYUK_DISABLED=true` (set automatically by the harness). One container per
+test package via `TestMain`; `testutil.Truncate` isolates each test.
+
+```bash
+go test ./services/auth/internal/store/   -timeout 60s   # SQL: sessions, users, OAuth
+go test ./services/auth/internal/server/  -timeout 60s   # gRPC handlers end-to-end
+```
+
+**Harness:** `services/auth/internal/testutil/postgres.go` — `StartPostgres()` starts the
+container, runs migrations 001–003, returns `(*pgxpool.Pool, teardown)`.
+
+### Layer 3 — Gateway httptest + hand-written fakes
+
+```bash
+go test ./services/gateway/internal/handler/    # sessions routes via real chi router
+go test ./services/gateway/internal/middleware/ # Authenticate: 401/503, context keys, ?token=
+```
+
+`fakeAuthClient` in `handler/fake_test.go` implements `authv1.AuthServiceClient` with per-test
+configurable `func` fields; unused methods panic to catch accidental calls.
+
+### Run everything
+
+```bash
+# Layer 1 + 3 (no Docker):
+go test ./pkg/tokens/ ./services/gateway/...
+
+# Full suite (needs Docker + postgres:16-alpine):
+go test ./pkg/... && go test ./services/auth/... -timeout 120s && go test ./services/gateway/...
+```
+
+### Notes
+
+- The `sessions.id` column is `UUID` type — pass valid UUIDs in any test that inserts sessions.
+- `ip_address` is `INET` — never pass `""` (use a real IP or omit the column).
+- RS256 JWTs are **deterministic** for the same claims + key + second — two tokens minted in
+  the same second are identical. Tests that rely on token distinctness (e.g. replay protection)
+  should use logout-then-refresh instead of back-to-back refreshes.
+- The same pattern (testutil harness + TestMain + Truncate) can be copied to `services/todo`
+  and `services/ai` when those stores need integration coverage.
 
 ---
 
