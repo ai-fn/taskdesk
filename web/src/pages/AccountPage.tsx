@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { OTPInput } from '@/components/ui/OTPInput'
+import { PasswordStrengthBar } from '@/components/ui/PasswordStrengthBar'
+import { scorePassword, MIN_PASSWORD_SCORE } from '@/lib/passwordStrength'
 import { Spinner } from '@/components/ui/Spinner'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -76,7 +78,8 @@ function PasswordSection({ addToast }: { addToast: (text: string) => void }) {
   const [otp, setOtp] = useState('')
   const [requesting, setRequesting] = useState(false)
   const [apiError, setApiError] = useState('')
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<ResetFormValues>()
+  const { register, handleSubmit, reset, watch, formState: { errors, isSubmitting } } = useForm<ResetFormValues>()
+  const passwordValue = watch('newPassword', '')
 
   async function handleSendCode() {
     if (!email) return
@@ -145,16 +148,20 @@ function PasswordSection({ addToast }: { addToast: (text: string) => void }) {
             <p className="text-xs font-medium text-gray-700 dark:text-gray-300">{t('auth.forgotPassword.codeLabel')}</p>
             <OTPInput value={otp} onChange={setOtp} autoFocus error={!!apiError && otp.length < 6} />
           </div>
-          <Input
-            label={t('auth.forgotPassword.newPasswordLabel')}
-            type="password"
-            autoComplete="new-password"
-            error={errors.newPassword?.message}
-            {...register('newPassword', {
-              required: t('auth.forgotPassword.newPasswordRequired'),
-              minLength: { value: 8, message: t('auth.forgotPassword.newPasswordMinLength') },
-            })}
-          />
+          <div>
+            <Input
+              label={t('auth.forgotPassword.newPasswordLabel')}
+              type="password"
+              autoComplete="new-password"
+              error={errors.newPassword?.message}
+              {...register('newPassword', {
+                required: t('auth.forgotPassword.newPasswordRequired'),
+                minLength: { value: 8, message: t('auth.forgotPassword.newPasswordMinLength') },
+                validate: (v) => scorePassword(v) >= MIN_PASSWORD_SCORE || t('auth.password.tooWeak'),
+              })}
+            />
+            <PasswordStrengthBar password={passwordValue} />
+          </div>
           <div className="flex gap-2">
             <Button type="submit" loading={isSubmitting} disabled={otp.length < 6}>
               {t('auth.forgotPassword.step2Submit')}

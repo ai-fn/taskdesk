@@ -7,6 +7,8 @@ import { AuthLayout } from '@/components/layout/AuthLayout'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
+import { PasswordStrengthBar } from '@/components/ui/PasswordStrengthBar'
+import { scorePassword, MIN_PASSWORD_SCORE } from '@/lib/passwordStrength'
 import { OAuthButtons } from '@/components/auth/OAuthButtons'
 import axios from 'axios'
 
@@ -25,8 +27,10 @@ export function SignupPage() {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>()
+  const passwordValue = watch('password', '')
 
   async function onSubmit(values: FormValues) {
     setApiError('')
@@ -60,16 +64,20 @@ export function SignupPage() {
           error={errors.email?.message}
           {...register('email', { required: t('auth.signup.emailRequired') })}
         />
-        <Input
-          label={t('auth.fields.password')}
-          type="password"
-          autoComplete="new-password"
-          error={errors.password?.message}
-          {...register('password', {
-            required: t('auth.signup.passwordRequired'),
-            minLength: { value: 8, message: t('auth.signup.passwordMinLength') },
-          })}
-        />
+        <div>
+          <Input
+            label={t('auth.fields.password')}
+            type="password"
+            autoComplete="new-password"
+            error={errors.password?.message}
+            {...register('password', {
+              required: t('auth.signup.passwordRequired'),
+              minLength: { value: 8, message: t('auth.signup.passwordMinLength') },
+              validate: (v) => scorePassword(v) >= MIN_PASSWORD_SCORE || t('auth.password.tooWeak'),
+            })}
+          />
+          <PasswordStrengthBar password={passwordValue} />
+        </div>
         <Button type="submit" loading={isSubmitting} className="mt-2 w-full justify-center">
           {t('auth.signup.submit')}
         </Button>

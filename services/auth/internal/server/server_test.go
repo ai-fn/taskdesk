@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,7 +91,7 @@ func sessionID(t *testing.T, maker *tokens.Maker, accessToken string) string {
 
 func TestSignUp_Success(t *testing.T) {
 	svc, _ := newServer(t)
-	resp := signUp(t, svc, "a@test.com", "pass123", "Alice")
+	resp := signUp(t, svc, "a@test.com", "Passw0rd1", "Alice")
 
 	if resp.UserId == "" || resp.AccessToken == "" || resp.RefreshToken == "" {
 		t.Errorf("incomplete response: %+v", resp)
@@ -99,7 +100,7 @@ func TestSignUp_Success(t *testing.T) {
 
 func TestSignUp_CreatesOneSession(t *testing.T) {
 	svc, _ := newServer(t)
-	resp := signUp(t, svc, "b@test.com", "pass123", "Bob")
+	resp := signUp(t, svc, "b@test.com", "Passw0rd1", "Bob")
 
 	list, err := svc.ListSessions(context.Background(), &authv1.ListSessionsRequest{UserId: resp.UserId})
 	if err != nil {
@@ -112,10 +113,10 @@ func TestSignUp_CreatesOneSession(t *testing.T) {
 
 func TestSignUp_DuplicateEmail(t *testing.T) {
 	svc, _ := newServer(t)
-	signUp(t, svc, "dup@test.com", "pass123", "First")
+	signUp(t, svc, "dup@test.com", "Passw0rd1", "First")
 
 	_, err := svc.SignUp(context.Background(), &authv1.SignUpRequest{
-		Email: "dup@test.com", Password: "pass456", Name: "Second",
+		Email: "dup@test.com", Password: "Passw0rd2", Name: "Second",
 	})
 	if grpcCode(err) != codes.AlreadyExists {
 		t.Errorf("want AlreadyExists, got %v", err)
@@ -125,9 +126,9 @@ func TestSignUp_DuplicateEmail(t *testing.T) {
 func TestSignUp_MissingFields(t *testing.T) {
 	svc, _ := newServer(t)
 	cases := []struct{ email, password, name string }{
-		{"", "pass", "Name"},
+		{"", "Passw0rd", "Name"},
 		{"a@b.com", "", "Name"},
-		{"a@b.com", "pass", ""},
+		{"a@b.com", "Passw0rd", ""},
 	}
 	for _, tc := range cases {
 		_, err := svc.SignUp(context.Background(), &authv1.SignUpRequest{
@@ -143,10 +144,10 @@ func TestSignUp_MissingFields(t *testing.T) {
 
 func TestLogin_Success(t *testing.T) {
 	svc, _ := newServer(t)
-	signUp(t, svc, "c@test.com", "secret", "Carol")
+	signUp(t, svc, "c@test.com", "Secret12", "Carol")
 
 	resp, err := svc.Login(context.Background(), &authv1.LoginRequest{
-		Email: "c@test.com", Password: "secret",
+		Email: "c@test.com", Password: "Secret12",
 		ClientInfo: &authv1.ClientInfo{IpAddress: "5.6.7.8"},
 	})
 	if err != nil {
@@ -159,7 +160,7 @@ func TestLogin_Success(t *testing.T) {
 
 func TestLogin_WrongPassword(t *testing.T) {
 	svc, _ := newServer(t)
-	signUp(t, svc, "d@test.com", "right", "Dave")
+	signUp(t, svc, "d@test.com", "Rightpw1", "Dave")
 
 	_, err := svc.Login(context.Background(), &authv1.LoginRequest{Email: "d@test.com", Password: "wrong"})
 	if grpcCode(err) != codes.Unauthenticated {
@@ -198,7 +199,7 @@ func TestLogin_OAuthOnlyUser(t *testing.T) {
 
 func TestRefreshToken_SameSID(t *testing.T) {
 	svc, maker := newServer(t)
-	su := signUp(t, svc, "e@test.com", "pass", "Eve")
+	su := signUp(t, svc, "e@test.com", "Passw0rd", "Eve")
 
 	origSID := sessionID(t, maker, su.AccessToken)
 
@@ -219,7 +220,7 @@ func TestRefreshToken_AfterLogout(t *testing.T) {
 	// After logout the session row is gone; a refresh with the old token
 	// must fail even if the JWT signature is still valid.
 	svc, _ := newServer(t)
-	su := signUp(t, svc, "f@test.com", "pass", "Frank")
+	su := signUp(t, svc, "f@test.com", "Passw0rd", "Frank")
 
 	if _, err := svc.Logout(context.Background(), &authv1.LogoutRequest{
 		RefreshToken: su.RefreshToken,
@@ -249,7 +250,7 @@ func TestRefreshToken_GarbageToken(t *testing.T) {
 
 func TestValidateToken_Success(t *testing.T) {
 	svc, _ := newServer(t)
-	su := signUp(t, svc, "g@test.com", "pass", "Grace")
+	su := signUp(t, svc, "g@test.com", "Passw0rd", "Grace")
 
 	resp, err := svc.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{
 		AccessToken: su.AccessToken,
@@ -280,7 +281,7 @@ func TestValidateToken_BadToken(t *testing.T) {
 
 func TestLogout_RemovesSession(t *testing.T) {
 	svc, _ := newServer(t)
-	su := signUp(t, svc, "h@test.com", "pass", "Hank")
+	su := signUp(t, svc, "h@test.com", "Passw0rd", "Hank")
 
 	if _, err := svc.Logout(context.Background(), &authv1.LogoutRequest{
 		RefreshToken: su.RefreshToken,
@@ -298,7 +299,7 @@ func TestLogout_RemovesSession(t *testing.T) {
 
 func TestListSessions_CurrentFlag(t *testing.T) {
 	svc, maker := newServer(t)
-	su := signUp(t, svc, "i@test.com", "pass", "Iris")
+	su := signUp(t, svc, "i@test.com", "Passw0rd", "Iris")
 
 	sid := sessionID(t, maker, su.AccessToken)
 	list, err := svc.ListSessions(context.Background(), &authv1.ListSessionsRequest{
@@ -316,7 +317,7 @@ func TestListSessions_CurrentFlag(t *testing.T) {
 func TestListSessions_UAParsesBrowser(t *testing.T) {
 	svc, _ := newServer(t)
 	resp, err := svc.SignUp(context.Background(), &authv1.SignUpRequest{
-		Email: "j@test.com", Password: "pass", Name: "Jake",
+		Email: "j@test.com", Password: "Passw0rd", Name: "Jake",
 		ClientInfo: &authv1.ClientInfo{
 			IpAddress: "1.2.3.4",
 			UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -340,7 +341,7 @@ func TestListSessions_UAParsesBrowser(t *testing.T) {
 
 func TestRevokeSession_NotFound(t *testing.T) {
 	svc, _ := newServer(t)
-	su := signUp(t, svc, "k@test.com", "pass", "Kate")
+	su := signUp(t, svc, "k@test.com", "Passw0rd", "Kate")
 
 	_, err := svc.RevokeSession(context.Background(), &authv1.RevokeSessionRequest{
 		UserId:    su.UserId,
@@ -355,11 +356,11 @@ func TestRevokeSession_NotFound(t *testing.T) {
 
 func TestRevokeOtherSessions_Count(t *testing.T) {
 	svc, maker := newServer(t)
-	su := signUp(t, svc, "l@test.com", "pass", "Lena")
+	su := signUp(t, svc, "l@test.com", "Passw0rd", "Lena")
 
 	// Add a second session via Login.
 	svc.Login(context.Background(), &authv1.LoginRequest{ //nolint:errcheck
-		Email: "l@test.com", Password: "pass",
+		Email: "l@test.com", Password: "Passw0rd",
 		ClientInfo: &authv1.ClientInfo{IpAddress: "9.9.9.9"},
 	})
 
@@ -418,7 +419,7 @@ func TestOAuthSignIn_ExistingLink(t *testing.T) {
 
 func TestUpdateUserLanguage_Success(t *testing.T) {
 	svc, _ := newServer(t)
-	su := signUp(t, svc, "lang@test.com", "pass123", "Lang User")
+	su := signUp(t, svc, "lang@test.com", "Passw0rd1", "Lang User")
 
 	_, err := svc.UpdateUserLanguage(context.Background(), &authv1.UpdateUserLanguageRequest{
 		UserId:   su.UserId,
@@ -431,7 +432,7 @@ func TestUpdateUserLanguage_Success(t *testing.T) {
 
 func TestUpdateUserLanguage_UnsupportedLang_InvalidArgument(t *testing.T) {
 	svc, _ := newServer(t)
-	su := signUp(t, svc, "lang2@test.com", "pass123", "Lang User 2")
+	su := signUp(t, svc, "lang2@test.com", "Passw0rd1", "Lang User 2")
 
 	_, err := svc.UpdateUserLanguage(context.Background(), &authv1.UpdateUserLanguageRequest{
 		UserId:   su.UserId,
@@ -452,7 +453,7 @@ func TestUpdateUserLanguage_MissingFields(t *testing.T) {
 
 func TestOAuthSignIn_EmailMatch(t *testing.T) {
 	svc, _ := newServer(t)
-	su := signUp(t, svc, "m@test.com", "pass", "Mia")
+	su := signUp(t, svc, "m@test.com", "Passw0rd", "Mia")
 
 	resp, err := svc.OAuthSignIn(context.Background(), &authv1.OAuthSignInRequest{
 		Provider: "github", ProviderUserId: "gh123",
@@ -464,5 +465,57 @@ func TestOAuthSignIn_EmailMatch(t *testing.T) {
 	}
 	if resp.Created || resp.UserId != su.UserId {
 		t.Errorf("expected existing user linked: created=%v uid=%q want=%q", resp.Created, resp.UserId, su.UserId)
+	}
+}
+
+// ── Password policy ─────────────────────────────────────────────────────────
+
+func TestSignUp_WeakPassword(t *testing.T) {
+	svc, _ := newServer(t)
+	cases := []struct {
+		name, password string
+	}{
+		{"too short", "Ab1!"},
+		{"lowercase only", "abcdefgh"}, // score 1
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := svc.SignUp(context.Background(), &authv1.SignUpRequest{
+				Email: tc.name + "@test.com", Password: tc.password, Name: "Weak",
+			})
+			if grpcCode(err) != codes.InvalidArgument {
+				t.Errorf("SignUp(%q): want InvalidArgument, got %v", tc.password, err)
+			}
+		})
+	}
+}
+
+// Weak-password and reuse checks both run before OTP code verification, so
+// these cases need no seeded code.
+
+func TestResetPassword_WeakPassword(t *testing.T) {
+	svc, _ := newServer(t)
+	signUp(t, svc, "weakreset@test.com", "Passw0rd1", "Wendy")
+
+	_, err := svc.ResetPassword(context.Background(), &authv1.ResetPasswordRequest{
+		Email: "weakreset@test.com", Code: "000000", NewPassword: "abcdefgh",
+	})
+	if grpcCode(err) != codes.InvalidArgument {
+		t.Errorf("ResetPassword weak: want InvalidArgument, got %v", err)
+	}
+}
+
+func TestResetPassword_RejectsReuse(t *testing.T) {
+	svc, _ := newServer(t)
+	signUp(t, svc, "reuse@test.com", "Passw0rd1", "Rita")
+
+	_, err := svc.ResetPassword(context.Background(), &authv1.ResetPasswordRequest{
+		Email: "reuse@test.com", Code: "000000", NewPassword: "Passw0rd1",
+	})
+	if grpcCode(err) != codes.InvalidArgument {
+		t.Fatalf("ResetPassword reuse: want InvalidArgument, got %v", err)
+	}
+	if msg := status.Convert(err).Message(); !strings.Contains(msg, "different") {
+		t.Errorf("expected reuse message, got %q", msg)
 	}
 }
