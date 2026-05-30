@@ -3,3 +3,11 @@ kind: Kustomization
 namespace: todo
 resources:
   - deployment.yaml
+# Secret generated from local .env (gitignored).
+# Copy .env.example → .env and fill in SMTP credentials before `tilt up`.
+secretGenerator:
+  - name: notification-secret
+    envs:
+      - .env
+generatorOptions:
+  disableNameSuffixHash: true
