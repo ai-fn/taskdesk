@@ -32,6 +32,16 @@ spec:
               value: "mailpit.data.svc.cluster.local:1025"
             - name: SMTP_FROM
               value: "noreply@todo.local"
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secret
+                  key: SMTP_USER
+            - name: SMTP_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secret
+                  key: SMTP_PASS
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true

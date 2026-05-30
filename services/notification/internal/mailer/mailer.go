@@ -8,16 +8,20 @@ import (
 )
 
 // Mailer sends plain-text email via SMTP.
+// When user+pass are empty it connects unauthenticated (Mailpit / open relay).
+// When both are set it uses smtp.PlainAuth (Gmail, SendGrid SMTP, etc.).
 type Mailer struct {
 	addr string // host:port
 	from string
+	user string
+	pass string
 }
 
-func New(addr, from string) *Mailer {
-	return &Mailer{addr: addr, from: from}
+func New(addr, from, user, pass string) *Mailer {
+	return &Mailer{addr: addr, from: from, user: user, pass: pass}
 }
 
-// Send sends a plain-text email. to is a comma-separated list if needed.
+// Send sends a plain-text email.
 func (m *Mailer) Send(to, subject, body string) error {
 	msg := strings.Join([]string{
 		"From: " + m.from,
@@ -29,8 +33,13 @@ func (m *Mailer) Send(to, subject, body string) error {
 		body,
 	}, "\r\n")
 
-	// No auth in dev — Mailpit accepts unauthenticated connections.
-	if err := smtp.SendMail(m.addr, nil, m.from, []string{to}, []byte(msg)); err != nil {
+	var auth smtp.Auth
+	if m.user != "" && m.pass != "" {
+		host := m.addr[:strings.LastIndex(m.addr, ":")]
+		auth = smtp.PlainAuth("", m.user, m.pass, host)
+	}
+
+	if err := smtp.SendMail(m.addr, auth, m.from, []string{to}, []byte(msg)); err != nil {
 		return fmt.Errorf("smtp send: %w", err)
 	}
 	return nil
