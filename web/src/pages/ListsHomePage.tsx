@@ -19,6 +19,8 @@ import { NaturalLanguageInput } from '@/components/tasks/NaturalLanguageInput'
 import { Spinner } from '@/components/ui/Spinner'
 import { Modal } from '@/components/ui/Modal'
 
+type TaskMode = 'quick' | 'ai'
+
 function useSystemCount(filter: Parameters<typeof listTasks>[0]) {
   return useQuery({
     queryKey: taskKeys.list(JSON.stringify(filter)),
@@ -33,7 +35,7 @@ export function ListsHomePage() {
   const [showEdit, setShowEdit] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [showCreateTask, setShowCreateTask] = useState(false)
-  const [showNLTask, setShowNLTask] = useState(false)
+  const [taskMode, setTaskMode] = useState<TaskMode>('quick')
   const [nlPrefill, setNlPrefill] = useState<TaskPrefill | undefined>()
 
   const { data: lists = [], isLoading: listsLoading } = useLists()
@@ -62,12 +64,11 @@ export function ListsHomePage() {
     deleted:   countDeleted,
   }
 
-  useBodyScrollLock(showCreateTask || showCreate || showEdit || showNLTask)
+  useBodyScrollLock(showCreateTask || showCreate || showEdit)
 
   const isLoading = listsLoading || groupsLoading
   const visibleLists = lists.filter((l) => !l.is_hidden)
 
-  // Map each group_id → visible lists in that group
   const listsByGroup = new Map<string | null, TaskList[]>()
   listsByGroup.set(null, [])
   for (const g of groups) listsByGroup.set(g.id, [])
@@ -76,7 +77,6 @@ export function ListsHomePage() {
     listsByGroup.get(key)!.push(l)
   }
 
-  // Sections in display order: named groups first, ungrouped last
   const sections: Array<{ group: ListGroup | null; lists: TaskList[] }> = groups.length > 0
     ? [
         ...groups.map((g) => ({ group: g, lists: listsByGroup.get(g.id) ?? [] })),
@@ -84,39 +84,48 @@ export function ListsHomePage() {
       ]
     : (visibleLists.length > 0 ? [{ group: null, lists: visibleLists }] : [])
 
+  function openTaskModal(mode: TaskMode = 'quick') {
+    setTaskMode(mode)
+    setNlPrefill(undefined)
+    setShowCreateTask(true)
+  }
+
+  function closeTaskModal() {
+    setShowCreateTask(false)
+    setTaskMode('quick')
+    setNlPrefill(undefined)
+  }
+
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-950">
-      <div className="mx-auto max-w-2xl px-4 py-6">
-        {/* Header */}
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setShowEdit(true)}
-              className="rounded-lg p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800"
-              title={t('editLists.title')}
-            >
-              ☰
-            </button>
-            <button
-              onClick={() => setShowNLTask(true)}
-              className="rounded-lg p-1.5 text-gray-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
-              title={t('tasks.parse.nlTooltip')}
-            >
-              ✨
-            </button>
-            <button
-              onClick={() => setShowCreateTask(true)}
-              className="rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
-            >
-              {t('lists.home.newTask')}
-            </button>
-          </div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{t('lists.home.myLists')}</h1>
+      <div className="mx-auto max-w-2xl px-4 py-6 pb-24">
+
+        {/* ── Header ─────────────────────────────────────────────────────────
+            Left: ☰ (structure control — organizes the lists below)
+            Center-left: title
+            Right: + list (creates a list item in the collection)
+        ──────────────────────────────────────────────────────────────────── */}
+        <div className="mb-4 flex items-center gap-2">
+          <button
+            onClick={() => setShowEdit(true)}
+            className="rounded-lg p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
+            title={t('editLists.title')}
+          >
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+          </button>
+          <h1 className="flex-1 text-xl font-bold text-gray-900 dark:text-gray-100">
+            {t('lists.home.myLists')}
+          </h1>
           <button
             onClick={() => setShowCreate(true)}
-            className="rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+            className="rounded-lg p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
+            title={t('lists.home.newList')}
           >
-            {t('lists.home.newList')}
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 10.5v6m3-3H9m4.06-7.19l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+            </svg>
           </button>
         </div>
 
@@ -162,6 +171,17 @@ export function ListsHomePage() {
         )}
       </div>
 
+      {/* ── FAB ── */}
+      <button
+        onClick={() => openTaskModal('quick')}
+        aria-label={t('lists.home.newTask')}
+        className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 dark:bg-indigo-500 text-white shadow-lg hover:bg-indigo-700 dark:hover:bg-indigo-600 active:scale-95 transition-all"
+      >
+        <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+        </svg>
+      </button>
+
       {showEdit && (
         <EditListsPanel
           lists={lists}
@@ -183,46 +203,70 @@ export function ListsHomePage() {
         />
       )}
 
+      {/* ── Unified New Task modal (Quick + AI Parse tabs) ── */}
       {showCreateTask && (
-        <Modal onClose={() => { setShowCreateTask(false); setNlPrefill(undefined) }} className="max-w-xl">
+        <Modal onClose={closeTaskModal} className="max-w-xl">
           <div className="rounded-xl bg-white dark:bg-gray-800 shadow-xl overflow-hidden">
-            <div className="max-h-[90vh] overflow-y-auto p-6">
-              <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">New task</h2>
-              <TaskForm
-                prefill={nlPrefill}
-                lists={lists}
-                onSubmit={async (values) => {
-                  const { list_id, subtasks = [], ...rest } = values
-                  const newTask = await createTask.mutateAsync({ ...rest, list_id: list_id ?? undefined })
-                  if (subtasks.length > 0) {
-                    await Promise.all(subtasks.map((title) =>
-                      createTask.mutateAsync({ title, parent_task_id: newTask.id, list_id: newTask.list_id ?? undefined })
-                    ))
-                  }
-                  setShowCreateTask(false)
-                  setNlPrefill(undefined)
-                }}
-                onCancel={() => { setShowCreateTask(false); setNlPrefill(undefined) }}
-                isLoading={createTask.isPending}
-              />
+            {/* Modal header with mode tabs */}
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100 dark:border-gray-700/60">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                {t('tasks.form.newTask')}
+              </h2>
+              <div className="flex gap-1 rounded-lg bg-gray-100 dark:bg-gray-700 p-1">
+                <button
+                  onClick={() => setTaskMode('quick')}
+                  className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
+                    taskMode === 'quick'
+                      ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm'
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                  }`}
+                >
+                  {t('tasks.form.modeQuick')}
+                </button>
+                <button
+                  onClick={() => setTaskMode('ai')}
+                  className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
+                    taskMode === 'ai'
+                      ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm'
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                  }`}
+                >
+                  ✨ {t('tasks.form.modeAI')}
+                </button>
+              </div>
             </div>
-          </div>
-        </Modal>
-      )}
 
-      {showNLTask && (
-        <Modal onClose={() => setShowNLTask(false)} className="max-w-md">
-          <div className="rounded-xl bg-white dark:bg-gray-800 p-6 shadow-xl">
-            <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">New task</h2>
-            <NaturalLanguageInput
-              lists={lists}
-              onParsed={(prefill) => {
-                setNlPrefill(prefill)
-                setShowNLTask(false)
-                setShowCreateTask(true)
-              }}
-              onCancel={() => setShowNLTask(false)}
-            />
+            <div className="max-h-[80vh] overflow-y-auto p-6">
+              <div key={taskMode} className="animate-tab-in">
+                {taskMode === 'quick' ? (
+                  <TaskForm
+                    prefill={nlPrefill}
+                    lists={lists}
+                    onSubmit={async (values) => {
+                      const { list_id, subtasks = [], ...rest } = values
+                      const newTask = await createTask.mutateAsync({ ...rest, list_id: list_id ?? undefined })
+                      if (subtasks.length > 0) {
+                        await Promise.all(subtasks.map((title) =>
+                          createTask.mutateAsync({ title, parent_task_id: newTask.id, list_id: newTask.list_id ?? undefined })
+                        ))
+                      }
+                      closeTaskModal()
+                    }}
+                    onCancel={closeTaskModal}
+                    isLoading={createTask.isPending}
+                  />
+                ) : (
+                  <NaturalLanguageInput
+                    lists={lists}
+                    onParsed={(prefill) => {
+                      setNlPrefill(prefill)
+                      setTaskMode('quick')
+                    }}
+                    onCancel={closeTaskModal}
+                  />
+                )}
+              </div>
+            </div>
           </div>
         </Modal>
       )}

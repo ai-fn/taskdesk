@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/fsociety/todo/pkg/tokens"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
@@ -44,7 +45,11 @@ func newServer(t *testing.T) (*server.Server, *tokens.Maker) {
 	if err != nil {
 		t.Fatalf("NewMakerFromPEM: %v", err)
 	}
-	return server.New(store.New(testPool), maker, slog.Default()), maker
+	return server.New(store.New(testPool), maker, slog.Default(), nil, server.CodeConfig{
+		TTL:            10 * time.Minute,
+		ResendCooldown: 3 * time.Minute,
+		MaxAttempts:    3,
+	}), maker
 }
 
 func grpcCode(err error) codes.Code {

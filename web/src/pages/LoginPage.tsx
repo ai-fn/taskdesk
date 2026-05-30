@@ -66,6 +66,11 @@ export function LoginPage() {
           {t('auth.login.submit')}
         </Button>
       </form>
+      <p className="mt-3 text-center text-sm">
+        <Link to="/forgot-password" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+          {t('auth.login.forgotPassword')}
+        </Link>
+      </p>
       <OAuthButtons />
       <p className="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
         {t('auth.login.noAccount')}{' '}

@@ -41,7 +41,7 @@ func New(m *mailer.Mailer, rdb *redis.Client, log *slog.Logger) *Handler {
 
 // Topics returns the list of topics this handler needs to subscribe to.
 func Topics() []string {
-	return []string{events.Topic, DailyPlanTopic}
+	return []string{events.Topic, DailyPlanTopic, events.AuthEmailTopic}
 }
 
 // Handle dispatches based on topic.
@@ -51,6 +51,8 @@ func (h *Handler) Handle(ctx context.Context, r *kgo.Record) error {
 		return h.handleTaskEvent(ctx, r)
 	case DailyPlanTopic:
 		return h.handleDailyPlan(ctx, r)
+	case events.AuthEmailTopic:
+		return h.handleAuthEmail(ctx, r)
 	default:
 		h.log.Warn("unknown topic", "topic", r.Topic)
 		return nil
@@ -225,6 +227,82 @@ func buildPlanEmail(ev DailyPlanEvent) (subject, body string) {
 	bodyBuf.WriteString(tmpl.Footer)
 
 	return subjectBuf.String(), bodyBuf.String()
+}
+
+// ── auth email events ─────────────────────────────────────────────────────────
+
+type authEmailTmpl struct {
+	Subject *template.Template
+	Body    *template.Template
+}
+
+var passwordResetTemplates = map[string]authEmailTmpl{
+	"en": {
+		Subject: template.Must(template.New("").Parse(`[todo] Your password reset code`)),
+		Body: template.Must(template.New("").Parse(
+			"Your password reset code is: {{.Code}}\n\nThis code expires in {{.ExpiresMins}} minutes.\n\nIf you did not request this, you can safely ignore this email.",
+		)),
+	},
+	"zh": {
+		Subject: template.Must(template.New("").Parse(`[todo] 您的密码重置验证码`)),
+		Body: template.Must(template.New("").Parse(
+			"您的密码重置验证码是：{{.Code}}\n\n该验证码将在 {{.ExpiresMins}} 分钟后失效。\n\n如果您未发起此请求，请忽略此邮件。",
+		)),
+	},
+}
+
+var emailVerifyTemplates = map[string]authEmailTmpl{
+	"en": {
+		Subject: template.Must(template.New("").Parse(`[todo] Verify your email address`)),
+		Body: template.Must(template.New("").Parse(
+			"Your email verification code is: {{.Code}}\n\nThis code expires in {{.ExpiresMins}} minutes.",
+		)),
+	},
+	"zh": {
+		Subject: template.Must(template.New("").Parse(`[todo] 验证您的邮箱地址`)),
+		Body: template.Must(template.New("").Parse(
+			"您的邮箱验证码是：{{.Code}}\n\n该验证码将在 {{.ExpiresMins}} 分钟后失效。",
+		)),
+	},
+}
+
+func pickAuthEmailTmpl(purpose, lang string) authEmailTmpl {
+	var m map[string]authEmailTmpl
+	switch purpose {
+	case "email_verify":
+		m = emailVerifyTemplates
+	default:
+		m = passwordResetTemplates
+	}
+	if t, ok := m[pki18n.Normalize(lang)]; ok {
+		return t
+	}
+	return m["en"]
+}
+
+func (h *Handler) handleAuthEmail(ctx context.Context, r *kgo.Record) error {
+	var ev events.AuthEmailEvent
+	if err := json.Unmarshal(r.Value, &ev); err != nil {
+		h.log.Error("decode auth email event", "err", err)
+		return nil // poison pill — skip
+	}
+
+	tmpl := pickAuthEmailTmpl(ev.Purpose, ev.Language)
+	data := map[string]any{
+		"Code":        ev.Code,
+		"ExpiresMins": ev.ExpiresMins,
+	}
+
+	var subjectBuf, bodyBuf bytes.Buffer
+	_ = tmpl.Subject.Execute(&subjectBuf, data)
+	_ = tmpl.Body.Execute(&bodyBuf, data)
+
+	if err := h.mailer.Send(ev.Email, subjectBuf.String(), bodyBuf.String()); err != nil {
+		h.log.Error("send auth email", "user_id", ev.UserID, "purpose", ev.Purpose, "err", err)
+	}
+
+	h.log.Info("auth email dispatched", "user_id", ev.UserID, "purpose", ev.Purpose)
+	return nil
 }
 
 // Run starts the Kafka consumer loop until ctx is cancelled.

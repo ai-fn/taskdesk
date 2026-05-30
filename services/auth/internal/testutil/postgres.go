@@ -97,7 +97,7 @@ func StartPostgres() (pool *pgxpool.Pool, teardown func()) {
 func Truncate(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(),
-		"TRUNCATE auth.sessions, auth.oauth_identities, auth.users CASCADE")
+		"TRUNCATE auth.verification_codes, auth.sessions, auth.oauth_identities, auth.users CASCADE")
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}

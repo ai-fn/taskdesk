@@ -34,6 +34,16 @@ service AuthService {
   rpc RevokeOtherSessions(RevokeOtherSessionsRequest) returns (RevokeOtherSessionsResponse);
   // UpdateUserLanguage sets the user's preferred UI language.
   rpc UpdateUserLanguage(UpdateUserLanguageRequest) returns (UpdateUserLanguageResponse);
+  // RequestPasswordReset sends a one-time code to the user's email.
+  // Always returns OK regardless of whether the email exists (no enumeration).
+  rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
+  // ResetPassword verifies the OTP code and sets a new password.
+  // On success all sessions are revoked.
+  rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);
+  // RequestEmailVerification issues an OTP code to the authenticated user's email.
+  rpc RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse);
+  // ConfirmEmail verifies the OTP code and marks the user's email as verified.
+  rpc ConfirmEmail(ConfirmEmailRequest) returns (ConfirmEmailResponse);
 }
 
 // ── Client info ───────────────────────────────────────────────────────────────
@@ -119,10 +129,11 @@ message ValidateTokenRequest {
 }
 
 message ValidateTokenResponse {
-  string user_id    = 1;
-  string email      = 2;
-  string session_id = 3;
-  string language   = 4;
+  string user_id        = 1;
+  string email          = 2;
+  string session_id     = 3;
+  string language       = 4;
+  bool   email_verified = 5;
 }
 
 // ── ListUserIDs ───────────────────────────────────────────────────────────────
@@ -130,10 +141,11 @@ message ValidateTokenResponse {
 message ListUserIDsRequest {}
 
 message UserSummary {
-  string user_id  = 1;
-  string email    = 2;
-  string name     = 3;
-  string language = 4;
+  string user_id        = 1;
+  string email          = 2;
+  string name           = 3;
+  string language       = 4;
+  bool   email_verified = 5;
 }
 
 message ListUserIDsResponse {
@@ -213,3 +225,39 @@ message UpdateUserLanguageRequest {
 }
 
 message UpdateUserLanguageResponse {}
+
+// ── RequestPasswordReset ──────────────────────────────────────────────────────
+
+message RequestPasswordResetRequest {
+  string email = 1;
+}
+
+// Always OK — no email enumeration.
+message RequestPasswordResetResponse {}
+
+// ── ResetPassword ─────────────────────────────────────────────────────────────
+
+message ResetPasswordRequest {
+  string email        = 1;
+  string code         = 2;
+  string new_password = 3;
+}
+
+message ResetPasswordResponse {}
+
+// ── RequestEmailVerification ──────────────────────────────────────────────────
+
+message RequestEmailVerificationRequest {
+  string user_id = 1;
+}
+
+message RequestEmailVerificationResponse {}
+
+// ── ConfirmEmail ──────────────────────────────────────────────────────────────
+
+message ConfirmEmailRequest {
+  string user_id = 1;
+  string code    = 2;
+}
+
+message ConfirmEmailResponse {}

@@ -33,9 +33,20 @@ func Normalize(lang string) string {
 	return defaultLang
 }
 
-// Supported reports whether lang (after normalisation) is a supported locale.
+// Supported reports whether lang is a supported locale.
+// Unlike Normalize it does NOT fall back to "en" — unknown languages return false.
 func Supported(lang string) bool {
-	return supportedLangs[Normalize(lang)]
+	lang = strings.TrimSpace(strings.ToLower(lang))
+	if lang == "" {
+		return false
+	}
+	if supportedLangs[lang] {
+		return true
+	}
+	if idx := strings.IndexByte(lang, '-'); idx > 0 {
+		return supportedLangs[lang[:idx]]
+	}
+	return false
 }
 
 // Supported returns a slice of all supported locale codes.

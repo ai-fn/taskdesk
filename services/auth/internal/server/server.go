@@ -3,15 +3,19 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
 	ua "github.com/mileusna/useragent"
+	"github.com/fsociety/todo/pkg/events"
 	"github.com/fsociety/todo/pkg/i18n"
+	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	"github.com/fsociety/todo/pkg/tokens"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	"github.com/fsociety/todo/services/auth/internal/domain"
@@ -23,15 +27,24 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-type Server struct {
-	authv1.UnimplementedAuthServiceServer
-	store  *store.Store
-	tokens *tokens.Maker
-	log    *slog.Logger
+// CodeConfig holds tunable parameters for OTP verification codes.
+type CodeConfig struct {
+	TTL            time.Duration
+	ResendCooldown time.Duration
+	MaxAttempts    int
 }
 
-func New(st *store.Store, tm *tokens.Maker, log *slog.Logger) *Server {
-	return &Server{store: st, tokens: tm, log: log}
+type Server struct {
+	authv1.UnimplementedAuthServiceServer
+	store    *store.Store
+	tokens   *tokens.Maker
+	log      *slog.Logger
+	producer *pkgkafka.Producer // nil if Kafka is not configured
+	codeCfg  CodeConfig
+}
+
+func New(st *store.Store, tm *tokens.Maker, log *slog.Logger, producer *pkgkafka.Producer, codeCfg CodeConfig) *Server {
+	return &Server{store: st, tokens: tm, log: log, producer: producer, codeCfg: codeCfg}
 }
 
 // ── SignUp ────────────────────────────────────────────────────────────────────
@@ -197,12 +210,23 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("invalid token: %v", err))
 	}
-	lang, _ := s.store.GetUserLanguage(ctx, claims.UserID)
+	user, err := s.store.GetUserByID(ctx, claims.UserID)
+	if err != nil {
+		s.log.Warn("ValidateToken: get user failed, falling back to language-only", "user_id", claims.UserID, "err", err)
+		lang, _ := s.store.GetUserLanguage(ctx, claims.UserID)
+		return &authv1.ValidateTokenResponse{
+			UserId:    claims.UserID,
+			Email:     claims.Email,
+			SessionId: claims.SessionID,
+			Language:  lang,
+		}, nil
+	}
 	return &authv1.ValidateTokenResponse{
-		UserId:    claims.UserID,
-		Email:     claims.Email,
-		SessionId: claims.SessionID,
-		Language:  lang,
+		UserId:        claims.UserID,
+		Email:         claims.Email,
+		SessionId:     claims.SessionID,
+		Language:      user.Language,
+		EmailVerified: user.EmailVerified,
 	}, nil
 }
 
@@ -217,10 +241,11 @@ func (s *Server) ListUserIDs(ctx context.Context, _ *authv1.ListUserIDsRequest) 
 	resp := &authv1.ListUserIDsResponse{}
 	for _, u := range users {
 		resp.Users = append(resp.Users, &authv1.UserSummary{
-			UserId:   u.ID,
-			Email:    u.Email,
-			Name:     u.Name,
-			Language: u.Language,
+			UserId:        u.ID,
+			Email:         u.Email,
+			Name:          u.Name,
+			Language:      u.Language,
+			EmailVerified: u.EmailVerified,
 		})
 	}
 	return resp, nil
@@ -242,10 +267,11 @@ func (s *Server) GetUserByID(ctx context.Context, req *authv1.GetUserByIDRequest
 	}
 	return &authv1.GetUserByIDResponse{
 		User: &authv1.UserSummary{
-			UserId:   u.ID,
-			Email:    u.Email,
-			Name:     u.Name,
-			Language: u.Language,
+			UserId:        u.ID,
+			Email:         u.Email,
+			Name:          u.Name,
+			Language:      u.Language,
+			EmailVerified: u.EmailVerified,
 		},
 	}, nil
 }
@@ -476,6 +502,204 @@ func deviceLabel(parsed ua.UserAgent) string {
 		return "Bot"
 	}
 	return "Unknown"
+}
+
+// ── RequestPasswordReset ──────────────────────────────────────────────────────
+
+// RequestPasswordReset always returns OK to avoid user enumeration via email.
+func (s *Server) RequestPasswordReset(ctx context.Context, req *authv1.RequestPasswordResetRequest) (*authv1.RequestPasswordResetResponse, error) {
+	if req.Email == "" {
+		return nil, status.Error(codes.InvalidArgument, "email is required")
+	}
+
+	user, err := s.store.GetUserByEmail(ctx, req.Email)
+	if err != nil {
+		// User not found — return OK silently.
+		return &authv1.RequestPasswordResetResponse{}, nil
+	}
+
+	if err := s.issueCode(ctx, user, events.PurposePasswordReset); err != nil {
+		return nil, err
+	}
+	return &authv1.RequestPasswordResetResponse{}, nil
+}
+
+// ── ResetPassword ─────────────────────────────────────────────────────────────
+
+func (s *Server) ResetPassword(ctx context.Context, req *authv1.ResetPasswordRequest) (*authv1.ResetPasswordResponse, error) {
+	if req.Email == "" || req.Code == "" || req.NewPassword == "" {
+		return nil, status.Error(codes.InvalidArgument, "email, code and new_password are required")
+	}
+	if len(req.NewPassword) < 8 {
+		return nil, status.Error(codes.InvalidArgument, "password must be at least 8 characters")
+	}
+
+	user, err := s.store.GetUserByEmail(ctx, req.Email)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, "invalid or expired code")
+	}
+
+	if err := s.verifyAndConsumeCode(ctx, user.ID, events.PurposePasswordReset, req.Code); err != nil {
+		return nil, err
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		s.log.Error("hash password", "err", err)
+		return nil, status.Error(codes.Internal, "password reset failed")
+	}
+	if err := s.store.UpdatePassword(ctx, user.ID, string(hash)); err != nil {
+		s.log.Error("update password", "err", err)
+		return nil, status.Error(codes.Internal, "password reset failed")
+	}
+
+	// Revoke all sessions — forces fresh login after reset.
+	if _, err := s.store.RevokeAllSessions(ctx, user.ID); err != nil {
+		s.log.Error("revoke all sessions after reset", "user_id", user.ID, "err", err)
+	}
+	return &authv1.ResetPasswordResponse{}, nil
+}
+
+// ── RequestEmailVerification ──────────────────────────────────────────────────
+
+func (s *Server) RequestEmailVerification(ctx context.Context, req *authv1.RequestEmailVerificationRequest) (*authv1.RequestEmailVerificationResponse, error) {
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+
+	user, err := s.store.GetUserByID(ctx, req.UserId)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "user not found")
+		}
+		s.log.Error("get user for email verify", "err", err)
+		return nil, status.Error(codes.Internal, "request failed")
+	}
+
+	if user.EmailVerified {
+		return nil, status.Error(codes.AlreadyExists, "email already verified")
+	}
+
+	if err := s.issueCode(ctx, user, events.PurposeEmailVerify); err != nil {
+		return nil, err
+	}
+	return &authv1.RequestEmailVerificationResponse{}, nil
+}
+
+// ── ConfirmEmail ──────────────────────────────────────────────────────────────
+
+func (s *Server) ConfirmEmail(ctx context.Context, req *authv1.ConfirmEmailRequest) (*authv1.ConfirmEmailResponse, error) {
+	if req.UserId == "" || req.Code == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and code are required")
+	}
+
+	if err := s.verifyAndConsumeCode(ctx, req.UserId, events.PurposeEmailVerify, req.Code); err != nil {
+		return nil, err
+	}
+
+	if err := s.store.SetEmailVerified(ctx, req.UserId); err != nil {
+		s.log.Error("set email verified", "user_id", req.UserId, "err", err)
+		return nil, status.Error(codes.Internal, "confirm email failed")
+	}
+	return &authv1.ConfirmEmailResponse{}, nil
+}
+
+// ── OTP helpers ───────────────────────────────────────────────────────────────
+
+// issueCode generates an OTP, stores its hash, and publishes an email event.
+// Returns ResourceExhausted if the resend cooldown has not elapsed.
+func (s *Server) issueCode(ctx context.Context, user *domain.User, purpose string) error {
+	// Enforce resend cooldown.
+	latest, err := s.store.GetLatestVerificationCode(ctx, user.ID, purpose)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.log.Error("get latest code", "err", err)
+		return status.Error(codes.Internal, "request failed")
+	}
+	if latest != nil {
+		elapsed := time.Since(latest.CreatedAt)
+		if elapsed < s.codeCfg.ResendCooldown {
+			wait := int((s.codeCfg.ResendCooldown - elapsed).Seconds()) + 1
+			return status.Errorf(codes.ResourceExhausted, "please wait %d seconds before requesting another code", wait)
+		}
+	}
+
+	code, err := generateOTP()
+	if err != nil {
+		s.log.Error("generate otp", "err", err)
+		return status.Error(codes.Internal, "request failed")
+	}
+
+	expiresAt := time.Now().UTC().Add(s.codeCfg.TTL)
+	if err := s.store.CreateVerificationCode(ctx, uuid.New().String(), user.ID, purpose, hashToken(code), expiresAt); err != nil {
+		s.log.Error("create verification code", "err", err)
+		return status.Error(codes.Internal, "request failed")
+	}
+
+	// Publish email event (best-effort; user can re-request if delivery fails).
+	if s.producer != nil {
+		ev := events.AuthEmailEvent{
+			EventID:     uuid.New().String(),
+			UserID:      user.ID,
+			Email:       user.Email,
+			Purpose:     purpose,
+			Code:        code,
+			Language:    user.Language,
+			ExpiresMins: int(s.codeCfg.TTL.Minutes()),
+			OccurredAt:  time.Now().UTC(),
+		}
+		if err := s.producer.Publish(ctx, events.AuthEmailTopic, user.ID, ev); err != nil {
+			s.log.Error("publish auth email event", "purpose", purpose, "user_id", user.ID, "err", err)
+		}
+	} else {
+		s.log.Warn("kafka producer not configured — email not sent", "purpose", purpose, "user_id", user.ID, "code", code)
+	}
+	return nil
+}
+
+// verifyAndConsumeCode checks the submitted code against the latest active code.
+// Wrong code: increments attempts; if maxAttempts reached, consumes (invalidates) the code.
+// Returns Unauthenticated on wrong/expired code, ResourceExhausted after max attempts.
+func (s *Server) verifyAndConsumeCode(ctx context.Context, userID, purpose, submitted string) error {
+	vc, err := s.store.GetActiveVerificationCode(ctx, userID, purpose)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return status.Error(codes.Unauthenticated, "invalid or expired code")
+		}
+		s.log.Error("get active code", "err", err)
+		return status.Error(codes.Internal, "verification failed")
+	}
+
+	if hashToken(submitted) != vc.CodeHash {
+		attempts, err := s.store.IncrementCodeAttempts(ctx, vc.ID)
+		if err != nil {
+			s.log.Error("increment code attempts", "err", err)
+		}
+		if int(attempts) >= s.codeCfg.MaxAttempts {
+			_ = s.store.ConsumeCode(ctx, vc.ID)
+			return status.Error(codes.ResourceExhausted, "too many incorrect attempts — request a new code")
+		}
+		return status.Error(codes.Unauthenticated, "invalid or expired code")
+	}
+
+	if err := s.store.ConsumeCode(ctx, vc.ID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			// Another concurrent request already consumed this code.
+			return status.Error(codes.Unauthenticated, "invalid or expired code")
+		}
+		s.log.Error("consume code", "err", err)
+		return status.Error(codes.Internal, "verification failed")
+	}
+	return nil
+}
+
+// generateOTP returns a zero-padded 6-digit numeric code from crypto/rand.
+func generateOTP() (string, error) {
+	var b [3]byte
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		return "", fmt.Errorf("generate otp: %w", err)
+	}
+	n := (int(b[0])<<16 | int(b[1])<<8 | int(b[2])) % 1_000_000
+	return fmt.Sprintf("%06d", n), nil
 }
 
 // hashToken hashes a token for storage. We never store raw tokens.

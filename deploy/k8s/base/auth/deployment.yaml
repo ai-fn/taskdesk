@@ -35,6 +35,8 @@ spec:
               value: /secrets/jwt_private.pem
             - name: MIGRATIONS_DIR
               value: "file:///migrations/auth"
+            - name: KAFKA_BROKERS
+              value: "todo-kafka-bootstrap.data.svc.cluster.local:9092"
           volumeMounts:
             - name: jwt-key
               mountPath: /secrets

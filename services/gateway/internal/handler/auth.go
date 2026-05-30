@@ -20,11 +20,13 @@ const refreshCookieName = "refresh_token"
 
 // AuthHandler bridges HTTP ↔ auth-service gRPC.
 type AuthHandler struct {
-	client       authv1.AuthServiceClient
-	todoClient   todov1.TodoServiceClient
-	log          *slog.Logger
-	emailLimiter *RateLimiter // 5 attempts / minute per email address
-	ipLimiter    *RateLimiter // 20 attempts / minute per IP address
+	client             authv1.AuthServiceClient
+	todoClient         todov1.TodoServiceClient
+	log                *slog.Logger
+	emailLimiter       *RateLimiter // 5 attempts / minute per email (login/signup)
+	ipLimiter          *RateLimiter // 20 attempts / minute per IP (login/signup)
+	resetEmailLimiter  *RateLimiter // 3 attempts / 10 min per email (password reset)
+	resetIPLimiter     *RateLimiter // 10 attempts / 10 min per IP (password reset)
 }
 
 func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, log *slog.Logger) *AuthHandler {
@@ -33,10 +35,13 @@ func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, l
 		todoClient: todo,
 		log:        log,
 		// 5 logins per minute per email — targets credential stuffing.
-		// rate.Limit is tokens/second, so 5/60 = one token every 12 s.
 		emailLimiter: NewRateLimiter(rate.Limit(5.0/60.0), 5, 15*time.Minute, 10*time.Minute),
 		// 20 logins per minute per IP — targets origin scanning.
 		ipLimiter: NewRateLimiter(rate.Limit(20.0/60.0), 20, 15*time.Minute, 10*time.Minute),
+		// 3 reset attempts per 10 min per email — tighter, reset is expensive.
+		resetEmailLimiter: NewRateLimiter(rate.Limit(3.0/600.0), 3, 30*time.Minute, 15*time.Minute),
+		// 10 reset attempts per 10 min per IP.
+		resetIPLimiter: NewRateLimiter(rate.Limit(10.0/600.0), 10, 30*time.Minute, 15*time.Minute),
 	}
 }
 
@@ -45,6 +50,8 @@ func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, l
 func (h *AuthHandler) Stop() {
 	h.emailLimiter.Stop()
 	h.ipLimiter.Stop()
+	h.resetEmailLimiter.Stop()
+	h.resetIPLimiter.Stop()
 }
 
 // POST /api/v1/auth/signup
@@ -182,6 +189,70 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// POST /api/v1/auth/password/forgot
+func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	info := clientInfoFromRequest(r)
+	if !h.resetIPLimiter.Allow(info.IpAddress) {
+		h.log.Warn("forgot password rate limited by IP", "ip", info.IpAddress)
+		jsonError(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+	if req.Email != "" && !h.resetEmailLimiter.Allow(req.Email) {
+		h.log.Warn("forgot password rate limited by email", "email", req.Email)
+		jsonError(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
+	// Always returns OK — no email enumeration.
+	_, err := h.client.RequestPasswordReset(r.Context(), &authv1.RequestPasswordResetRequest{
+		Email: req.Email,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /api/v1/auth/password/reset
+func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email       string `json:"email"`
+		Code        string `json:"code"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	info := clientInfoFromRequest(r)
+	if !h.resetIPLimiter.Allow(info.IpAddress) {
+		h.log.Warn("reset password rate limited by IP", "ip", info.IpAddress)
+		jsonError(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
+	_, err := h.client.ResetPassword(r.Context(), &authv1.ResetPasswordRequest{
+		Email:       req.Email,
+		Code:        req.Code,
+		NewPassword: req.NewPassword,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func setRefreshCookie(w http.ResponseWriter, token string) {
@@ -211,6 +282,8 @@ func handleGRPCError(w http.ResponseWriter, err error) {
 		jsonError(w, st.Message(), http.StatusUnauthorized)
 	case codes.NotFound:
 		jsonError(w, st.Message(), http.StatusNotFound)
+	case codes.ResourceExhausted:
+		jsonError(w, st.Message(), http.StatusTooManyRequests)
 	case codes.Unavailable:
 		jsonError(w, "service unavailable", http.StatusServiceUnavailable)
 	default:

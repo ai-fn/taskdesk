@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   DndContext,
@@ -118,7 +118,14 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
   const [newGroupName, setNewGroupName] = useState('')
   const [showNewGroup, setShowNewGroup] = useState(false)
 
-  useEscapeKey(onClose)
+  const [isClosing, setIsClosing] = useState(false)
+  const handleClose = useCallback(() => {
+    if (isClosing) return
+    setIsClosing(true)
+    setTimeout(onClose, 260)
+  }, [isClosing, onClose])
+
+  useEscapeKey(handleClose)
 
   const deleteList = useDeleteList()
   const reorder = useReorderLists()
@@ -199,11 +206,11 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/30 dark:bg-black/50" onClick={onClose} />
-      <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-sm flex-col bg-gray-50 dark:bg-gray-900 shadow-2xl">
+      <div className={`fixed inset-0 z-40 bg-black/30 dark:bg-black/50 ${isClosing ? 'animate-backdrop-out' : 'animate-backdrop-in'}`} onClick={handleClose} />
+      <div className={`fixed right-0 top-0 z-50 flex h-full w-full max-w-sm flex-col bg-gray-50 dark:bg-gray-900 shadow-2xl ${isClosing ? 'animate-slide-out-right' : 'animate-slide-in-right'}`}>
         <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-3">
           <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{t('editLists.title')}</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-xl">✕</button>
+          <button onClick={handleClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-xl">✕</button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
