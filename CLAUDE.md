@@ -1,24 +1,12 @@
 # Project context for Claude
 
-**This is a learning project.** The goal is not the todo app itself — it's hands-on exposure to the Go microservices production stack. Optimize suggestions for clarity and pedagogy, not shortest-path delivery.
+**Production Go microservices product.** Optimize every suggestion for correctness, performance, and production safety — not for brevity or pedagogy. Prefer explicit error handling, connection pool hygiene, and graceful shutdown over clean-looking code. When in doubt, choose the option that fails loudly and recovers cleanly.
 
 ---
 
-## Current state (as of 2026-05-19)
+## Stack at a glance
 
-Phases 0–4 complete. The full stack is running in a kind cluster with Tilt live-reload.
-
-| Phase | Status | What was built |
-|-------|--------|----------------|
-| 0 — Bootstrap | ✅ | kind cluster, Tilt, Caddy, Postgres, Redis, Kafka, gateway skeleton |
-| 1 — Auth + Todo MVP | ✅ | auth-service, todo-service, gateway, React SPA with full CRUD |
-| 2 — Async backbone | ✅ | Kafka topics, transactional outbox, notification-service (email + WebSocket) |
-| 3 — AI daily plan | ✅ | ai-service with Claude, streaming SSE plan panel, scheduler CronJob |
-| 4 — Observability | ✅ | ELK stack, Prometheus/Grafana, slog JSON with trace IDs |
-| Lists + Groups | ✅ | Custom task lists, list groups, system virtual lists, drag-to-reorder |
-| UI polish | ✅ | Dark/light/system theme, SSE word-by-word streaming, user identity in header |
-| Sessions | ✅ | Session management page (list devices/IPs, revoke, sign-out-all), `externalTrafficPolicy: Local` real-IP chain |
-| Backend tests | ✅ | Three-layer test suite: pure unit, store/server integration (testcontainers), gateway httptest+fakes |
+Full-stack task management SaaS. kind cluster + Tilt in dev; production target is multi-replica k8s. Services: auth, todo, ai, notification, scheduler + React SPA. ELK + Prometheus/Grafana observability. Full i18n (EN + ZH). Argon2id passwords, RS256 JWTs, transactional Kafka outbox, SSE AI plan streaming.
 
 ---
 
@@ -38,6 +26,9 @@ auth-service  todo-service  ai-service
 - **DB-per-schema** — `auth.*`, `todo.*` schemas in a single Postgres instance; no cross-schema queries.
 - **Outbox pattern** — todo-service writes Kafka events to `todo.outbox` in the same Postgres transaction as the state change; a background publisher polls and drains to Kafka every 500 ms.
 - **JWT** — access token kept in React memory only; refresh token in HttpOnly cookie. 401 interceptor with subscriber queue (prevents token double-invalidation on concurrent requests).
+- **Health probes** — every service exposes `GET /healthz` (liveness) and `GET /readyz` (readiness, checks DB + downstream gRPC). Gateway additionally checks all upstream gRPC connections. New services must implement both before wiring into k8s.
+- **Graceful shutdown** — all services catch `SIGTERM`, stop accepting new work, drain in-flight requests (5 s timeout), then close DB pools and Kafka connections. Never `os.Exit` outside `main`. Context cancellation must propagate to all goroutines.
+- **Connection pools** — pgxpool `MaxConns` is set per-service based on Postgres `max_connections` budget: auth=10, todo=20, ai=5. Kafka producers use a single shared client per service; never create per-request producers.
 
 ---
 
@@ -47,6 +38,8 @@ auth-service  todo-service  ai-service
 Auth, users, JWTs. Owns `auth.*` schema.
 
 **RPCs:** `SignUp`, `Login`, `RefreshToken`, `Logout`, `GetJWKS`, `ValidateToken`, `ListUserIDs`, `GetUserByID`
+
+**Password policy:** `services/auth/internal/password` — `Validate(pw)` called in `SignUp` before bcrypt. Scoring rules intentionally mirror `web/src/lib/passwordStrength.ts` so the strength bar the user sees matches server enforcement.
 
 **DB tables:**
 - `auth.users` — id, email, name, password_hash (argon2id), created_at, updated_at
@@ -182,6 +175,8 @@ data: {"type":"error","error":"message"}
 ### `services/notification`
 Kafka consumer. Sends emails (Mailpit in dev) + Redis pub/sub for WebSocket fan-out.
 
+**SMTP auth:** `mailer.New(addr, from, user, pass)` — empty user+pass → unauthenticated (Mailpit). Both set → `smtp.PlainAuth`. k8s reads credentials from `deploy/k8s/base/notification/.env` (gitignored; copy from `.env.example`).
+
 **Topics consumed:**
 - `task.events.v1` — task created/updated/completed/deleted; sends email on `task.completed`
 - `daily-plan.generated.v1` — daily plan ready; sends email + pushes to Redis pub/sub channel `user:{id}`
@@ -205,6 +200,65 @@ K8s CronJob. Iterates all users via `auth.ListUserIDs`, calls `ai.GeneratePlan` 
 | `daily-plan.generated.v1` | ai-service | notification-service | after plan generated |
 
 Event type field in `task.events.v1`: `task.created`, `task.updated`, `task.completed`, `task.deleted`
+
+---
+
+## Performance & capacity
+
+### Query discipline
+- **All list queries must be paginated.** Never fetch unbounded rows. Use `page_size` + cursor (`page_token`). Max `page_size` enforced at gateway: 200 for tasks, 500 for lists.
+- **No N+1 queries.** Fetch related data in a single JOIN or a bounded `WHERE id = ANY($1)` batch. The store layer must never call SQL in a loop.
+- **Indexes** — any new filter column added to a list query needs an index. Add it in the migration; document it in the store file above the query.
+
+### Kafka
+- Consumer group IDs: `notification-service`, `scheduler` — never hardcode strings outside config. Changing a group ID resets offset to latest by default; coordinate with ops.
+- Outbox publisher polls every 500 ms; acceptable lag for non-critical events. For latency-sensitive flows, reduce interval via env var `OUTBOX_POLL_INTERVAL`.
+- Kafka producers: `acks=all`, `retries=5`, idempotent enabled. Do not lower these for "performance" — at-least-once delivery is a hard requirement.
+
+### Redis
+- Pub/sub for WebSocket fan-out only (`user:{id}` channel). Not used as primary data store. TTL on all keys that aren't pub/sub channels.
+- WebSocket connections per gateway pod: target <10 k. Above that, add gateway replicas and a sticky-session load balancer.
+
+### Rate limiting
+- Gateway enforces per-IP rate limits via middleware: 100 req/s sustained, burst 200. Auth endpoints (signup, login) are stricter: 10 req/s per IP.
+- AI plan generation is limited to 1 concurrent SSE stream per user (enforced in-process via a per-user semaphore in the gateway handler).
+
+### Pod resources (production targets)
+| Service | CPU request | CPU limit | Mem request | Mem limit |
+|---------|-------------|-----------|-------------|-----------|
+| gateway | 100m | 500m | 64Mi | 256Mi |
+| auth | 100m | 300m | 64Mi | 128Mi |
+| todo | 100m | 500m | 64Mi | 256Mi |
+| ai | 200m | 1000m | 128Mi | 512Mi |
+| notification | 50m | 200m | 32Mi | 128Mi |
+
+---
+
+## Ops / runbook
+
+### Schema migrations
+Migrations must be **backward-compatible** — old binary runs against new schema, new binary runs against old schema. Steps for any DDL change:
+1. Write `.up.sql` / `.down.sql` in `migrations/{service}/`.
+2. Copy to `deploy/k8s/base/{service}/` and list in `kustomization.yaml` `configMapGenerator`.
+3. Column additions: nullable or with a default only — never `NOT NULL` without a default on an existing table.
+4. Column removals: two-step — first deploy removes all code references, second deploy drops the column.
+5. Never run migrations manually in prod; the k8s init container runs them on pod start.
+
+### Incident grep patterns
+```bash
+# 5xx spike on gateway
+kubectl logs -l app=gateway | grep '"status":5' | jq '{ts:.time,path:.path,err:.error}'
+
+# Outbox backlog growing
+kubectl exec -it <todo-pod> -- psql $DB_URL -c "SELECT count(*) FROM todo.outbox WHERE published_at IS NULL"
+
+# Kafka consumer lag
+kubectl exec -it <kafka-pod> -- kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group notification-service
+```
+
+### Rollback
+- Gateway + services: `kubectl rollout undo deployment/<name>` — safe if migration was backward-compatible.
+- If migration was not backward-compatible: run `.down.sql` first, then roll back the binary.
 
 ---
 
@@ -257,6 +311,10 @@ planKeys.latest()
 - Modes: `light | dark | system`; cycles on each click of `ThemeToggle`
 - `index.html` has inline `<script>` to apply theme before React mounts (prevents flash)
 - Fallback: polls `prefers-color-scheme` every 2 s for Linux/GNOME setups where mq change event doesn't fire
+
+### Password strength
+- `web/src/lib/passwordStrength.ts` exports `scorePassword(pw): number` and `MIN_PASSWORD_SCORE`.
+- `web/src/components/ui/PasswordStrengthBar.tsx` — include under any new-password `<Input>`. Add `validate: (v) => scorePassword(v) >= MIN_PASSWORD_SCORE || t('auth.password.tooWeak')` to the `register()` call.
 
 ---
 
@@ -346,6 +404,7 @@ go test ./pkg/... && go test ./services/auth/... -timeout 120s && go test ./serv
 ### Notes
 
 - The `sessions.id` column is `UUID` type — pass valid UUIDs in any test that inserts sessions.
+- **Test passwords must meet strength policy.** `SignUp` calls `password.Validate()` — use passwords scoring ≥ 2 (e.g. `"Passw0rd1"`). Weak passwords like `"pass123"` now return `InvalidArgument`.
 - `ip_address` is `INET` — never pass `""` (use a real IP or omit the column).
 - RS256 JWTs are **deterministic** for the same claims + key + second — two tokens minted in
   the same second are identical. Tests that rely on token distinctness (e.g. replay protection)
@@ -395,10 +454,14 @@ The project is fully multilingual (English + Simplified Chinese, extensible). **
 ## Conventions
 
 - **No ORM** — `pgx/v5` directly + `sqlc` for codegen. SQL lives in `services/todo/internal/store/store.go`.
-- **Errors** — bubble up to gRPC handler; log once at the boundary. Use `google.golang.org/grpc/status` codes.
+- **Errors** — bubble up to gRPC handler; log once at the boundary. Use `google.golang.org/grpc/status` codes. Never swallow errors silently.
 - **gRPC error extraction in gateway** — `status.FromError(err).Message()` strips `"rpc error: code = X desc = "` prefix before returning to frontend.
 - **Outbox** — never publish to Kafka outside a Postgres transaction.
 - **JWT** — never in `localStorage`.
+- **Pagination** — every store method that returns a list must accept `limit int` and `cursor string`. No unbounded queries in any code path reachable from an HTTP handler.
+- **Context propagation** — every DB call, gRPC call, and Kafka produce must receive the request context. Never use `context.Background()` inside a handler.
+- **Structured logging** — use `pkg/logger` everywhere. Log at `ERROR` only for actionable failures. `WARN` for degraded-but-handled. `INFO` for lifecycle events. Never log sensitive fields (passwords, tokens, PII).
+- **Migrations are append-only** — see Ops/runbook for the two-step removal process. Never alter column types or drop constraints in a single deploy.
 
 ## Don't
 
@@ -409,3 +472,10 @@ The project is fully multilingual (English + Simplified Chinese, extensible). **
 - Don't add `dark:` Tailwind classes without also having the default (light) class.
 - Don't hardcode user-facing strings in React components — always use `t('key')` with entries in both locale files.
 - Don't interpolate language into a Claude system prompt that has `CacheControlEphemeral` — put the language directive in the user message instead.
+- Don't write unbounded SQL queries (`SELECT * FROM tasks WHERE user_id = $1` with no `LIMIT`). Always paginate.
+- Don't call `os.Exit` outside `main`. Panics and unexpected exits skip graceful shutdown and lose in-flight data.
+- Don't create Kafka producers or DB connections inside request handlers. Use the shared pool/client injected at startup.
+- Don't run synchronous Kafka produce calls in the HTTP request path — write to the outbox table instead.
+- Don't use `context.Background()` inside any code that has a request context available.
+- Don't add a NOT NULL column without a default to an existing table in a single migration — it locks the table.
+- Don't lower Kafka producer `acks` or `retries` settings — at-least-once delivery is non-negotiable.
