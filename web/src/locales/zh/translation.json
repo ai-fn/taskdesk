@@ -17,6 +17,16 @@
       "email": "邮箱",
       "password": "密码"
     },
+    "password": {
+      "tooWeak": "密码强度不足 — 请增加长度或混合使用字母、数字和符号。",
+      "strength": {
+        "label": "密码强度",
+        "weak": "弱",
+        "fair": "一般",
+        "good": "强",
+        "strong": "很强"
+      }
+    },
     "login": {
       "title": "登录",
       "submit": "登录",

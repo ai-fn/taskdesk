@@ -7,6 +7,8 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
 import { OTPInput } from '@/components/ui/OTPInput'
+import { PasswordStrengthBar } from '@/components/ui/PasswordStrengthBar'
+import { scorePassword, MIN_PASSWORD_SCORE } from '@/lib/passwordStrength'
 import * as authApi from '@/api/auth'
 import axios from 'axios'
 
@@ -117,7 +119,8 @@ function ResetStep({ email, onSuccess }: { email: string; onSuccess: () => void 
   const [otp, setOtp] = useState('')
   const [apiError, setApiError] = useState('')
   const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle')
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<ResetFormValues>()
+  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<ResetFormValues>()
+  const passwordValue = watch('newPassword', '')
 
   async function handleResend() {
     setResendState('sending')
@@ -191,16 +194,20 @@ function ResetStep({ email, onSuccess }: { email: string; onSuccess: () => void 
           />
         </div>
 
-        <Input
-          label={t('auth.forgotPassword.newPasswordLabel')}
-          type="password"
-          autoComplete="new-password"
-          error={errors.newPassword?.message}
-          {...register('newPassword', {
-            required: t('auth.forgotPassword.newPasswordRequired'),
-            minLength: { value: 8, message: t('auth.forgotPassword.newPasswordMinLength') },
-          })}
-        />
+        <div>
+          <Input
+            label={t('auth.forgotPassword.newPasswordLabel')}
+            type="password"
+            autoComplete="new-password"
+            error={errors.newPassword?.message}
+            {...register('newPassword', {
+              required: t('auth.forgotPassword.newPasswordRequired'),
+              minLength: { value: 8, message: t('auth.forgotPassword.newPasswordMinLength') },
+              validate: (v) => scorePassword(v) >= MIN_PASSWORD_SCORE || t('auth.password.tooWeak'),
+            })}
+          />
+          <PasswordStrengthBar password={passwordValue} />
+        </div>
 
         <Button
           type="submit"

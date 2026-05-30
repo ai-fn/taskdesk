@@ -17,6 +17,16 @@
       "email": "Email",
       "password": "Password"
     },
+    "password": {
+      "tooWeak": "Password is too weak — add length or a mix of letters, numbers and symbols.",
+      "strength": {
+        "label": "Password strength",
+        "weak": "Weak",
+        "fair": "Fair",
+        "good": "Good",
+        "strong": "Strong"
+      }
+    },
     "login": {
       "title": "Sign in",
       "submit": "Sign in",

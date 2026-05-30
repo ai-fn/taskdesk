@@ -12,15 +12,16 @@ import (
 	"log/slog"
 	"time"
 
-	ua "github.com/mileusna/useragent"
 	"github.com/fsociety/todo/pkg/events"
 	"github.com/fsociety/todo/pkg/i18n"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	"github.com/fsociety/todo/pkg/tokens"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	"github.com/fsociety/todo/services/auth/internal/domain"
+	"github.com/fsociety/todo/services/auth/internal/password"
 	"github.com/fsociety/todo/services/auth/internal/store"
 	"github.com/google/uuid"
+	ua "github.com/mileusna/useragent"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -52,6 +53,9 @@ func New(st *store.Store, tm *tokens.Maker, log *slog.Logger, producer *pkgkafka
 func (s *Server) SignUp(ctx context.Context, req *authv1.SignUpRequest) (*authv1.SignUpResponse, error) {
 	if req.Email == "" || req.Password == "" || req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "email, password and name are required")
+	}
+	if err := password.Validate(req.Password); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -530,13 +534,21 @@ func (s *Server) ResetPassword(ctx context.Context, req *authv1.ResetPasswordReq
 	if req.Email == "" || req.Code == "" || req.NewPassword == "" {
 		return nil, status.Error(codes.InvalidArgument, "email, code and new_password are required")
 	}
-	if len(req.NewPassword) < 8 {
-		return nil, status.Error(codes.InvalidArgument, "password must be at least 8 characters")
+	if err := password.Validate(req.NewPassword); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	user, err := s.store.GetUserByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "invalid or expired code")
+	}
+
+	// Reject reuse of the current password. Checked before consuming the OTP
+	// code (so a rejected reuse doesn't burn the code); this leaks nothing new
+	// since Login is already an equivalent (email, password) oracle.
+	if user.PasswordHash != nil &&
+		bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.NewPassword)) == nil {
+		return nil, status.Error(codes.InvalidArgument, "new password must be different from your current password")
 	}
 
 	if err := s.verifyAndConsumeCode(ctx, user.ID, events.PurposePasswordReset, req.Code); err != nil {
