@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { toBCP47 } from '@/i18n/config'
 import type { Task, TaskList } from '@/types'
 import { Priority, Status } from '@/types'
 import { Input } from '@/components/ui/Input'
@@ -52,7 +53,7 @@ interface Props {
 const fieldClass = 'rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
 
 export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, onCancel, isLoading, children }: Props) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const isCreate = !task
   const [draftSubtasks, setDraftSubtasks] = useState<string[]>(isCreate ? (prefill?.subtasks ?? []) : [])
   const [newSubtask, setNewSubtask] = useState('')
@@ -177,6 +178,7 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
       <Input
         label={t('tasks.form.dueDateLabel')}
         type="datetime-local"
+        lang={toBCP47(i18n.language)}
         {...register('due_at')}
       />
       {isCreate && (

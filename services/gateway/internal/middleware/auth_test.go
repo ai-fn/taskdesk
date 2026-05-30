@@ -58,6 +58,18 @@ func (m *minimalAuthClient) RevokeOtherSessions(ctx context.Context, in *authv1.
 func (m *minimalAuthClient) UpdateUserLanguage(ctx context.Context, in *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error) {
 	panic("not implemented")
 }
+func (m *minimalAuthClient) RequestPasswordReset(ctx context.Context, in *authv1.RequestPasswordResetRequest, opts ...grpc.CallOption) (*authv1.RequestPasswordResetResponse, error) {
+	panic("not implemented")
+}
+func (m *minimalAuthClient) ResetPassword(ctx context.Context, in *authv1.ResetPasswordRequest, opts ...grpc.CallOption) (*authv1.ResetPasswordResponse, error) {
+	panic("not implemented")
+}
+func (m *minimalAuthClient) RequestEmailVerification(ctx context.Context, in *authv1.RequestEmailVerificationRequest, opts ...grpc.CallOption) (*authv1.RequestEmailVerificationResponse, error) {
+	panic("not implemented")
+}
+func (m *minimalAuthClient) ConfirmEmail(ctx context.Context, in *authv1.ConfirmEmailRequest, opts ...grpc.CallOption) (*authv1.ConfirmEmailResponse, error) {
+	panic("not implemented")
+}
 
 // probe is a simple next handler that captures the context values set by Authenticate.
 type probeResult struct {

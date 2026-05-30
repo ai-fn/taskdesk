@@ -146,19 +146,19 @@ export function SearchBar({ lists }: Props) {
       </div>
 
       {showDropdown && (
-        <div className="absolute left-0 right-0 top-full mt-1.5 z-50 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-xl overflow-hidden">
+        <div className="absolute left-0 right-0 top-full mt-1.5 z-50 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-xl overflow-hidden animate-dropdown-in origin-top">
           {isSemantic && (
             <div className="flex items-center gap-1.5 border-b border-gray-100 dark:border-gray-700 bg-indigo-50/60 dark:bg-indigo-950/20 px-3 py-1.5 text-xs text-indigo-500 dark:text-indigo-400">
               <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
               </svg>
-              Semantic · ranked by meaning
+              {t('search.semanticLabel')}
             </div>
           )}
 
           <div className="max-h-80 overflow-y-auto">
             {debouncedQuery && !isSearching && results.length === 0 && (
-              <p className="px-4 py-5 text-center text-xs text-gray-400 dark:text-gray-500">No results</p>
+              <p className="px-4 py-5 text-center text-xs text-gray-400 dark:text-gray-500">{t('search.noResults')}</p>
             )}
 
             {results.map((task: Task) => {

@@ -20,6 +20,7 @@ interface AuthState {
   accessToken: string | null
   userId: string | null
   email: string | null
+  emailVerified: boolean
   isInitializing: boolean
 }
 
@@ -28,6 +29,7 @@ interface AuthContextValue extends Omit<AuthState, 'accessToken'> {
   login: (email: string, password: string) => Promise<void>
   signup: (email: string, password: string, name: string) => Promise<void>
   logout: () => Promise<void>
+  setEmailVerified: () => void
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)
@@ -37,6 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     accessToken: null,
     userId: null,
     email: null,
+    emailVerified: false,
     isInitializing: true,
   })
   const navigate = useNavigate()
@@ -55,32 +58,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .refresh()
       .then((res) => {
         setToken(res.access_token)
-        setState({ accessToken: res.access_token, userId: null, email: jwtEmail(res.access_token), isInitializing: false })
-        // Reconcile language: DB preference wins over localStorage/navigator.
+        setState({ accessToken: res.access_token, userId: null, email: jwtEmail(res.access_token), emailVerified: false, isInitializing: false })
+        // Reconcile language + email_verified from DB.
         accountApi.getMe().then((me) => {
-          if (me.language && me.language !== i18n.language) {
-            i18n.changeLanguage(me.language)
-          }
+          if (me.language && me.language !== i18n.language) i18n.changeLanguage(me.language)
+          setState((s) => ({ ...s, emailVerified: me.email_verified }))
         }).catch(() => { /* non-fatal */ })
       })
       .catch(() => {
-        setState({ accessToken: null, userId: null, email: null, isInitializing: false })
+        setState({ accessToken: null, userId: null, email: null, emailVerified: false, isInitializing: false })
       })
   }, [])
 
   async function login(email: string, password: string) {
     const res = await authApi.login(email, password)
     setToken(res.access_token)
-    setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), isInitializing: false })
+    setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), emailVerified: false, isInitializing: false })
     accountApi.getMe().then((me) => {
       if (me.language && me.language !== i18n.language) i18n.changeLanguage(me.language)
+      setState((s) => ({ ...s, emailVerified: me.email_verified }))
     }).catch(() => { /* non-fatal */ })
   }
 
   async function signup(email: string, password: string, name: string) {
     const res = await authApi.signup(email, password, name)
     setToken(res.access_token)
-    setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), isInitializing: false })
+    setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), emailVerified: false, isInitializing: false })
   }
 
   async function logout() {
@@ -88,9 +91,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await authApi.logout()
     } finally {
       setToken(null)
-      setState({ accessToken: null, userId: null, email: null, isInitializing: false })
+      setState({ accessToken: null, userId: null, email: null, emailVerified: false, isInitializing: false })
       navigateRef.current('/login')
     }
+  }
+
+  function setEmailVerified() {
+    setState((s) => ({ ...s, emailVerified: true }))
   }
 
   return (
@@ -98,11 +105,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         userId: state.userId,
         email: state.email,
+        emailVerified: state.emailVerified,
         isInitializing: state.isInitializing,
         isAuthenticated: state.accessToken !== null,
         login,
         signup,
         logout,
+        setEmailVerified,
       }}
     >
       {children}

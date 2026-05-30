@@ -1,4 +1,4 @@
-// Package events defines the task domain event schema published to Kafka.
+// Package events defines the domain event schemas published to Kafka.
 package events
 
 import "time"
@@ -6,13 +6,36 @@ import "time"
 // Topic is the Kafka topic for all task events.
 const Topic = "task.events.v1"
 
-// Event types.
+// AuthEmailTopic is the Kafka topic for transactional auth emails.
+const AuthEmailTopic = "auth.email.v1"
+
+// Task event types.
 const (
 	TypeTaskCreated   = "task.created"
 	TypeTaskUpdated   = "task.updated"
 	TypeTaskCompleted = "task.completed"
 	TypeTaskDeleted   = "task.deleted"
 )
+
+// Auth email purposes.
+const (
+	PurposePasswordReset = "password_reset"
+	PurposeEmailVerify   = "email_verify"
+)
+
+// AuthEmailEvent is published by auth-service to trigger transactional emails.
+// The raw OTP code is included in the payload so notification-service can
+// embed it in the email body; it is never persisted to the auth DB at rest.
+type AuthEmailEvent struct {
+	EventID     string    `json:"event_id"`
+	UserID      string    `json:"user_id"`
+	Email       string    `json:"email"`
+	Purpose     string    `json:"purpose"`      // PurposePasswordReset | PurposeEmailVerify
+	Code        string    `json:"code"`         // raw OTP — embed in email
+	Language    string    `json:"language"`
+	ExpiresMins int       `json:"expires_mins"` // for display in email body
+	OccurredAt  time.Time `json:"occurred_at"`
+}
 
 // TaskEvent is the JSON payload written to todo.outbox and published to Kafka.
 // Key is always the user_id so events for one user land on the same partition.

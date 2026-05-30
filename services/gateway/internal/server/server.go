@@ -50,6 +50,9 @@ func New(
 		r.Post("/refresh", auth.Refresh)
 		r.Post("/logout",  auth.Logout)
 
+		r.Post("/password/forgot", auth.ForgotPassword)
+		r.Post("/password/reset",  auth.ResetPassword)
+
 		r.Get("/oauth/{provider}",          oauthH.Start)
 		r.Get("/oauth/{provider}/callback", oauthH.Callback)
 	})
@@ -124,6 +127,8 @@ func New(
 		r.Use(middleware.Authenticate(authClient))
 		r.Get("/me", account.Me)
 		r.Patch("/language", account.UpdateLanguage)
+		r.Post("/email/verify/request", account.RequestEmailVerification)
+		r.Post("/email/verify/confirm",  account.ConfirmEmail)
 	})
 
 	// WebSocket: authenticated users subscribe to their real-time notifications.

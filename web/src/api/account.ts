@@ -5,6 +5,7 @@ export interface Me {
   email: string
   name: string
   language: string
+  email_verified: boolean
 }
 
 export async function getMe(): Promise<Me> {
@@ -14,4 +15,12 @@ export async function getMe(): Promise<Me> {
 
 export async function updateLanguage(language: string): Promise<void> {
   await api.patch('/api/v1/account/language', { language })
+}
+
+export async function requestEmailVerification(): Promise<void> {
+  await api.post('/api/v1/account/email/verify/request')
+}
+
+export async function confirmEmail(code: string): Promise<void> {
+  await api.post('/api/v1/account/email/verify/confirm', { code })
 }

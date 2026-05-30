@@ -38,7 +38,7 @@ export function AppLayout() {
               </button>
 
               {open && (
-                <div className="absolute right-0 top-full mt-1 w-48 rounded-lg bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50">
+                <div className="absolute right-0 top-full mt-1 w-48 rounded-lg bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50 animate-dropdown-in origin-top">
                   <button
                     className="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                     onClick={() => { setOpen(false); navigate('/account') }}

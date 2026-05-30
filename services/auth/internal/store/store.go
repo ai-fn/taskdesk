@@ -28,9 +28,9 @@ func New(db *pgxpool.Pool) *Store {
 
 func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO auth.users (id, email, name, password_hash, language, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		u.ID, u.Email, u.Name, u.PasswordHash, u.Language, u.CreatedAt, u.UpdatedAt,
+		INSERT INTO auth.users (id, email, name, password_hash, language, email_verified, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		u.ID, u.Email, u.Name, u.PasswordHash, u.Language, u.EmailVerified, u.CreatedAt, u.UpdatedAt,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -44,9 +44,9 @@ func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, language, created_at, updated_at
+		SELECT id, email, name, password_hash, language, email_verified, created_at, updated_at
 		FROM auth.users WHERE email = $1`, email,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -59,9 +59,9 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*domain.User,
 func (s *Store) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, language, created_at, updated_at
+		SELECT id, email, name, password_hash, language, email_verified, created_at, updated_at
 		FROM auth.users WHERE id = $1`, id,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -172,7 +172,7 @@ func (s *Store) RevokeOtherSessions(ctx context.Context, userID, currentSessionI
 
 // ListUsers returns all users. Used by scheduler for fan-out.
 func (s *Store) ListUsers(ctx context.Context) ([]*domain.User, error) {
-	rows, err := s.db.Query(ctx, `SELECT id, email, name, password_hash, language, created_at, updated_at FROM auth.users ORDER BY created_at`)
+	rows, err := s.db.Query(ctx, `SELECT id, email, name, password_hash, language, email_verified, created_at, updated_at FROM auth.users ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
@@ -181,7 +181,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]*domain.User, error) {
 	var users []*domain.User
 	for rows.Next() {
 		var u domain.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		users = append(users, &u)
@@ -241,12 +241,12 @@ func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error 
 func (s *Store) FindByOAuth(ctx context.Context, provider, providerUserID string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT u.id, u.email, u.name, u.password_hash, u.language, u.created_at, u.updated_at
+		SELECT u.id, u.email, u.name, u.password_hash, u.language, u.email_verified, u.created_at, u.updated_at
 		FROM auth.oauth_identities oi
 		JOIN auth.users u ON u.id = oi.user_id
 		WHERE oi.provider = $1 AND oi.provider_user_id = $2`,
 		provider, providerUserID,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -269,6 +269,135 @@ func (s *Store) LinkOAuth(ctx context.Context, userID, provider, providerUserID,
 		return fmt.Errorf("link oauth: %w", err)
 	}
 	return nil
+}
+
+// ── Verification codes ────────────────────────────────────────────────────────
+
+// CreateVerificationCode inserts a new verification code row.
+func (s *Store) CreateVerificationCode(ctx context.Context, id, userID, purpose, codeHash string, expiresAt time.Time) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO auth.verification_codes (id, user_id, purpose, code_hash, expires_at)
+		VALUES ($1, $2, $3, $4, $5)`,
+		id, userID, purpose, codeHash, expiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("create verification code: %w", err)
+	}
+	return nil
+}
+
+// GetLatestVerificationCode returns the most recently created code for a user+purpose,
+// regardless of consumed or expired state (used to enforce resend cooldown).
+func (s *Store) GetLatestVerificationCode(ctx context.Context, userID, purpose string) (*domain.VerificationCode, error) {
+	var c domain.VerificationCode
+	err := s.db.QueryRow(ctx, `
+		SELECT id, user_id, purpose, code_hash, attempts, expires_at, consumed_at, created_at
+		FROM auth.verification_codes
+		WHERE user_id = $1 AND purpose = $2
+		ORDER BY created_at DESC
+		LIMIT 1`,
+		userID, purpose,
+	).Scan(&c.ID, &c.UserID, &c.Purpose, &c.CodeHash, &c.Attempts, &c.ExpiresAt, &c.ConsumedAt, &c.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get latest verification code: %w", err)
+	}
+	return &c, nil
+}
+
+// GetActiveVerificationCode returns the most recent unconsumed, unexpired code
+// for the given user+purpose. Returns ErrNotFound if none exists.
+func (s *Store) GetActiveVerificationCode(ctx context.Context, userID, purpose string) (*domain.VerificationCode, error) {
+	var c domain.VerificationCode
+	err := s.db.QueryRow(ctx, `
+		SELECT id, user_id, purpose, code_hash, attempts, expires_at, consumed_at, created_at
+		FROM auth.verification_codes
+		WHERE user_id = $1 AND purpose = $2
+		  AND consumed_at IS NULL AND expires_at > now()
+		ORDER BY created_at DESC
+		LIMIT 1`,
+		userID, purpose,
+	).Scan(&c.ID, &c.UserID, &c.Purpose, &c.CodeHash, &c.Attempts, &c.ExpiresAt, &c.ConsumedAt, &c.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get active verification code: %w", err)
+	}
+	return &c, nil
+}
+
+// IncrementCodeAttempts atomically increments attempts and returns the new count.
+// Returns ErrNotFound if the code row is gone.
+func (s *Store) IncrementCodeAttempts(ctx context.Context, codeID string) (int16, error) {
+	var attempts int16
+	err := s.db.QueryRow(ctx, `
+		UPDATE auth.verification_codes SET attempts = attempts + 1
+		WHERE id = $1 RETURNING attempts`,
+		codeID,
+	).Scan(&attempts)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("increment code attempts: %w", err)
+	}
+	return attempts, nil
+}
+
+// ConsumeCode atomically marks a verification code as used.
+// Returns ErrNotFound if the code was already consumed or doesn't exist,
+// preventing a TOCTOU race where two concurrent correct submissions both succeed.
+func (s *Store) ConsumeCode(ctx context.Context, codeID string) error {
+	tag, err := s.db.Exec(ctx, `
+		UPDATE auth.verification_codes SET consumed_at = now()
+		WHERE id = $1 AND consumed_at IS NULL`,
+		codeID,
+	)
+	if err != nil {
+		return fmt.Errorf("consume code: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ── User mutations ────────────────────────────────────────────────────────────
+
+// SetEmailVerified marks the user's email as verified.
+func (s *Store) SetEmailVerified(ctx context.Context, userID string) error {
+	_, err := s.db.Exec(ctx, `
+		UPDATE auth.users SET email_verified = true, updated_at = now() WHERE id = $1`,
+		userID,
+	)
+	return err
+}
+
+// UpdatePassword sets a new bcrypt password hash for the user.
+func (s *Store) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
+	tag, err := s.db.Exec(ctx, `
+		UPDATE auth.users SET password_hash = $2, updated_at = now() WHERE id = $1`,
+		userID, passwordHash,
+	)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RevokeAllSessions deletes every session for a user (e.g. after password reset).
+func (s *Store) RevokeAllSessions(ctx context.Context, userID string) (int64, error) {
+	tag, err := s.db.Exec(ctx, `DELETE FROM auth.sessions WHERE user_id = $1`, userID)
+	if err != nil {
+		return 0, fmt.Errorf("revoke all sessions: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 func isUniqueViolation(err error) bool {

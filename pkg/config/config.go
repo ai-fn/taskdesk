@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Load reads environment variables into a struct of type T.
@@ -83,6 +84,14 @@ func loadStruct(v reflect.Value) error {
 }
 
 func setField(fv reflect.Value, raw string) error {
+	if fv.Type() == reflect.TypeOf(time.Duration(0)) {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return fmt.Errorf("expected duration (e.g. 10m, 1h30s), got %q", raw)
+		}
+		fv.SetInt(int64(d))
+		return nil
+	}
 	switch fv.Kind() {
 	case reflect.String:
 		fv.SetString(raw)

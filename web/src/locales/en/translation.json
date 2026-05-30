@@ -22,9 +22,35 @@
       "submit": "Sign in",
       "noAccount": "No account?",
       "signUp": "Sign up",
+      "forgotPassword": "Forgot password?",
       "emailRequired": "Email is required",
       "passwordRequired": "Password is required",
       "failed": "Login failed. Please try again."
+    },
+    "forgotPassword": {
+      "title": "Reset password",
+      "backToLogin": "Back to sign in",
+      "step1Title": "Forgot your password?",
+      "step1Description": "Enter your email address and we'll send you a code to reset your password.",
+      "step1Submit": "Send reset code",
+      "step1Sent": "A reset code was sent to {{email}} if that address is registered.",
+      "step2Title": "Enter your reset code",
+      "step2Description": "Enter the 6-digit code we sent to {{email}} and choose a new password.",
+      "codeLabel": "Reset code",
+      "codePlaceholder": "123456",
+      "codeRequired": "Code is required",
+      "newPasswordLabel": "New password",
+      "newPasswordRequired": "New password is required",
+      "newPasswordMinLength": "Minimum 8 characters",
+      "step2Submit": "Reset password",
+      "successTitle": "Password reset",
+      "successMessage": "Your password has been reset. All sessions have been signed out. Please sign in again.",
+      "signIn": "Sign in",
+      "failed": "Reset failed. Please try again.",
+      "tooManyRequests": "Too many attempts. Please wait before trying again.",
+      "resendCode": "Resend code",
+      "resendSent": "A new code has been sent.",
+      "codeIncomplete": "Please enter the complete 6-digit code."
     },
     "signup": {
       "title": "Create account",
@@ -69,7 +95,9 @@
       "newTask": "New task",
       "editTask": "Edit task",
       "saveChanges": "Save changes",
-      "createTask": "Create task"
+      "createTask": "Create task",
+      "modeQuick": "Quick",
+      "modeAI": "AI Parse"
     },
     "card": {
       "due": "Due {{date}}",
@@ -147,7 +175,8 @@
   "search": {
     "placeholder": "Search tasks...",
     "filterPlaceholder": "Filter tasks...",
-    "noResults": "No results"
+    "noResults": "No results",
+    "semanticLabel": "Semantic · ranked by meaning"
   },
   "editLists": {
     "title": "Edit Lists",
@@ -200,10 +229,42 @@
     "noplan": "No plan yet for today. Hit Generate to get AI-powered prioritization.",
     "askingClaude": "Asking Claude",
     "showLess": "▲ Show less",
-    "showMore": "▼ Show {{count}} more"
+    "showMore": "▼ Show {{count}} more",
+    "tasksRanked_one": "{{count}} task ranked",
+    "tasksRanked_other": "{{count}} tasks ranked",
+    "noPlanShort": "No plan yet",
+    "toggle": "Toggle daily plan"
   },
   "account": {
     "title": "Account",
+    "password": {
+      "title": "Password",
+      "description": "Change your account password",
+      "reset": "Reset password",
+      "resetDescription": "We'll email you a code to reset your password.",
+      "resetSuccess": "Password reset. You've been signed out of all sessions.",
+      "resetFailed": "Password reset failed. Please try again.",
+      "tooManyRequests": "Too many attempts. Please wait before trying again.",
+      "noPasswordSet": "You signed in with a social account. Use 'Reset password' to set a password.",
+      "prefillDescription": "We'll send the code to {{email}}."
+    },
+    "emailVerify": {
+      "title": "Email verification",
+      "verified": "Your email is verified.",
+      "unverified": "Your email is not verified.",
+      "unverifiedDescription": "Verify your email to improve account security.",
+      "requestCode": "Send verification code",
+      "codeSent": "A code was sent to your email.",
+      "codeLabel": "Verification code",
+      "codePlaceholder": "123456",
+      "codeRequired": "Code is required",
+      "confirm": "Verify",
+      "verifySuccess": "Email verified!",
+      "verifyFailed": "Verification failed. Please try again.",
+      "requestFailed": "Could not send code. Please try again.",
+      "alreadyVerified": "Email is already verified.",
+      "tooManyRequests": "Please wait before requesting another code."
+    },
     "language": {
       "title": "Language",
       "en": "English",

@@ -19,3 +19,11 @@ export async function refresh(): Promise<{ access_token: string }> {
 export async function logout(): Promise<void> {
   await api.post('/api/v1/auth/logout')
 }
+
+export async function requestPasswordReset(email: string): Promise<void> {
+  await api.post('/api/v1/auth/password/forgot', { email })
+}
+
+export async function resetPassword(email: string, code: string, newPassword: string): Promise<void> {
+  await api.post('/api/v1/auth/password/reset', { email, code, new_password: newPassword })
+}

@@ -26,12 +26,50 @@ func (h *AccountHandler) Me(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
-	jsonOK(w, map[string]string{
-		"user_id":  resp.User.UserId,
-		"email":    resp.User.Email,
-		"name":     resp.User.Name,
-		"language": resp.User.Language,
+	jsonOK(w, map[string]any{
+		"user_id":        resp.User.UserId,
+		"email":          resp.User.Email,
+		"name":           resp.User.Name,
+		"language":       resp.User.Language,
+		"email_verified": resp.User.EmailVerified,
 	})
+}
+
+// POST /api/v1/account/email/verify/request
+func (h *AccountHandler) RequestEmailVerification(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromContext(r.Context())
+
+	_, err := h.client.RequestEmailVerification(r.Context(), &authv1.RequestEmailVerificationRequest{
+		UserId: userID,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /api/v1/account/email/verify/confirm
+func (h *AccountHandler) ConfirmEmail(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromContext(r.Context())
+
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	_, err := h.client.ConfirmEmail(r.Context(), &authv1.ConfirmEmailRequest{
+		UserId: userID,
+		Code:   req.Code,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // PATCH /api/v1/account/language
