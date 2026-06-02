@@ -44,6 +44,19 @@ service AuthService {
   rpc RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse);
   // ConfirmEmail verifies the OTP code and marks the user's email as verified.
   rpc ConfirmEmail(ConfirmEmailRequest) returns (ConfirmEmailResponse);
+
+  // RedeemPromoCode validates and redeems a promo code for the given user,
+  // activating a lifetime pro subscription.
+  rpc RedeemPromoCode(RedeemPromoCodeRequest) returns (RedeemPromoCodeResponse);
+  // GetSubscription returns the current subscription state for a user.
+  rpc GetSubscription(GetSubscriptionRequest) returns (GetSubscriptionResponse);
+  // CreateStripeCheckoutSession creates a Stripe Checkout Session and returns
+  // the redirect URL. The caller should redirect the user's browser there.
+  rpc CreateStripeCheckoutSession(CreateStripeCheckoutSessionRequest) returns (CreateStripeCheckoutSessionResponse);
+  // HandleStripeWebhook processes a verified Stripe webhook event.
+  // The gateway forwards the raw payload + Stripe-Signature header here;
+  // auth-service verifies the signature and updates subscription state.
+  rpc HandleStripeWebhook(HandleStripeWebhookRequest) returns (HandleStripeWebhookResponse);
 }
 
 // ── Client info ───────────────────────────────────────────────────────────────
@@ -129,16 +142,15 @@ message ValidateTokenRequest {
 }
 
 message ValidateTokenResponse {
-  string user_id        = 1;
-  string email          = 2;
-  string session_id     = 3;
-  string language       = 4;
-  bool   email_verified = 5;
+  string user_id            = 1;
+  string email              = 2;
+  string session_id         = 3;
+  string language           = 4;
+  bool   email_verified     = 5;
+  string subscription_plan  = 6; // "free" | "pro"
 }
 
 // ── ListUserIDs ───────────────────────────────────────────────────────────────
-
-message ListUserIDsRequest {}
 
 message UserSummary {
   string user_id        = 1;
@@ -146,6 +158,13 @@ message UserSummary {
   string name           = 3;
   string language       = 4;
   bool   email_verified = 5;
+  string plan           = 6; // "free" | "pro"
+}
+
+message ListUserIDsRequest {
+  // plan_filter restricts results to users on the given plan.
+  // Empty string returns all users.
+  string plan_filter = 1;
 }
 
 message ListUserIDsResponse {
@@ -261,3 +280,51 @@ message ConfirmEmailRequest {
 }
 
 message ConfirmEmailResponse {}
+
+// ── RedeemPromoCode ───────────────────────────────────────────────────────────
+
+message RedeemPromoCodeRequest {
+  string user_id = 1;
+  string email   = 2; // used to validate user-specific codes
+  string code    = 3;
+}
+
+message RedeemPromoCodeResponse {
+  string plan = 1; // resulting plan after redemption ("pro")
+}
+
+// ── GetSubscription ───────────────────────────────────────────────────────────
+
+message GetSubscriptionRequest {
+  string user_id = 1;
+}
+
+message SubscriptionInfo {
+  string plan       = 1; // "free" | "pro"
+  string source     = 2; // "promo_code" | "stripe" | ""
+  bool   is_active  = 3;
+}
+
+message GetSubscriptionResponse {
+  SubscriptionInfo subscription = 1;
+}
+
+// ── CreateStripeCheckoutSession ───────────────────────────────────────────────
+
+message CreateStripeCheckoutSessionRequest {
+  string user_id = 1;
+  string email   = 2;
+}
+
+message CreateStripeCheckoutSessionResponse {
+  string checkout_url = 1;
+}
+
+// ── HandleStripeWebhook ───────────────────────────────────────────────────────
+
+message HandleStripeWebhookRequest {
+  bytes  payload   = 1; // raw Stripe event body
+  string signature = 2; // Stripe-Signature header value
+}
+
+message HandleStripeWebhookResponse {}

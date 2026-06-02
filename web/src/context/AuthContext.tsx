@@ -2,6 +2,7 @@ import { createContext, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as authApi from '@/api/auth'
 import * as accountApi from '@/api/account'
+import * as subscriptionApi from '@/api/subscription'
 import { setToken, setOnUnauthenticated } from '@/api/client'
 import i18n from '@/i18n/config'
 
@@ -22,6 +23,7 @@ interface AuthState {
   email: string | null
   emailVerified: boolean
   isInitializing: boolean
+  plan: 'free' | 'pro'
 }
 
 interface AuthContextValue extends Omit<AuthState, 'accessToken'> {
@@ -30,6 +32,7 @@ interface AuthContextValue extends Omit<AuthState, 'accessToken'> {
   signup: (email: string, password: string, name: string) => Promise<void>
   logout: () => Promise<void>
   setEmailVerified: () => void
+  refreshPlan: () => Promise<void>
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)
@@ -41,6 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     email: null,
     emailVerified: false,
     isInitializing: true,
+    plan: 'free',
   })
   const navigate = useNavigate()
   // Avoid registering navigate on every render
@@ -52,38 +56,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setOnUnauthenticated(() => navigateRef.current('/login'))
   }, [])
 
+  async function fetchPlan() {
+    try {
+      const sub = await subscriptionApi.getSubscription()
+      setState((s) => ({ ...s, plan: sub.plan }))
+    } catch {
+      // Non-fatal — default stays 'free'
+    }
+  }
+
   // On mount: try to restore the session using the HttpOnly refresh cookie.
   useEffect(() => {
     authApi
       .refresh()
       .then((res) => {
         setToken(res.access_token)
-        setState({ accessToken: res.access_token, userId: null, email: jwtEmail(res.access_token), emailVerified: false, isInitializing: false })
+        setState({ accessToken: res.access_token, userId: null, email: jwtEmail(res.access_token), emailVerified: false, isInitializing: false, plan: 'free' })
         // Reconcile language + email_verified from DB.
         accountApi.getMe().then((me) => {
           if (me.language && me.language !== i18n.language) i18n.changeLanguage(me.language)
           setState((s) => ({ ...s, emailVerified: me.email_verified }))
         }).catch(() => { /* non-fatal */ })
+        fetchPlan()
       })
       .catch(() => {
-        setState({ accessToken: null, userId: null, email: null, emailVerified: false, isInitializing: false })
+        setState({ accessToken: null, userId: null, email: null, emailVerified: false, isInitializing: false, plan: 'free' })
       })
   }, [])
 
   async function login(email: string, password: string) {
     const res = await authApi.login(email, password)
     setToken(res.access_token)
-    setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), emailVerified: false, isInitializing: false })
+    setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), emailVerified: false, isInitializing: false, plan: 'free' })
     accountApi.getMe().then((me) => {
       if (me.language && me.language !== i18n.language) i18n.changeLanguage(me.language)
       setState((s) => ({ ...s, emailVerified: me.email_verified }))
     }).catch(() => { /* non-fatal */ })
+    fetchPlan()
   }
 
   async function signup(email: string, password: string, name: string) {
     const res = await authApi.signup(email, password, name)
     setToken(res.access_token)
-    setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), emailVerified: false, isInitializing: false })
+    setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), emailVerified: false, isInitializing: false, plan: 'free' })
+    // New signups start on free plan — no need to fetch
   }
 
   async function logout() {
@@ -91,13 +107,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await authApi.logout()
     } finally {
       setToken(null)
-      setState({ accessToken: null, userId: null, email: null, emailVerified: false, isInitializing: false })
+      setState({ accessToken: null, userId: null, email: null, emailVerified: false, isInitializing: false, plan: 'free' })
       navigateRef.current('/login')
     }
   }
 
   function setEmailVerified() {
     setState((s) => ({ ...s, emailVerified: true }))
+  }
+
+  async function refreshPlan() {
+    await fetchPlan()
   }
 
   return (
@@ -108,10 +128,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         emailVerified: state.emailVerified,
         isInitializing: state.isInitializing,
         isAuthenticated: state.accessToken !== null,
+        plan: state.plan,
         login,
         signup,
         logout,
         setEmailVerified,
+        refreshPlan,
       }}
     >
       {children}

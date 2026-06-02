@@ -12,6 +12,7 @@ import (
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"google.golang.org/grpc"
 )
 
 // Consumer listens for task.created events and enriches each new task with a
@@ -210,7 +211,12 @@ func buildHistory(open, done []*todov1.Task, now time.Time) []HistoryTask {
 // Runs once at startup in a background goroutine. Tasks with a non-empty
 // insight are considered already scored and are skipped.
 func (c *Consumer) Backfill(ctx context.Context) {
-	usersResp, err := c.authClient.ListUserIDs(ctx, &authv1.ListUserIDsRequest{})
+	// Give auth up to 2 minutes to become ready. WaitForReady retries
+	// Unavailable errors automatically so a pod-startup race doesn't
+	// permanently skip the backfill.
+	bCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	usersResp, err := c.authClient.ListUserIDs(bCtx, &authv1.ListUserIDsRequest{}, grpc.WaitForReady(true))
 	if err != nil {
 		c.log.Error("scorer backfill: list users", "err", err)
 		return

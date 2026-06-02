@@ -26,6 +26,7 @@ export function LoginPage() {
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>()
 
@@ -35,8 +36,20 @@ export function LoginPage() {
       await login(values.email, values.password)
       navigate('/')
     } catch (err) {
-      if (axios.isAxiosError(err) && err.response?.data?.error) {
-        setApiError(err.response.data.error as string)
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status
+        const msg = err.response?.data?.error as string | undefined
+        if (status === 401) {
+          // "no password set…" means the account was created via OAuth
+          const key = msg?.includes('password set')
+            ? 'auth.login.oauthAccount'
+            : 'auth.login.invalidCredentials'
+          setError('password', { message: t(key) })
+        } else if (status === 429) {
+          setApiError(t('auth.login.tooManyRequests'))
+        } else {
+          setApiError(t('auth.login.failed'))
+        }
       } else {
         setApiError(t('auth.login.failed'))
       }

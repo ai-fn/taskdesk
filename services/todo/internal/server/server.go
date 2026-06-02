@@ -701,14 +701,23 @@ func (s *Server) SearchTasks(ctx context.Context, req *todov1.SearchTasksRequest
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
-	if len(req.Embedding) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "embedding is required")
-	}
 	limit := int(req.Limit)
 	if limit <= 0 {
 		limit = 20
 	}
-	tasks, err := s.store.SearchTasksByEmbedding(ctx, req.UserId, req.Embedding, limit)
+
+	var tasks []*domain.Task
+	var err error
+
+	switch {
+	case len(req.Embedding) > 0:
+		tasks, err = s.store.SearchTasksByEmbedding(ctx, req.UserId, req.Embedding, limit)
+	case req.Query != "":
+		tasks, err = s.store.SearchTasksByText(ctx, req.UserId, req.Query, limit)
+	default:
+		return nil, status.Error(codes.InvalidArgument, "embedding or query is required")
+	}
+
 	if err != nil {
 		s.log.Error("search tasks", "user_id", req.UserId, "err", err)
 		return nil, status.Error(codes.Internal, "search failed")

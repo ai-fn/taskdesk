@@ -70,6 +70,18 @@ func (m *minimalAuthClient) RequestEmailVerification(ctx context.Context, in *au
 func (m *minimalAuthClient) ConfirmEmail(ctx context.Context, in *authv1.ConfirmEmailRequest, opts ...grpc.CallOption) (*authv1.ConfirmEmailResponse, error) {
 	panic("not implemented")
 }
+func (m *minimalAuthClient) RedeemPromoCode(ctx context.Context, in *authv1.RedeemPromoCodeRequest, opts ...grpc.CallOption) (*authv1.RedeemPromoCodeResponse, error) {
+	panic("not implemented")
+}
+func (m *minimalAuthClient) GetSubscription(ctx context.Context, in *authv1.GetSubscriptionRequest, opts ...grpc.CallOption) (*authv1.GetSubscriptionResponse, error) {
+	panic("not implemented")
+}
+func (m *minimalAuthClient) CreateStripeCheckoutSession(ctx context.Context, in *authv1.CreateStripeCheckoutSessionRequest, opts ...grpc.CallOption) (*authv1.CreateStripeCheckoutSessionResponse, error) {
+	panic("not implemented")
+}
+func (m *minimalAuthClient) HandleStripeWebhook(ctx context.Context, in *authv1.HandleStripeWebhookRequest, opts ...grpc.CallOption) (*authv1.HandleStripeWebhookResponse, error) {
+	panic("not implemented")
+}
 
 // probe is a simple next handler that captures the context values set by Authenticate.
 type probeResult struct {

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,9 @@ import (
 	"github.com/fsociety/todo/services/auth/internal/store"
 	"github.com/google/uuid"
 	ua "github.com/mileusna/useragent"
+	stripe "github.com/stripe/stripe-go/v82"
+	stripeclient "github.com/stripe/stripe-go/v82/client"
+	"github.com/stripe/stripe-go/v82/webhook"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,17 +39,36 @@ type CodeConfig struct {
 	MaxAttempts    int
 }
 
-type Server struct {
-	authv1.UnimplementedAuthServiceServer
-	store    *store.Store
-	tokens   *tokens.Maker
-	log      *slog.Logger
-	producer *pkgkafka.Producer // nil if Kafka is not configured
-	codeCfg  CodeConfig
+// StripeConfig holds credentials and identifiers for the Stripe integration.
+type StripeConfig struct {
+	SecretKey      string // STRIPE_SECRET_KEY
+	WebhookSecret  string // STRIPE_WEBHOOK_SECRET — used to verify webhook signatures
+	PriceID        string // STRIPE_PRICE_ID — the recurring price to subscribe users to
+	SuccessURL     string // STRIPE_SUCCESS_URL — redirect after successful checkout
+	CancelURL      string // STRIPE_CANCEL_URL  — redirect when user cancels checkout
 }
 
-func New(st *store.Store, tm *tokens.Maker, log *slog.Logger, producer *pkgkafka.Producer, codeCfg CodeConfig) *Server {
-	return &Server{store: st, tokens: tm, log: log, producer: producer, codeCfg: codeCfg}
+type Server struct {
+	authv1.UnimplementedAuthServiceServer
+	store        *store.Store
+	tokens       *tokens.Maker
+	log          *slog.Logger
+	producer     *pkgkafka.Producer // nil if Kafka is not configured
+	codeCfg      CodeConfig
+	stripe       StripeConfig
+	stripeClient *stripeclient.API // per-server Stripe client; avoids mutating stripe.Key global
+}
+
+func New(st *store.Store, tm *tokens.Maker, log *slog.Logger, producer *pkgkafka.Producer, codeCfg CodeConfig, stripeCfg StripeConfig) *Server {
+	return &Server{
+		store:        st,
+		tokens:       tm,
+		log:          log,
+		producer:     producer,
+		codeCfg:      codeCfg,
+		stripe:       stripeCfg,
+		stripeClient: stripeclient.New(stripeCfg.SecretKey, nil),
+	}
 }
 
 // ── SignUp ────────────────────────────────────────────────────────────────────
@@ -219,25 +242,27 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 		s.log.Warn("ValidateToken: get user failed, falling back to language-only", "user_id", claims.UserID, "err", err)
 		lang, _ := s.store.GetUserLanguage(ctx, claims.UserID)
 		return &authv1.ValidateTokenResponse{
-			UserId:    claims.UserID,
-			Email:     claims.Email,
-			SessionId: claims.SessionID,
-			Language:  lang,
+			UserId:           claims.UserID,
+			Email:            claims.Email,
+			SessionId:        claims.SessionID,
+			Language:         lang,
+			SubscriptionPlan: "free",
 		}, nil
 	}
 	return &authv1.ValidateTokenResponse{
-		UserId:        claims.UserID,
-		Email:         claims.Email,
-		SessionId:     claims.SessionID,
-		Language:      user.Language,
-		EmailVerified: user.EmailVerified,
+		UserId:           claims.UserID,
+		Email:            claims.Email,
+		SessionId:        claims.SessionID,
+		Language:         user.Language,
+		EmailVerified:    user.EmailVerified,
+		SubscriptionPlan: user.Plan,
 	}, nil
 }
 
 // ── ListUserIDs ───────────────────────────────────────────────────────────────
 
-func (s *Server) ListUserIDs(ctx context.Context, _ *authv1.ListUserIDsRequest) (*authv1.ListUserIDsResponse, error) {
-	users, err := s.store.ListUsers(ctx)
+func (s *Server) ListUserIDs(ctx context.Context, req *authv1.ListUserIDsRequest) (*authv1.ListUserIDsResponse, error) {
+	users, err := s.store.ListUsers(ctx, req.PlanFilter)
 	if err != nil {
 		s.log.Error("list users", "err", err)
 		return nil, status.Error(codes.Internal, "list users failed")
@@ -250,6 +275,7 @@ func (s *Server) ListUserIDs(ctx context.Context, _ *authv1.ListUserIDsRequest) 
 			Name:          u.Name,
 			Language:      u.Language,
 			EmailVerified: u.EmailVerified,
+			Plan:          u.Plan,
 		})
 	}
 	return resp, nil
@@ -276,6 +302,7 @@ func (s *Server) GetUserByID(ctx context.Context, req *authv1.GetUserByIDRequest
 			Name:          u.Name,
 			Language:      u.Language,
 			EmailVerified: u.EmailVerified,
+			Plan:          u.Plan,
 		},
 	}, nil
 }
@@ -614,6 +641,255 @@ func (s *Server) ConfirmEmail(ctx context.Context, req *authv1.ConfirmEmailReque
 		return nil, status.Error(codes.Internal, "confirm email failed")
 	}
 	return &authv1.ConfirmEmailResponse{}, nil
+}
+
+// ── RedeemPromoCode ───────────────────────────────────────────────────────────
+
+func (s *Server) RedeemPromoCode(ctx context.Context, req *authv1.RedeemPromoCodeRequest) (*authv1.RedeemPromoCodeResponse, error) {
+	if req.UserId == "" || req.Email == "" || req.Code == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id, email and code are required")
+	}
+
+	pc, err := s.store.GetPromoCode(ctx, req.Code)
+	if err != nil {
+		if errors.Is(err, store.ErrPromoCodeNotFound) {
+			return nil, status.Error(codes.NotFound, "promo code not found")
+		}
+		s.log.Error("get promo code", "err", err)
+		return nil, status.Error(codes.Internal, "redeem failed")
+	}
+
+	if pc.Disabled {
+		return nil, status.Error(codes.FailedPrecondition, "promo code is disabled")
+	}
+
+	subID := uuid.New().String()
+	if err := s.store.RedeemPromoCode(ctx, pc, req.UserId, req.Email, subID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrUserHasActiveStripeSubscription):
+			return nil, status.Error(codes.FailedPrecondition, "cancel your active paid subscription before redeeming a promo code")
+		case errors.Is(err, store.ErrPromoCodeDisabled):
+			return nil, status.Error(codes.FailedPrecondition, "promo code is disabled")
+		case errors.Is(err, store.ErrPromoCodeEmailMismatch):
+			return nil, status.Error(codes.PermissionDenied, "promo code is not valid for your account")
+		case errors.Is(err, store.ErrPromoCodeExhausted):
+			return nil, status.Error(codes.ResourceExhausted, "promo code has reached its usage limit")
+		case errors.Is(err, store.ErrPromoCodePerUserLimitReached):
+			return nil, status.Error(codes.AlreadyExists, "you have already used this promo code")
+		default:
+			s.log.Error("redeem promo code", "err", err)
+			return nil, status.Error(codes.Internal, "redeem failed")
+		}
+	}
+
+	s.log.Info("promo code redeemed", "user_id", req.UserId, "code", pc.Code)
+	return &authv1.RedeemPromoCodeResponse{Plan: "pro"}, nil
+}
+
+// ── GetSubscription ───────────────────────────────────────────────────────────
+
+func (s *Server) GetSubscription(ctx context.Context, req *authv1.GetSubscriptionRequest) (*authv1.GetSubscriptionResponse, error) {
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+
+	subs, err := s.store.GetActiveSubscriptions(ctx, req.UserId)
+	if err != nil {
+		s.log.Error("get active subscriptions", "err", err)
+		return nil, status.Error(codes.Internal, "get subscription failed")
+	}
+
+	info := &authv1.SubscriptionInfo{Plan: "free"}
+	if len(subs) > 0 {
+		info.Plan = "pro"
+		info.Source = subs[0].Source
+		info.IsActive = true
+	}
+	return &authv1.GetSubscriptionResponse{Subscription: info}, nil
+}
+
+// ── CreateStripeCheckoutSession ───────────────────────────────────────────────
+
+func (s *Server) CreateStripeCheckoutSession(ctx context.Context, req *authv1.CreateStripeCheckoutSessionRequest) (*authv1.CreateStripeCheckoutSessionResponse, error) {
+	if req.UserId == "" || req.Email == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and email are required")
+	}
+	// Guard: check for an existing Stripe subscription before touching the Stripe
+	// API. Placed before the SecretKey guard so the caller gets a meaningful
+	// AlreadyExists error even when Stripe is mis-configured, and so this logic
+	// can be exercised in integration tests without a live Stripe key.
+	// Promo-code subscriptions do NOT block a user from upgrading via Stripe.
+	existingSubs, err := s.store.GetActiveSubscriptions(ctx, req.UserId)
+	if err != nil {
+		s.log.Error("get active subscriptions for checkout guard", "err", err)
+		return nil, status.Error(codes.Internal, "checkout failed")
+	}
+	for _, sub := range existingSubs {
+		if sub.Source == "stripe" {
+			return nil, status.Error(codes.AlreadyExists, "you already have an active Stripe subscription")
+		}
+	}
+
+	if s.stripe.SecretKey == "" {
+		return nil, status.Error(codes.Unimplemented, "stripe not configured")
+	}
+
+	user, err := s.store.GetUserByID(ctx, req.UserId)
+	if err != nil {
+		s.log.Error("get user for checkout", "err", err)
+		return nil, status.Error(codes.Internal, "checkout failed")
+	}
+
+	// Ensure the user has a Stripe customer record.
+	// Each Stripe API call gets its own 10 s timeout so a slow customer.New
+	// cannot consume the entire budget and starve session.New.
+	customerID := ""
+	if user.StripeCustomerID != nil {
+		customerID = *user.StripeCustomerID
+	} else {
+		customerCtx, customerCancel := context.WithTimeout(ctx, 10*time.Second)
+		defer customerCancel()
+		c, err := s.stripeClient.Customers.New(&stripe.CustomerParams{
+			Params:   stripe.Params{Context: customerCtx},
+			Email:    stripe.String(req.Email),
+			Metadata: map[string]string{"user_id": req.UserId},
+		})
+		if err != nil {
+			s.log.Error("create stripe customer", "err", err)
+			return nil, status.Error(codes.Internal, "checkout failed")
+		}
+		customerID = c.ID
+		if err := s.store.SetStripeCustomerID(ctx, req.UserId, customerID); err != nil {
+			s.log.Error("store stripe customer id", "err", err)
+			// Non-fatal: the customer was created in Stripe; we'll find it via webhook.
+		}
+	}
+
+	sessionCtx, sessionCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer sessionCancel()
+	params := &stripe.CheckoutSessionParams{
+		Params:   stripe.Params{Context: sessionCtx},
+		Customer: stripe.String(customerID),
+		Mode:     stripe.String(string(stripe.CheckoutSessionModeSubscription)),
+		LineItems: []*stripe.CheckoutSessionLineItemParams{
+			{Price: stripe.String(s.stripe.PriceID), Quantity: stripe.Int64(1)},
+		},
+		SuccessURL: stripe.String(s.stripe.SuccessURL),
+		CancelURL:  stripe.String(s.stripe.CancelURL),
+	}
+	sess, err := s.stripeClient.CheckoutSessions.New(params)
+	if err != nil {
+		s.log.Error("create stripe checkout session", "err", err)
+		return nil, status.Error(codes.Internal, "checkout failed")
+	}
+
+	return &authv1.CreateStripeCheckoutSessionResponse{CheckoutUrl: sess.URL}, nil
+}
+
+// ── HandleStripeWebhook ───────────────────────────────────────────────────────
+
+func (s *Server) HandleStripeWebhook(ctx context.Context, req *authv1.HandleStripeWebhookRequest) (*authv1.HandleStripeWebhookResponse, error) {
+	if s.stripe.WebhookSecret == "" {
+		return nil, status.Error(codes.Unimplemented, "stripe not configured")
+	}
+
+	event, err := webhook.ConstructEventWithOptions(req.Payload, req.Signature, s.stripe.WebhookSecret,
+		webhook.ConstructEventOptions{IgnoreAPIVersionMismatch: true})
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid stripe webhook signature")
+	}
+
+	switch event.Type {
+	case "checkout.session.completed":
+		if err := s.handleCheckoutCompleted(ctx, &event); err != nil {
+			s.log.Error("handle checkout.session.completed", "err", err)
+			return nil, status.Error(codes.Internal, "webhook processing failed")
+		}
+	case "customer.subscription.updated":
+		if err := s.handleSubscriptionUpdated(ctx, &event); err != nil {
+			s.log.Error("handle customer.subscription.updated", "err", err)
+			return nil, status.Error(codes.Internal, "webhook processing failed")
+		}
+	case "customer.subscription.deleted":
+		if err := s.handleSubscriptionDeleted(ctx, &event); err != nil {
+			s.log.Error("handle customer.subscription.deleted", "err", err)
+			return nil, status.Error(codes.Internal, "webhook processing failed")
+		}
+	default:
+		// Unhandled event types are not errors — Stripe sends many event types.
+		s.log.Info("unhandled stripe event", "type", event.Type)
+	}
+
+	return &authv1.HandleStripeWebhookResponse{}, nil
+}
+
+func (s *Server) handleCheckoutCompleted(ctx context.Context, event *stripe.Event) error {
+	var sess stripe.CheckoutSession
+	if err := json.Unmarshal(event.Data.Raw, &sess); err != nil {
+		return fmt.Errorf("unmarshal checkout session: %w", err)
+	}
+	if sess.Subscription == nil || sess.Customer == nil {
+		return nil
+	}
+
+	user, err := s.store.GetUserByStripeCustomerID(ctx, sess.Customer.ID)
+	if err != nil {
+		return fmt.Errorf("get user by stripe customer id %s: %w", sess.Customer.ID, err)
+	}
+
+	sub := &domain.Subscription{
+		ID:        uuid.New().String(),
+		UserID:    user.ID,
+		Plan:      "pro",
+		Source:    "stripe",
+		SourceRef: sess.Subscription.ID,
+		Status:    "active",
+		StartedAt: time.Now().UTC(),
+	}
+	if err := s.store.CreateSubscriptionAndSetPlan(ctx, sub, "pro"); err != nil {
+		if errors.Is(err, store.ErrSubscriptionAlreadyExists) {
+			s.log.Info("stripe checkout already processed (db constraint)", "subscription_id", sess.Subscription.ID)
+			return nil
+		}
+		return fmt.Errorf("create subscription and set plan: %w", err)
+	}
+	s.log.Info("stripe subscription activated", "user_id", user.ID, "subscription_id", sess.Subscription.ID)
+	return nil
+}
+
+func (s *Server) handleSubscriptionUpdated(ctx context.Context, event *stripe.Event) error {
+	var sub stripe.Subscription
+	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
+		return fmt.Errorf("unmarshal subscription: %w", err)
+	}
+	// Active and trialing statuses keep the user on pro; anything else cancels.
+	if sub.Status == stripe.SubscriptionStatusActive || sub.Status == stripe.SubscriptionStatusTrialing {
+		return nil
+	}
+	return s.cancelStripeSubscription(ctx, sub.ID)
+}
+
+func (s *Server) handleSubscriptionDeleted(ctx context.Context, event *stripe.Event) error {
+	var sub stripe.Subscription
+	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
+		return fmt.Errorf("unmarshal subscription: %w", err)
+	}
+	return s.cancelStripeSubscription(ctx, sub.ID)
+}
+
+func (s *Server) cancelStripeSubscription(ctx context.Context, stripeSubID string) error {
+	userID, err := s.store.CancelSubscriptionBySourceRef(ctx, stripeSubID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil // already cancelled or unknown — safe to ignore
+		}
+		return fmt.Errorf("cancel subscription %s: %w", stripeSubID, err)
+	}
+	if err := s.store.RecalculateUserPlan(ctx, userID); err != nil {
+		return fmt.Errorf("recalculate plan for user %s: %w", userID, err)
+	}
+	s.log.Info("stripe subscription cancelled", "user_id", userID, "subscription_id", stripeSubID)
+	return nil
 }
 
 // ── OTP helpers ───────────────────────────────────────────────────────────────

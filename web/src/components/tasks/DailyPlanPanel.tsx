@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { usePlan, useGeneratePlan } from '@/hooks/usePlan'
 import { Spinner } from '@/components/ui/Spinner'
+import { PaywallModal } from '@/components/ui/PaywallModal'
+import { useAuth } from '@/hooks/useAuth'
 import { toBCP47 } from '@/i18n/config'
 
 const LS_KEY = 'dailyPlanCollapsed'
@@ -18,25 +20,74 @@ function useDots(active: boolean) {
 
 export function DailyPlanPanel() {
   const { t, i18n } = useTranslation()
+  const { plan: userPlan } = useAuth()
   const { data, isLoading } = usePlan()
   const generate = useGeneratePlan()
   const [expanded, setExpanded] = useState(false)
+  const [paywallOpen, setPaywallOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem(LS_KEY) !== 'false' } catch { return true }
   })
   const dots = useDots(generate.isPending)
 
-  const plan = data?.plan
-
-  // Auto-expand when generation starts
+  // Must be declared before any early return to satisfy Rules of Hooks.
   useEffect(() => {
     if (generate.isPending) setCollapsed(false)
   }, [generate.isPending])
 
-  // Persist collapse state
   useEffect(() => {
     try { localStorage.setItem(LS_KEY, String(collapsed)) } catch { /* ignore */ }
   }, [collapsed])
+
+  // Render locked teaser for free-plan users
+  if (userPlan !== 'pro') {
+    return (
+      <>
+        <div
+          className="group relative mb-6 cursor-pointer select-none overflow-hidden rounded-xl border border-indigo-100 bg-gradient-to-b from-indigo-50/80 to-white/40 transition-all duration-200 hover:border-indigo-200 hover:shadow-md hover:shadow-indigo-100/60 dark:border-indigo-900/40 dark:from-indigo-950/30 dark:to-gray-900/20 dark:hover:border-indigo-800/60 dark:hover:shadow-indigo-950/40"
+          onClick={() => setPaywallOpen(true)}
+          role="button"
+          tabIndex={0}
+          aria-label={t('paywall.proFeature')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setPaywallOpen(true) }}
+        >
+          {/* Header row — fully legible, no blur */}
+          <div className="flex min-w-0 w-full items-center gap-2 px-4 py-3">
+            <span className="shrink-0 text-indigo-400 dark:text-indigo-500 text-sm">✦</span>
+            <span className="truncate font-semibold text-indigo-900/80 dark:text-indigo-300/70 text-sm">{t('plan.title')}</span>
+            <span className="shrink-0 ml-auto inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-white/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-indigo-400 dark:border-indigo-800/60 dark:bg-indigo-950/60 dark:text-indigo-500">
+              Pro
+            </span>
+          </div>
+
+          {/* Skeleton content suggesting plan text */}
+          <div className="space-y-2 px-4 pb-2">
+            <div className="h-1.5 w-[78%] animate-pulse rounded-full bg-indigo-100 dark:bg-indigo-900/50" />
+            <div className="h-1.5 w-[55%] animate-pulse rounded-full bg-indigo-100/70 dark:bg-indigo-900/35" style={{ animationDelay: '150ms' }} />
+            <div className="h-1.5 w-[65%] animate-pulse rounded-full bg-indigo-100/50 dark:bg-indigo-900/25" style={{ animationDelay: '300ms' }} />
+          </div>
+
+          {/* Bottom gradient mask */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-white/60 to-transparent dark:from-gray-900/40" />
+
+          {/* Upgrade CTA strip */}
+          <div className="flex items-center justify-center gap-1.5 border-t border-indigo-100/60 px-4 py-2.5 dark:border-indigo-900/30">
+            <span className="whitespace-nowrap text-[11px] font-medium text-indigo-400 transition-colors group-hover:text-indigo-600 dark:text-indigo-500 dark:group-hover:text-indigo-300">
+              {t('paywall.unlockFeature')}
+            </span>
+            <svg className="h-3 w-3 translate-x-0 text-indigo-400 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-indigo-600 dark:text-indigo-500 dark:group-hover:text-indigo-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
+          </div>
+        </div>
+        {paywallOpen && (
+          <PaywallModal onClose={() => setPaywallOpen(false)} featureName={t('plan.title')} />
+        )}
+      </>
+    )
+  }
+
+  const plan = data?.plan
 
   // Teaser text shown in collapsed bar
   function teaserText() {
@@ -53,10 +104,10 @@ export function DailyPlanPanel() {
         onClick={() => setCollapsed((v) => !v)}
         aria-expanded={!collapsed}
         aria-label={t('plan.toggle')}
-        className="flex w-full items-center gap-2 px-4 py-3 text-left"
+        className="flex min-w-0 w-full items-center gap-2 px-4 py-3 text-left"
       >
         <span className="shrink-0 text-indigo-500 dark:text-indigo-400 text-sm select-none">✦</span>
-        <span className="font-semibold text-indigo-900 dark:text-indigo-300 text-sm">{t('plan.title')}</span>
+        <span className="shrink-0 font-semibold text-indigo-900 dark:text-indigo-300 text-sm">{t('plan.title')}</span>
 
         {/* Teaser / loading indicator */}
         {isLoading ? (

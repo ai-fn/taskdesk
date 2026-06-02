@@ -282,10 +282,16 @@ func handleGRPCError(w http.ResponseWriter, err error) {
 		jsonError(w, st.Message(), http.StatusUnauthorized)
 	case codes.NotFound:
 		jsonError(w, st.Message(), http.StatusNotFound)
+	case codes.PermissionDenied:
+		jsonError(w, st.Message(), http.StatusForbidden)
+	case codes.FailedPrecondition:
+		jsonError(w, st.Message(), http.StatusUnprocessableEntity)
 	case codes.ResourceExhausted:
 		jsonError(w, st.Message(), http.StatusTooManyRequests)
 	case codes.Unavailable:
 		jsonError(w, "service unavailable", http.StatusServiceUnavailable)
+	case codes.Unimplemented:
+		jsonError(w, st.Message(), http.StatusNotImplemented)
 	default:
 		jsonError(w, "internal error", http.StatusInternalServerError)
 	}

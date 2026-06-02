@@ -1,9 +1,10 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { listTasks, searchTasks } from '@/api/tasks'
 import { taskKeys } from '@/api/queryKeys'
+import { useAuth } from '@/hooks/useAuth'
 import type { Task, TaskList } from '@/types'
 
 function scoreColor(score: number) {
@@ -21,6 +22,7 @@ interface Props {
 
 export function SearchBar({ lists }: Props) {
   const { t } = useTranslation()
+  const { plan } = useAuth()
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [isOpen, setIsOpen] = useState(false)
@@ -109,7 +111,7 @@ export function SearchBar({ lists }: Props) {
 
   return (
     <div ref={containerRef} className="relative mb-6">
-      <div className="flex items-center gap-2 rounded-xl bg-white dark:bg-gray-800 px-4 py-2.5 shadow-sm ring-1 ring-transparent focus-within:ring-indigo-400/60 transition-shadow">
+      <div className="flex min-w-0 items-center gap-2 rounded-xl bg-white dark:bg-gray-800 px-3 py-2.5 shadow-sm ring-1 ring-transparent focus-within:ring-indigo-400/60 transition-shadow">
         <span className="shrink-0 text-gray-400">
           {isSearching ? (
             <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -130,7 +132,7 @@ export function SearchBar({ lists }: Props) {
           onFocus={() => setIsOpen(true)}
           onKeyDown={handleKeyDown}
           placeholder={t('search.placeholder')}
-          className="flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400 dark:placeholder:text-gray-500 text-gray-900 dark:text-gray-100"
+          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400 dark:placeholder:text-gray-500 text-gray-900 dark:text-gray-100"
         />
         {query && (
           <button
@@ -147,12 +149,24 @@ export function SearchBar({ lists }: Props) {
 
       {showDropdown && (
         <div className="absolute left-0 right-0 top-full mt-1.5 z-50 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-xl overflow-hidden animate-dropdown-in origin-top">
-          {isSemantic && (
+          {isSemantic && plan === 'pro' && (
             <div className="flex items-center gap-1.5 border-b border-gray-100 dark:border-gray-700 bg-indigo-50/60 dark:bg-indigo-950/20 px-3 py-1.5 text-xs text-indigo-500 dark:text-indigo-400">
               <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
               </svg>
               {t('search.semanticLabel')}
+            </div>
+          )}
+          {isSemantic && plan !== 'pro' && (
+            <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700/60 px-3 py-1.5">
+              <span className="text-xs text-gray-400 dark:text-gray-500">{t('search.fulltextLabel')}</span>
+              <Link
+                to="/upgrade"
+                onMouseDown={(e) => e.preventDefault()}
+                className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-indigo-400 transition-colors hover:text-indigo-600 dark:text-indigo-500 dark:hover:text-indigo-300"
+              >
+                ✦ {t('search.semanticUpgrade')}
+              </Link>
             </div>
           )}
 

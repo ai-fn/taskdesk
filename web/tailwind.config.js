@@ -4,6 +4,9 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      fontFamily: {
+        'serif-display': ['"DM Serif Display"', 'Georgia', 'serif'],
+      },
       keyframes: {
         fadeIn: {
           '0%': { opacity: '0', transform: 'translateY(2px)' },
@@ -45,6 +48,14 @@ export default {
           '0%': { opacity: '0', transform: 'translateY(5px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
+        twinkle: {
+          '0%, 100%': { opacity: '0', transform: 'scale(0.4) rotate(0deg)' },
+          '50%': { opacity: '1', transform: 'scale(1) rotate(180deg)' },
+        },
+        floatUp: {
+          '0%': { opacity: '0', transform: 'translateY(20px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
       },
       animation: {
         'fade-in':        'fadeIn 280ms ease-out both',
@@ -57,6 +68,9 @@ export default {
         'slide-out-right':'slideOutRight 260ms cubic-bezier(0.4, 0, 1, 1) both',
         'dropdown-in':    'dropdownIn 140ms cubic-bezier(0.16, 1, 0.3, 1) both',
         'tab-in':         'tabIn 160ms cubic-bezier(0.16, 1, 0.3, 1) both',
+        'twinkle':        'twinkle 2.4s ease-in-out infinite',
+        'twinkle-delay':  'twinkle 2.4s ease-in-out 0.8s infinite',
+        'float-up':       'floatUp 500ms cubic-bezier(0.16, 1, 0.3, 1) both',
       },
     },
   },

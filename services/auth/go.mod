@@ -65,6 +65,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.25.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
+	github.com/stripe/stripe-go/v82 v82.5.1 // indirect
 	github.com/testcontainers/testcontainers-go v0.37.0 // indirect
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.37.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect

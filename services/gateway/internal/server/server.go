@@ -98,21 +98,39 @@ func New(
 		r.Delete("/{groupID}",  groups.Delete)
 	})
 
-	// Daily plan (AI-generated)
+	// Daily plan (AI-generated) — pro only
 	plan := handler.NewPlanHandler(aiClient)
 	r.Route("/api/v1/plan", func(r chi.Router) {
 		r.Use(middleware.Authenticate(authClient))
+		r.Use(middleware.RequirePlan("pro"))
 		r.Get("/", plan.GetLatest)
 		r.Post("/generate", plan.Generate)
 	})
 
-	// Semantic search (pgvector)
+	// Semantic search (pgvector) — available to all; pro uses vector, free uses fulltext.
 	search := handler.NewSearchHandler(aiClient, todoClient)
 	r.With(middleware.Authenticate(authClient)).Get("/api/v1/tasks/search", search.Search)
 
-	// Natural language task parsing
+	// Natural language task parsing — pro only
 	parseH := handler.NewParseHandler(aiClient)
-	r.With(middleware.Authenticate(authClient)).Post("/api/v1/tasks/parse", parseH.Parse)
+	r.Route("/api/v1/tasks/parse", func(r chi.Router) {
+		r.Use(middleware.Authenticate(authClient))
+		r.Use(middleware.RequirePlan("pro"))
+		r.Post("/", parseH.Parse)
+	})
+
+	// Subscriptions
+	sub := handler.NewSubscriptionHandler(authClient)
+	r.Route("/api/v1/subscriptions", func(r chi.Router) {
+		r.Use(middleware.Authenticate(authClient))
+		r.Get("/", sub.GetSubscription)
+		r.Post("/redeem", sub.RedeemPromoCode)
+		r.Post("/checkout", sub.CreateCheckout)
+	})
+
+	// Stripe webhook — no auth middleware; Stripe signs the payload itself.
+	stripeH := handler.NewStripeWebhookHandler(authClient)
+	r.Post("/api/v1/stripe/webhook", stripeH.Handle)
 
 	sessions := handler.NewSessionsHandler(authClient)
 	r.Route("/api/v1/sessions", func(r chi.Router) {

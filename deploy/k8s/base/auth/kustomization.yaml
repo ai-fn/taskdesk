@@ -5,6 +5,12 @@ resources:
   - deployment.yaml
   - service.yaml
   - secret.yaml
+# Stripe secrets generated from local .env (gitignored).
+# Copy .env.example → .env and fill in values before `tilt up`.
+secretGenerator:
+  - name: auth-stripe-secret
+    envs:
+      - .env
 configMapGenerator:
   - name: auth-migrations
     files:
@@ -18,5 +24,13 @@ configMapGenerator:
       - 000004_user_language.down.sql
       - 000005_email_verify.up.sql
       - 000005_email_verify.down.sql
+      - 000006_subscription_plan.up.sql
+      - 000006_subscription_plan.down.sql
+      - 000007_subscriptions.up.sql
+      - 000007_subscriptions.down.sql
+      - 000008_promo_codes.up.sql
+      - 000008_promo_codes.down.sql
+      - 000009_subscriptions_source_ref_unique.up.sql
+      - 000009_subscriptions_source_ref_unique.down.sql
 generatorOptions:
   disableNameSuffixHash: true

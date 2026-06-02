@@ -14,6 +14,7 @@ import (
 	"github.com/fsociety/todo/services/auth/internal/store"
 	"github.com/fsociety/todo/services/auth/internal/testutil"
 	"github.com/jackc/pgx/v5/pgxpool"
+	stripewebhook "github.com/stripe/stripe-go/v82/webhook"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -50,7 +51,7 @@ func newServer(t *testing.T) (*server.Server, *tokens.Maker) {
 		TTL:            10 * time.Minute,
 		ResendCooldown: 3 * time.Minute,
 		MaxAttempts:    3,
-	}), maker
+	}, server.StripeConfig{}), maker
 }
 
 func grpcCode(err error) codes.Code {
@@ -517,5 +518,199 @@ func TestResetPassword_RejectsReuse(t *testing.T) {
 	}
 	if msg := status.Convert(err).Message(); !strings.Contains(msg, "different") {
 		t.Errorf("expected reuse message, got %q", msg)
+	}
+}
+
+// ── CreateStripeCheckoutSession ───────────────────────────────────────────────
+
+// insertActiveSubscription seeds an active subscription row for the given user
+// directly via testPool. auth.subscriptions is FK-referenced from auth.users,
+// so the CASCADE truncation in newServer cleans it up between tests automatically.
+func insertActiveSubscription(t *testing.T, userID, source string) {
+	t.Helper()
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO auth.subscriptions
+			(id, user_id, plan, source, source_ref, status, started_at, created_at, updated_at)
+		VALUES
+			(gen_random_uuid()::text, $1, 'pro', $2, gen_random_uuid()::text, 'active', NOW(), NOW(), NOW())`,
+		userID, source,
+	)
+	if err != nil {
+		t.Fatalf("insertActiveSubscription(%q, %q): %v", userID, source, err)
+	}
+}
+
+// TestCreateStripeCheckoutSession_StripeSubBlocks verifies that a user who
+// already has an active Stripe subscription is rejected with AlreadyExists.
+func TestCreateStripeCheckoutSession_StripeSubBlocks(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "stripe-existing@test.com", "Passw0rd1", "Stripe User")
+
+	insertActiveSubscription(t, su.UserId, "stripe")
+
+	_, err := svc.CreateStripeCheckoutSession(context.Background(), &authv1.CreateStripeCheckoutSessionRequest{
+		UserId: su.UserId,
+		Email:  "stripe-existing@test.com",
+	})
+	if grpcCode(err) != codes.AlreadyExists {
+		t.Errorf("existing Stripe sub: want AlreadyExists, got %v", err)
+	}
+}
+
+// TestCreateStripeCheckoutSession_PromoSubDoesNotBlock verifies that a promo-code
+// subscription does NOT prevent the user from starting a Stripe checkout.
+// Stripe is not configured in tests, so the call proceeds past the guard and
+// hits the Unimplemented sentinel — not AlreadyExists.
+func TestCreateStripeCheckoutSession_PromoSubDoesNotBlock(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "promo-existing@test.com", "Passw0rd1", "Promo User")
+
+	insertActiveSubscription(t, su.UserId, "promo_code")
+
+	_, err := svc.CreateStripeCheckoutSession(context.Background(), &authv1.CreateStripeCheckoutSessionRequest{
+		UserId: su.UserId,
+		Email:  "promo-existing@test.com",
+	})
+	if grpcCode(err) == codes.AlreadyExists {
+		t.Error("promo subscription must not block Stripe checkout; got AlreadyExists")
+	}
+	if grpcCode(err) != codes.Unimplemented {
+		t.Errorf("want Unimplemented (stripe not configured), got %v", err)
+	}
+}
+
+// TestCreateStripeCheckoutSession_NoSubReachesStripeGate verifies that a user
+// with no subscriptions passes the guard and reaches the Stripe-not-configured
+// sentinel (not AlreadyExists).
+func TestCreateStripeCheckoutSession_NoSubReachesStripeGate(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "nosub-checkout@test.com", "Passw0rd1", "No Sub")
+
+	_, err := svc.CreateStripeCheckoutSession(context.Background(), &authv1.CreateStripeCheckoutSessionRequest{
+		UserId: su.UserId,
+		Email:  "nosub-checkout@test.com",
+	})
+	if grpcCode(err) != codes.Unimplemented {
+		t.Errorf("no subscription: want Unimplemented, got %v", err)
+	}
+}
+
+// TestCreateStripeCheckoutSession_MissingFields verifies validation fires before
+// any DB or Stripe call.
+func TestCreateStripeCheckoutSession_MissingFields(t *testing.T) {
+	svc, _ := newServer(t)
+	cases := []struct{ userID, email string }{
+		{"", "a@b.com"},
+		{"user-1", ""},
+	}
+	for _, tc := range cases {
+		_, err := svc.CreateStripeCheckoutSession(context.Background(), &authv1.CreateStripeCheckoutSessionRequest{
+			UserId: tc.userID,
+			Email:  tc.email,
+		})
+		if grpcCode(err) != codes.InvalidArgument {
+			t.Errorf("missing(%q,%q): want InvalidArgument, got %v", tc.userID, tc.email, err)
+		}
+	}
+}
+
+// ── ListUserIDs filter (Bug #3 regression) ────────────────────────────────────
+
+// TestListUserIDs_EmptyFilterIncludesAllPlans verifies that an empty PlanFilter
+// returns users on every plan. Bug #3 was a hardcoded "pro" filter in the
+// scheduler that silently excluded all free-plan users from plan generation.
+func TestListUserIDs_EmptyFilterIncludesAllPlans(t *testing.T) {
+	svc, _ := newServer(t)
+
+	signUp(t, svc, "free-user@test.com", "Passw0rd1", "Free User")
+	proResp := signUp(t, svc, "pro-user@test.com", "Passw0rd1", "Pro User")
+
+	// Upgrade one user to 'pro' directly — avoids needing a live Stripe key.
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE auth.users SET plan = 'pro' WHERE id = $1`, proResp.UserId,
+	); err != nil {
+		t.Fatalf("upgrade user plan: %v", err)
+	}
+
+	// Empty filter must return all users (both free and pro).
+	all, err := svc.ListUserIDs(context.Background(), &authv1.ListUserIDsRequest{})
+	if err != nil {
+		t.Fatalf("ListUserIDs(empty): %v", err)
+	}
+	if len(all.Users) < 2 {
+		t.Errorf("empty filter: want ≥2 users, got %d", len(all.Users))
+	}
+
+	// "pro" filter must return only the upgraded user.
+	proOnly, err := svc.ListUserIDs(context.Background(), &authv1.ListUserIDsRequest{PlanFilter: "pro"})
+	if err != nil {
+		t.Fatalf("ListUserIDs(pro): %v", err)
+	}
+	if len(proOnly.Users) != 1 || proOnly.Users[0].UserId != proResp.UserId {
+		t.Errorf("pro filter: want 1 user (%s), got %+v", proResp.UserId, proOnly.Users)
+	}
+}
+
+// ── HandleStripeWebhook idempotency (Bug #6 regression) ──────────────────────
+
+// newServerWithStripe creates a Server with StripeConfig set (no DB truncation
+// of its own — the caller is responsible for calling newServer or truncating).
+func newServerWithStripe(t *testing.T, stripeCfg server.StripeConfig) *server.Server {
+	t.Helper()
+	testutil.Truncate(t, testPool)
+	pem, err := tokens.GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	maker, err := tokens.NewMakerFromPEM(pem)
+	if err != nil {
+		t.Fatalf("NewMakerFromPEM: %v", err)
+	}
+	return server.New(store.New(testPool), maker, slog.Default(), nil, server.CodeConfig{
+		TTL:            10 * time.Minute,
+		ResendCooldown: 3 * time.Minute,
+		MaxAttempts:    3,
+	}, stripeCfg)
+}
+
+// TestHandleStripeWebhook_CheckoutIdempotent verifies that delivering the same
+// checkout.session.completed event twice returns no error on either call.
+// Bug #6 removed a redundant GetSubscriptionBySourceRef pre-check that would
+// race; idempotency is now guaranteed atomically by the ON CONFLICT guard in
+// CreateSubscriptionAndSetPlan.
+func TestHandleStripeWebhook_CheckoutIdempotent(t *testing.T) {
+	const webhookSecret = "whsec_test_idempotent_secret"
+	svc := newServerWithStripe(t, server.StripeConfig{WebhookSecret: webhookSecret})
+
+	su := signUp(t, svc, "idempotent@test.com", "Passw0rd1", "Idempotent User")
+
+	// Seed stripe_customer_id directly — CreateStripeCheckoutSession needs a
+	// live Stripe key so we bypass it here.
+	const customerID = "cus_test_idempotent"
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE auth.users SET stripe_customer_id = $1 WHERE id = $2`,
+		customerID, su.UserId,
+	); err != nil {
+		t.Fatalf("set stripe_customer_id: %v", err)
+	}
+
+	// Use GenerateTestSignedPayload to produce a valid HMAC signature.
+	// api_version mismatch is now ignored (IgnoreAPIVersionMismatch: true).
+	payloadBytes := []byte(`{"id":"evt_test_idem","object":"event","api_version":"2024-06-20","type":"checkout.session.completed","data":{"object":{"id":"cs_test_idem","object":"checkout.session","customer":"cus_test_idempotent","subscription":"sub_test_idempotent"}}}`)
+	signed := stripewebhook.GenerateTestSignedPayload(&stripewebhook.UnsignedPayload{
+		Payload: payloadBytes,
+		Secret:  webhookSecret,
+	})
+
+	req := &authv1.HandleStripeWebhookRequest{
+		Payload:   signed.Payload,
+		Signature: signed.Header,
+	}
+
+	if _, err := svc.HandleStripeWebhook(context.Background(), req); err != nil {
+		t.Fatalf("first webhook delivery: %v", err)
+	}
+	if _, err := svc.HandleStripeWebhook(context.Background(), req); err != nil {
+		t.Errorf("second webhook delivery (idempotent): want nil, got %v", err)
 	}
 }

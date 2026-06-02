@@ -14,10 +14,11 @@ import (
 type contextKey string
 
 const (
-	ctxUserID    contextKey = "user_id"
-	ctxEmail     contextKey = "email"
-	ctxSessionID contextKey = "session_id"
-	ctxLanguage  contextKey = "language"
+	ctxUserID           contextKey = "user_id"
+	ctxEmail            contextKey = "email"
+	ctxSessionID        contextKey = "session_id"
+	ctxLanguage         contextKey = "language"
+	ctxSubscriptionPlan contextKey = "subscription_plan"
 )
 
 // Authenticate validates the Bearer token from the Authorization header
@@ -44,10 +45,15 @@ func Authenticate(authClient authv1.AuthServiceClient) func(http.Handler) http.H
 				return
 			}
 
+			plan := resp.SubscriptionPlan
+			if plan == "" {
+				plan = "free"
+			}
 			ctx := context.WithValue(r.Context(), ctxUserID, resp.UserId)
 			ctx = context.WithValue(ctx, ctxEmail, resp.Email)
 			ctx = context.WithValue(ctx, ctxSessionID, resp.SessionId)
 			ctx = context.WithValue(ctx, ctxLanguage, resp.Language)
+			ctx = context.WithValue(ctx, ctxSubscriptionPlan, plan)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -78,6 +84,29 @@ func LanguageFromContext(ctx context.Context) string {
 		return "en"
 	}
 	return v
+}
+
+// SubscriptionPlanFromContext returns the authenticated user's plan ("free" | "pro").
+func SubscriptionPlanFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(ctxSubscriptionPlan).(string)
+	if v == "" {
+		return "free"
+	}
+	return v
+}
+
+// RequirePlan returns a middleware that rejects requests from users whose plan
+// does not match the required plan. Must be used after Authenticate.
+func RequirePlan(plan string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if SubscriptionPlanFromContext(r.Context()) != plan {
+				http.Error(w, "pro subscription required", http.StatusPaymentRequired)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func extractBearer(r *http.Request) string {
