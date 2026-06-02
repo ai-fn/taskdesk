@@ -21,11 +21,11 @@ export function Modal({ onClose, children, className = '' }: Props) {
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/40 dark:bg-black/60 px-4 ${isClosing ? 'animate-backdrop-out' : 'animate-backdrop-in'}`}
+      className={`fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 py-4 bg-black/40 dark:bg-black/60 ${isClosing ? 'animate-backdrop-out' : 'animate-backdrop-in'}`}
       onPointerDown={handleClose}
     >
       <div
-        className={`w-full ${isClosing ? 'animate-modal-out' : 'animate-modal-in'} ${className}`}
+        className={`my-auto w-full ${isClosing ? 'animate-modal-out' : 'animate-modal-in'} ${className}`}
         onPointerDown={(e) => e.stopPropagation()}
       >
         {children}

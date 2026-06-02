@@ -121,12 +121,12 @@ export function TaskDetailPage() {
       <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-sm">
         <div className="flex items-start gap-3">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h1 className={`text-xl font-semibold text-gray-900 dark:text-gray-100 ${task.status === Status.DONE ? 'line-through opacity-60' : ''}`}>
+            <div className="flex items-start gap-2 min-w-0">
+              <h1 className={`break-words text-xl font-semibold text-gray-900 dark:text-gray-100 ${task.status === Status.DONE ? 'line-through opacity-60' : ''}`}>
                 {task.title}
               </h1>
               {task.blocked && (
-                <span title={t('tasks.detail.blockedByTitle')} className="text-amber-500 dark:text-amber-400">🔒</span>
+                <span title={t('tasks.detail.blockedByTitle')} className="shrink-0 text-amber-500 dark:text-amber-400">🔒</span>
               )}
             </div>
 
@@ -142,7 +142,7 @@ export function TaskDetailPage() {
                 onChange={(e) => updateStatus.mutate({ id: task.id, status: Number(e.target.value) as Status })}
                 disabled={updateStatus.isPending}
                 title={task.blocked ? t('tasks.detail.completeBlockedTitle') : undefined}
-                className={`rounded-full px-3 py-1 text-xs font-medium cursor-pointer border-0 outline-none focus:ring-1 focus:ring-indigo-400 ${statusColors[task.status]}`}
+                className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium cursor-pointer border-0 outline-none focus:ring-1 focus:ring-indigo-400 ${statusColors[task.status]}`}
               >
                 <option value={Status.TODO}>{t(StatusLabelKey[Status.TODO])}</option>
                 <option value={Status.IN_PROGRESS}>{t(StatusLabelKey[Status.IN_PROGRESS])}</option>
@@ -152,30 +152,30 @@ export function TaskDetailPage() {
               </select>
 
               {task.priority !== Priority.UNSPECIFIED && (
-                <span className={`rounded-full px-3 py-1 text-xs font-medium ${priorityColors[task.priority]}`}>
+                <span className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium ${priorityColors[task.priority]}`}>
                   {t(PriorityLabelKey[task.priority])}
                 </span>
               )}
 
               {task.due_at && (
-                <span className="text-xs text-gray-500 dark:text-gray-400">
+                <span className="shrink-0 whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
                   {t('tasks.card.due', { date: new Date(task.due_at).toLocaleDateString(toBCP47(i18n.language)) })}
                 </span>
               )}
 
               {list && (
                 <span
-                  className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400"
+                  className="shrink-0 flex items-center gap-1 whitespace-nowrap text-xs text-gray-500 dark:text-gray-400"
                   title={t('tasks.detail.inList', { name: list.name })}
                 >
-                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: list.color }} />
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: list.color }} />
                   {list.name}
                 </span>
               )}
 
               {plan === 'pro' && task.completion_score != null && task.completion_score > 0 && (
                 <span
-                  className={`rounded-full px-3 py-1 text-xs font-medium cursor-default ${scoreColor(task.completion_score)}`}
+                  className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium cursor-default ${scoreColor(task.completion_score)}`}
                   title={task.completion_insight || undefined}
                 >
                   ✦ {task.completion_score}%
@@ -185,7 +185,7 @@ export function TaskDetailPage() {
                 <>
                   <button
                     onClick={() => setPaywallOpen(true)}
-                    className="rounded-full px-3 py-1 text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
+                    className="shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
                   >
                     🔒 {t('tasks.card.scoreProOnly')}
                   </button>
@@ -196,7 +196,7 @@ export function TaskDetailPage() {
               )}
 
               {task.tags?.map((tag) => (
-                <span key={tag} className="rounded-full bg-indigo-50 dark:bg-indigo-900/40 px-2 py-0.5 text-xs text-indigo-600 dark:text-indigo-300">
+                <span key={tag} className="shrink-0 whitespace-nowrap rounded-full bg-indigo-50 dark:bg-indigo-900/40 px-2 py-0.5 text-xs text-indigo-600 dark:text-indigo-300">
                   {tag}
                 </span>
               ))}
