@@ -35,6 +35,9 @@
       "forgotPassword": "忘记密码？",
       "emailRequired": "请输入邮箱",
       "passwordRequired": "请输入密码",
+      "invalidCredentials": "邮箱或密码不正确。",
+      "oauthAccount": "该账号使用社交登录，请使用 Google 或 Discord 登录。",
+      "tooManyRequests": "尝试次数过多，请稍后再试。",
       "failed": "登录失败，请重试。"
     },
     "forgotPassword": {
@@ -71,6 +74,8 @@
       "emailRequired": "请输入邮箱",
       "passwordRequired": "请输入密码",
       "passwordMinLength": "最少 8 个字符",
+      "emailTaken": "该邮箱已被注册。",
+      "tooManyRequests": "尝试次数过多，请稍后再试。",
       "failed": "注册失败，请重试。"
     },
     "oauth": {
@@ -185,7 +190,9 @@
     "placeholder": "搜索任务…",
     "filterPlaceholder": "筛选任务…",
     "noResults": "无结果",
-    "semanticLabel": "语义搜索 · 按相关性排序"
+    "semanticLabel": "语义搜索 · 按相关性排序",
+    "fulltextLabel": "全文搜索",
+    "semanticUpgrade": "解锁语义排序"
   },
   "editLists": {
     "title": "编辑列表",
@@ -317,5 +324,59 @@
     "dark": "深色",
     "system": "跟随系统",
     "ariaLabel": "主题：{{theme}} — 点击切换"
+  },
+  "paywall": {
+    "title": "解锁 AI 功能",
+    "subtitle": "升级到专业版，让 AI 为您提效",
+    "proFeature": "专业版功能",
+    "feature1": "AI 智能日程规划",
+    "feature2": "自然语言任务录入",
+    "feature3": "智能排程与优先级管理",
+    "upgradeButton": "升级到专业版",
+    "promoToggle": "我有优惠码",
+    "promoPlaceholder": "输入优惠码",
+    "promoRedeem": "兑换",
+    "promoSuccess": "优惠码已生效！您已升级到专业版。",
+    "promoError": "无效或已过期的优惠码。",
+    "loading": "处理中…",
+    "seeAllFeatures": "查看全部功能 →",
+    "unlockFeature": "升级专业版解锁"
+  },
+  "upgrade": {
+    "title": "升级到专业版",
+    "subtitle": "借助 AI 大幅提升生产力",
+    "currentPlan": "当前套餐",
+    "plan": {
+      "free": "免费版",
+      "pro": "专业版"
+    },
+    "price": "$9",
+    "perMonth": "/月",
+    "features": {
+      "title": "专业版包含",
+      "ai": "AI 智能日程规划",
+      "aiDesc": "Claude AI 每天为您的任务排出优先级，并附上个性化说明。",
+      "parse": "自然语言任务录入",
+      "parseDesc": "自然输入即可——截止日期、清单和优先级会自动识别。",
+      "priority": "智能任务优先级",
+      "priorityDesc": "紧迫性、重要性与截止日期综合权衡，自动排序。",
+      "scheduling": "日程与截止日期分析",
+      "schedulingDesc": "一目了然地查看哪些任务已逾期或即将到来。"
+    },
+    "upgradeButton": "升级到专业版",
+    "alreadyPro": "您已是专业版用户",
+    "alreadyProNote": "通过 Stripe 管理您的订阅。",
+    "promoToggle": "有优惠码？",
+    "promoPlaceholder": "输入优惠码",
+    "promoRedeem": "兑换",
+    "promoSuccess": "优惠码已生效！欢迎加入专业版。",
+    "promoError": "无效或已过期的优惠码。",
+    "loading": "处理中…",
+    "back": "返回",
+    "poweredBy": "支付服务由 Stripe 提供",
+    "successTitle": "欢迎加入专业版！",
+    "successMessage": "您的订阅已激活，尽享全部专业版功能。",
+    "canceledTitle": "支付未完成",
+    "canceledMessage": "未产生任何费用，您可随时升级。"
   }
 }

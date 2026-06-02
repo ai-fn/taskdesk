@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/fsociety/todo/pkg/events"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
@@ -20,6 +21,7 @@ import (
 	"github.com/fsociety/todo/services/ai/internal/embedder"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"golang.org/x/time/rate"
+	"google.golang.org/grpc"
 )
 
 // Handler processes task events and upserts/deletes embeddings.
@@ -102,7 +104,12 @@ func (h *Handler) upsertEmbedding(ctx context.Context, ev events.TaskEvent) erro
 // Runs once at startup in a background goroutine. Shares the same rate limiter
 // as the live consumer so both together stay within Voyage AI's RPM cap.
 func (h *Handler) Backfill(ctx context.Context) {
-	usersResp, err := h.authClient.ListUserIDs(ctx, &authv1.ListUserIDsRequest{})
+	// Give auth up to 2 minutes to become ready. WaitForReady retries
+	// Unavailable errors automatically so a pod-startup race doesn't
+	// permanently skip the backfill.
+	bCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	usersResp, err := h.authClient.ListUserIDs(bCtx, &authv1.ListUserIDsRequest{}, grpc.WaitForReady(true))
 	if err != nil {
 		h.log.Error("backfill: list users", "err", err)
 		return

@@ -48,6 +48,8 @@ spec:
               value: "file:///migrations/ai"
             - name: TODO_SERVICE_ADDR
               value: "todo.todo.svc.cluster.local:50052"
+            - name: AUTH_SERVICE_ADDR
+              value: "auth.todo.svc.cluster.local:50051"
           volumeMounts:
             - name: migrations
               mountPath: /migrations/ai

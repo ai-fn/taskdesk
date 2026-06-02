@@ -35,6 +35,9 @@
       "forgotPassword": "Forgot password?",
       "emailRequired": "Email is required",
       "passwordRequired": "Password is required",
+      "invalidCredentials": "Email or password is incorrect.",
+      "oauthAccount": "This account uses social sign-in. Please use Google or Discord to log in.",
+      "tooManyRequests": "Too many attempts. Please wait before trying again.",
       "failed": "Login failed. Please try again."
     },
     "forgotPassword": {
@@ -71,6 +74,8 @@
       "emailRequired": "Email is required",
       "passwordRequired": "Password is required",
       "passwordMinLength": "Minimum 8 characters",
+      "emailTaken": "An account with this email already exists.",
+      "tooManyRequests": "Too many attempts. Please wait before trying again.",
       "failed": "Signup failed. Please try again."
     },
     "oauth": {
@@ -186,7 +191,9 @@
     "placeholder": "Search tasks...",
     "filterPlaceholder": "Filter tasks...",
     "noResults": "No results",
-    "semanticLabel": "Semantic · ranked by meaning"
+    "semanticLabel": "Semantic · ranked by meaning",
+    "fulltextLabel": "Fulltext search",
+    "semanticUpgrade": "Unlock semantic ranking"
   },
   "editLists": {
     "title": "Edit Lists",
@@ -320,5 +327,59 @@
     "dark": "Dark",
     "system": "System",
     "ariaLabel": "Theme: {{theme}} — click to switch"
+  },
+  "paywall": {
+    "title": "Unlock AI Features",
+    "subtitle": "Upgrade to Pro and let AI work for you",
+    "proFeature": "Pro feature",
+    "feature1": "AI-generated daily plans",
+    "feature2": "Natural language task input",
+    "feature3": "Smart scheduling & prioritization",
+    "upgradeButton": "Upgrade to Pro",
+    "promoToggle": "I have a promo code",
+    "promoPlaceholder": "Enter promo code",
+    "promoRedeem": "Redeem",
+    "promoSuccess": "Promo applied! You're now on Pro.",
+    "promoError": "Invalid or expired promo code.",
+    "loading": "Processing…",
+    "seeAllFeatures": "See all features →",
+    "unlockFeature": "Unlock with Pro"
+  },
+  "upgrade": {
+    "title": "Upgrade to Pro",
+    "subtitle": "Supercharge your productivity with AI",
+    "currentPlan": "Current plan",
+    "plan": {
+      "free": "Free",
+      "pro": "Pro"
+    },
+    "price": "$9",
+    "perMonth": "/mo",
+    "features": {
+      "title": "Everything in Pro",
+      "ai": "AI-generated daily plans",
+      "aiDesc": "Claude AI ranks your tasks every day with a personalised narrative.",
+      "parse": "Natural language task input",
+      "parseDesc": "Type naturally — due dates, lists, and priorities are detected for you.",
+      "priority": "Smart task prioritization",
+      "priorityDesc": "Urgency, importance, and deadlines are weighed together automatically.",
+      "scheduling": "Schedule & deadline analysis",
+      "schedulingDesc": "See which tasks are overdue or coming up at a glance."
+    },
+    "upgradeButton": "Upgrade to Pro",
+    "alreadyPro": "You're on the Pro plan",
+    "alreadyProNote": "Manage your subscription through Stripe.",
+    "promoToggle": "Have a promo code?",
+    "promoPlaceholder": "Enter promo code",
+    "promoRedeem": "Redeem",
+    "promoSuccess": "Promo code applied! Welcome to Pro.",
+    "promoError": "Invalid or expired promo code.",
+    "loading": "Processing…",
+    "back": "Back",
+    "poweredBy": "Payments powered by Stripe",
+    "successTitle": "Welcome to Pro!",
+    "successMessage": "Your subscription is active. Enjoy all Pro features.",
+    "canceledTitle": "Payment not completed",
+    "canceledMessage": "No charge was made. You can upgrade any time."
   }
 }

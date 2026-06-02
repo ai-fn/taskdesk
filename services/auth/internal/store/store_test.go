@@ -359,3 +359,161 @@ func TestUpdateUserLanguage_NotFound(t *testing.T) {
 		t.Error("expected error for nonexistent user, got nil")
 	}
 }
+
+// ── Subscription source_ref uniqueness ────────────────────────────────────────
+
+func makeSub(id, userID, source, sourceRef string) *domain.Subscription {
+	return &domain.Subscription{
+		ID:        id,
+		UserID:    userID,
+		Plan:      "pro",
+		Source:    source,
+		SourceRef: sourceRef,
+		Status:    "active",
+		StartedAt: time.Now().UTC(),
+	}
+}
+
+// TestCreateSubscriptionAndSetPlan_PromoSharedSourceRefAllowed verifies that
+// two different users can each redeem the same promo code (same source_ref) —
+// the partial unique index does not cover promo_code rows.
+func TestCreateSubscriptionAndSetPlan_PromoSharedSourceRefAllowed(t *testing.T) {
+	s := newStore(t)
+	mustCreateUser(t, s, makeUser("promo-u1", "promo1@test.com"))
+	mustCreateUser(t, s, makeUser("promo-u2", "promo2@test.com"))
+
+	const sharedPromoRef = "promo-code-uuid-shared"
+
+	if err := s.CreateSubscriptionAndSetPlan(context.Background(),
+		makeSub("sub-p1", "promo-u1", "promo_code", sharedPromoRef), "pro",
+	); err != nil {
+		t.Fatalf("first promo redemption: %v", err)
+	}
+	if err := s.CreateSubscriptionAndSetPlan(context.Background(),
+		makeSub("sub-p2", "promo-u2", "promo_code", sharedPromoRef), "pro",
+	); err != nil {
+		t.Fatalf("second promo redemption (same source_ref, different user): %v", err)
+	}
+}
+
+// TestCreateSubscriptionAndSetPlan_StripeSourceRefUnique verifies that two
+// rows with source = 'stripe' and the same source_ref are rejected — the
+// partial unique index enforces idempotency for Stripe webhook re-deliveries.
+func TestCreateSubscriptionAndSetPlan_StripeSourceRefUnique(t *testing.T) {
+	s := newStore(t)
+	mustCreateUser(t, s, makeUser("stripe-u1", "stripe1@test.com"))
+	mustCreateUser(t, s, makeUser("stripe-u2", "stripe2@test.com"))
+
+	const stripeSubID = "sub_stripe_123"
+
+	if err := s.CreateSubscriptionAndSetPlan(context.Background(),
+		makeSub("sub-s1", "stripe-u1", "stripe", stripeSubID), "pro",
+	); err != nil {
+		t.Fatalf("first stripe sub: %v", err)
+	}
+
+	err := s.CreateSubscriptionAndSetPlan(context.Background(),
+		makeSub("sub-s2", "stripe-u2", "stripe", stripeSubID), "pro",
+	)
+	if !errors.Is(err, store.ErrSubscriptionAlreadyExists) {
+		t.Errorf("duplicate stripe source_ref: want ErrSubscriptionAlreadyExists, got %v", err)
+	}
+}
+
+// ── RedeemPromoCode Stripe guard (TOCTOU fix) ─────────────────────────────────
+
+// mustCreatePromoCode inserts an unlimited, all-user promo code for testing.
+func mustCreatePromoCode(t *testing.T, s *store.Store, id, code string) *domain.PromoCode {
+	t.Helper()
+	pc := &domain.PromoCode{
+		ID:              id,
+		Code:            code,
+		MaxUsagePerUser: 1,
+	}
+	if err := s.CreatePromoCode(context.Background(), pc); err != nil {
+		t.Fatalf("CreatePromoCode: %v", err)
+	}
+	return pc
+}
+
+// mustInsertStripeSubscription seeds an active Stripe subscription directly.
+func mustInsertStripeSubscription(t *testing.T, pool *pgxpool.Pool, userID string) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO auth.subscriptions
+			(id, user_id, plan, source, source_ref, status, started_at, created_at, updated_at)
+		VALUES
+			(gen_random_uuid()::text, $1, 'pro', 'stripe', gen_random_uuid()::text, 'active', NOW(), NOW(), NOW())`,
+		userID,
+	)
+	if err != nil {
+		t.Fatalf("mustInsertStripeSubscription: %v", err)
+	}
+}
+
+// TestRedeemPromoCode_StripeSubBlocksInsideTransaction verifies that
+// RedeemPromoCode rejects redemption when the user has an active Stripe
+// subscription, even if that subscription was committed after the server's
+// pre-check (TOCTOU scenario). The check is now inside the transaction.
+func TestRedeemPromoCode_StripeSubBlocksInsideTransaction(t *testing.T) {
+	s := newStore(t)
+	mustCreateUser(t, s, makeUser("toctou-user", "toctou@test.com"))
+	pc := mustCreatePromoCode(t, s, "pc-toctou-id", "TOCTOU10")
+
+	// Simulate a Stripe webhook that committed after the server pre-check.
+	mustInsertStripeSubscription(t, testPool, "toctou-user")
+
+	err := s.RedeemPromoCode(context.Background(), pc, "toctou-user", "toctou@test.com", "sub-toctou")
+	if !errors.Is(err, store.ErrUserHasActiveStripeSubscription) {
+		t.Errorf("want ErrUserHasActiveStripeSubscription, got %v", err)
+	}
+}
+
+// ── RedeemPromoCode limit enforcement ─────────────────────────────────────────
+
+// TestRedeemPromoCode_GlobalLimitEnforced verifies that once the global usage
+// cap is reached no further redemptions are accepted, even by different users.
+func TestRedeemPromoCode_GlobalLimitEnforced(t *testing.T) {
+	s := newStore(t)
+	mustCreateUser(t, s, makeUser("glim-u1", "glim1@test.com"))
+	mustCreateUser(t, s, makeUser("glim-u2", "glim2@test.com"))
+
+	maxUses := 1
+	pc := &domain.PromoCode{
+		ID:              "pc-glim-id",
+		Code:            "GLOBAL1",
+		MaxUsageCount:   &maxUses,
+		MaxUsagePerUser: 10,
+	}
+	if err := s.CreatePromoCode(context.Background(), pc); err != nil {
+		t.Fatalf("CreatePromoCode: %v", err)
+	}
+
+	if err := s.RedeemPromoCode(context.Background(), pc, "glim-u1", "glim1@test.com", "sub-glim-1"); err != nil {
+		t.Fatalf("first redemption: %v", err)
+	}
+
+	err := s.RedeemPromoCode(context.Background(), pc, "glim-u2", "glim2@test.com", "sub-glim-2")
+	if !errors.Is(err, store.ErrPromoCodeExhausted) {
+		t.Errorf("want ErrPromoCodeExhausted, got %v", err)
+	}
+}
+
+// TestRedeemPromoCode_PerUserLimitEnforced verifies that a user cannot redeem
+// the same promo code more times than MaxUsagePerUser allows.
+func TestRedeemPromoCode_PerUserLimitEnforced(t *testing.T) {
+	s := newStore(t)
+	mustCreateUser(t, s, makeUser("plim-u1", "plim1@test.com"))
+
+	// mustCreatePromoCode sets MaxUsagePerUser = 1.
+	pc := mustCreatePromoCode(t, s, "pc-plim-id", "PERUSER1")
+
+	if err := s.RedeemPromoCode(context.Background(), pc, "plim-u1", "plim1@test.com", "sub-plim-1"); err != nil {
+		t.Fatalf("first redemption: %v", err)
+	}
+
+	err := s.RedeemPromoCode(context.Background(), pc, "plim-u1", "plim1@test.com", "sub-plim-2")
+	if !errors.Is(err, store.ErrPromoCodePerUserLimitReached) {
+		t.Errorf("want ErrPromoCodePerUserLimitReached, got %v", err)
+	}
+}

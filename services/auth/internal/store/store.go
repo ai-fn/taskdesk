@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fsociety/todo/services/auth/internal/domain"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,6 +18,13 @@ import (
 
 var ErrNotFound = errors.New("not found")
 var ErrEmailTaken = errors.New("email already registered")
+var ErrSubscriptionAlreadyExists = errors.New("subscription already exists")
+var ErrPromoCodeNotFound = errors.New("promo code not found")
+var ErrPromoCodeDisabled = errors.New("promo code is disabled")
+var ErrPromoCodeEmailMismatch = errors.New("promo code is not valid for your account")
+var ErrPromoCodeExhausted = errors.New("promo code has reached its usage limit")
+var ErrPromoCodePerUserLimitReached = errors.New("you have already used this promo code the maximum number of times")
+var ErrUserHasActiveStripeSubscription = errors.New("user has an active Stripe subscription")
 
 type Store struct {
 	db *pgxpool.Pool
@@ -32,6 +40,7 @@ func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		u.ID, u.Email, u.Name, u.PasswordHash, u.Language, u.EmailVerified, u.CreatedAt, u.UpdatedAt,
 	)
+	// plan and stripe_customer_id default to 'free'/NULL via column defaults
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrEmailTaken
@@ -44,9 +53,9 @@ func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, language, email_verified, created_at, updated_at
+		SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at
 		FROM auth.users WHERE email = $1`, email,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -59,9 +68,9 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*domain.User,
 func (s *Store) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, language, email_verified, created_at, updated_at
+		SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at
 		FROM auth.users WHERE id = $1`, id,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -170,9 +179,18 @@ func (s *Store) RevokeOtherSessions(ctx context.Context, userID, currentSessionI
 	return tag.RowsAffected(), nil
 }
 
-// ListUsers returns all users. Used by scheduler for fan-out.
-func (s *Store) ListUsers(ctx context.Context) ([]*domain.User, error) {
-	rows, err := s.db.Query(ctx, `SELECT id, email, name, password_hash, language, email_verified, created_at, updated_at FROM auth.users ORDER BY created_at`)
+// ListUsers returns users, optionally filtered by plan ("" = all).
+// Used by scheduler for fan-out (planFilter="pro") and by ListUserIDs RPC.
+func (s *Store) ListUsers(ctx context.Context, planFilter string) ([]*domain.User, error) {
+	q := `SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at FROM auth.users`
+	var args []any
+	if planFilter != "" {
+		q += ` WHERE plan = $1`
+		args = append(args, planFilter)
+	}
+	q += ` ORDER BY created_at`
+
+	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
@@ -181,7 +199,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]*domain.User, error) {
 	var users []*domain.User
 	for rows.Next() {
 		var u domain.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		users = append(users, &u)
@@ -227,6 +245,7 @@ func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error 
 		VALUES ($1, $2, $3, NULL, $4, $5, $6)`,
 		u.ID, u.Email, u.Name, u.Language, u.CreatedAt, u.UpdatedAt,
 	)
+	// plan defaults to 'free' via column default
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrEmailTaken
@@ -241,12 +260,12 @@ func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error 
 func (s *Store) FindByOAuth(ctx context.Context, provider, providerUserID string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT u.id, u.email, u.name, u.password_hash, u.language, u.email_verified, u.created_at, u.updated_at
+		SELECT u.id, u.email, u.name, u.password_hash, u.language, u.email_verified, u.plan, u.stripe_customer_id, u.created_at, u.updated_at
 		FROM auth.oauth_identities oi
 		JOIN auth.users u ON u.id = oi.user_id
 		WHERE oi.provider = $1 AND oi.provider_user_id = $2`,
 		provider, providerUserID,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -398,6 +417,355 @@ func (s *Store) RevokeAllSessions(ctx context.Context, userID string) (int64, er
 		return 0, fmt.Errorf("revoke all sessions: %w", err)
 	}
 	return tag.RowsAffected(), nil
+}
+
+// ── Stripe ────────────────────────────────────────────────────────────────────
+
+// SetStripeCustomerID stores the Stripe customer ID for a user.
+func (s *Store) SetStripeCustomerID(ctx context.Context, userID, customerID string) error {
+	tag, err := s.db.Exec(ctx, `
+		UPDATE auth.users SET stripe_customer_id = $2, updated_at = now() WHERE id = $1`,
+		userID, customerID,
+	)
+	if err != nil {
+		return fmt.Errorf("set stripe customer id: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GetUserByStripeCustomerID looks up a user by their Stripe customer ID.
+// Used when processing Stripe webhook events that carry only the customer ID.
+func (s *Store) GetUserByStripeCustomerID(ctx context.Context, customerID string) (*domain.User, error) {
+	var u domain.User
+	err := s.db.QueryRow(ctx, `
+		SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at
+		FROM auth.users WHERE stripe_customer_id = $1`, customerID,
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get user by stripe customer id: %w", err)
+	}
+	return &u, nil
+}
+
+// ── Subscriptions ─────────────────────────────────────────────────────────────
+
+// CreateSubscriptionAndSetPlan atomically inserts a subscription row and updates
+// auth.users.plan in a single transaction. This is the correct path for Stripe
+// webhook processing: if either write fails, both are rolled back and the webhook
+// can be retried safely.
+//
+// Returns ErrSubscriptionAlreadyExists when the source_ref unique constraint
+// fires — callers should treat this as an idempotent success (already processed).
+func (s *Store) CreateSubscriptionAndSetPlan(ctx context.Context, sub *domain.Subscription, plan string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO auth.subscriptions (id, user_id, plan, source, source_ref, status, started_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (source_ref) WHERE source = 'stripe' DO NOTHING`,
+		sub.ID, sub.UserID, sub.Plan, sub.Source, sub.SourceRef, sub.Status, sub.StartedAt, sub.ExpiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("insert subscription: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Row already exists — idempotent, nothing left to do.
+		return ErrSubscriptionAlreadyExists
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.users SET plan = $2, updated_at = now() WHERE id = $1`,
+		sub.UserID, plan,
+	); err != nil {
+		return fmt.Errorf("set user plan: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// GetActiveSubscriptions returns all active subscriptions for a user.
+func (s *Store) GetActiveSubscriptions(ctx context.Context, userID string) ([]*domain.Subscription, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, user_id, plan, source, source_ref, status, started_at, expires_at, created_at, updated_at
+		FROM auth.subscriptions
+		WHERE user_id = $1 AND status = 'active'
+		ORDER BY created_at DESC`, userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get active subscriptions: %w", err)
+	}
+	defer rows.Close()
+
+	var subs []*domain.Subscription
+	for rows.Next() {
+		var sub domain.Subscription
+		if err := rows.Scan(
+			&sub.ID, &sub.UserID, &sub.Plan, &sub.Source, &sub.SourceRef,
+			&sub.Status, &sub.StartedAt, &sub.ExpiresAt, &sub.CreatedAt, &sub.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan subscription: %w", err)
+		}
+		subs = append(subs, &sub)
+	}
+	return subs, rows.Err()
+}
+
+// GetSubscriptionBySourceRef returns a subscription by its source_ref (Stripe subscription ID).
+func (s *Store) GetSubscriptionBySourceRef(ctx context.Context, sourceRef string) (*domain.Subscription, error) {
+	var sub domain.Subscription
+	err := s.db.QueryRow(ctx, `
+		SELECT id, user_id, plan, source, source_ref, status, started_at, expires_at, created_at, updated_at
+		FROM auth.subscriptions WHERE source_ref = $1`, sourceRef,
+	).Scan(
+		&sub.ID, &sub.UserID, &sub.Plan, &sub.Source, &sub.SourceRef,
+		&sub.Status, &sub.StartedAt, &sub.ExpiresAt, &sub.CreatedAt, &sub.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get subscription by source ref: %w", err)
+	}
+	return &sub, nil
+}
+
+// CancelSubscriptionBySourceRef marks a subscription as cancelled by its source_ref.
+func (s *Store) CancelSubscriptionBySourceRef(ctx context.Context, sourceRef string) (string, error) {
+	var userID string
+	err := s.db.QueryRow(ctx, `
+		UPDATE auth.subscriptions
+		SET status = 'cancelled', updated_at = now()
+		WHERE source_ref = $1 AND status = 'active'
+		RETURNING user_id`, sourceRef,
+	).Scan(&userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("cancel subscription: %w", err)
+	}
+	return userID, nil
+}
+
+// RecalculateUserPlan sets auth.users.plan to 'pro' if any active subscription
+// exists for the user, otherwise downgrades to 'free'. Safe to call after any
+// subscription status change.
+func (s *Store) RecalculateUserPlan(ctx context.Context, userID string) error {
+	_, err := s.db.Exec(ctx, `
+		UPDATE auth.users SET
+		  plan = CASE
+		    WHEN EXISTS (
+		      SELECT 1 FROM auth.subscriptions
+		      WHERE user_id = $1 AND status = 'active'
+		    ) THEN 'pro'
+		    ELSE 'free'
+		  END,
+		  updated_at = now()
+		WHERE id = $1`, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("recalculate user plan: %w", err)
+	}
+	return nil
+}
+
+// ── Promo codes ───────────────────────────────────────────────────────────────
+
+// GetPromoCode retrieves a promo code by its code string (case-insensitive).
+func (s *Store) GetPromoCode(ctx context.Context, code string) (*domain.PromoCode, error) {
+	var pc domain.PromoCode
+	err := s.db.QueryRow(ctx, `
+		SELECT id, code, allowed_email, max_usage_count, max_usage_per_user, disabled, notes, created_at
+		FROM auth.promo_codes WHERE upper(code) = upper($1)`, code,
+	).Scan(&pc.ID, &pc.Code, &pc.AllowedEmail, &pc.MaxUsageCount, &pc.MaxUsagePerUser, &pc.Disabled, &pc.Notes, &pc.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrPromoCodeNotFound
+		}
+		return nil, fmt.Errorf("get promo code: %w", err)
+	}
+	return &pc, nil
+}
+
+// RedeemPromoCode atomically validates and redeems a promo code for a user,
+// inserts a subscription record, and upgrades the user's plan to 'pro'.
+// The promo code row is locked with SELECT FOR UPDATE to serialize concurrent
+// redemption attempts and guarantee the usage-count checks are consistent.
+func (s *Store) RedeemPromoCode(ctx context.Context, pc *domain.PromoCode, userID, userEmail, subscriptionID string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Re-read the code inside the transaction under a row-level lock so concurrent
+	// redemptions queue up and each sees the count after the previous committed.
+	var locked domain.PromoCode
+	err = tx.QueryRow(ctx, `
+		SELECT id, allowed_email, max_usage_count, max_usage_per_user, disabled
+		FROM auth.promo_codes WHERE id = $1 FOR UPDATE`, pc.ID,
+	).Scan(&locked.ID, &locked.AllowedEmail, &locked.MaxUsageCount, &locked.MaxUsagePerUser, &locked.Disabled)
+	if err != nil {
+		return fmt.Errorf("lock promo code: %w", err)
+	}
+
+	if locked.Disabled {
+		return ErrPromoCodeDisabled
+	}
+	if locked.AllowedEmail != nil && *locked.AllowedEmail != userEmail {
+		return ErrPromoCodeEmailMismatch
+	}
+
+	// Block redemption if the user acquired an active Stripe subscription between
+	// the server-layer pre-check and now (TOCTOU guard). Checked inside the
+	// transaction so it is atomic with the subsequent INSERT.
+	var hasStripe bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM auth.subscriptions
+			WHERE user_id = $1 AND source = 'stripe' AND status = 'active'
+		)`, userID,
+	).Scan(&hasStripe); err != nil {
+		return fmt.Errorf("check stripe subscription: %w", err)
+	}
+	if hasStripe {
+		return ErrUserHasActiveStripeSubscription
+	}
+
+	// Fetch global and per-user redemption counts in a single round trip.
+	// FILTER (WHERE user_id = $2) computes the per-user count on the same scan.
+	var globalCount, userCount int
+	if err := tx.QueryRow(ctx, `
+		SELECT
+			COUNT(*)                          AS global_count,
+			COUNT(*) FILTER (WHERE user_id = $2) AS user_count
+		FROM auth.promo_code_redemptions
+		WHERE promo_code_id = $1`,
+		locked.ID, userID,
+	).Scan(&globalCount, &userCount); err != nil {
+		return fmt.Errorf("count redemptions: %w", err)
+	}
+
+	if locked.MaxUsageCount != nil && globalCount >= *locked.MaxUsageCount {
+		return ErrPromoCodeExhausted
+	}
+	if userCount >= locked.MaxUsagePerUser {
+		return ErrPromoCodePerUserLimitReached
+	}
+
+	// Insert redemption record.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.promo_code_redemptions (id, promo_code_id, user_id)
+		VALUES ($1, $2, $3)`,
+		uuid.New().String(), locked.ID, userID,
+	); err != nil {
+		return fmt.Errorf("insert redemption: %w", err)
+	}
+
+	// Insert subscription record (lifetime — expires_at NULL).
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.subscriptions (id, user_id, plan, source, source_ref, status, expires_at)
+		VALUES ($1, $2, 'pro', 'promo_code', $3, 'active', NULL)`,
+		subscriptionID, userID, locked.ID,
+	); err != nil {
+		return fmt.Errorf("insert subscription: %w", err)
+	}
+
+	// Upgrade user plan to 'pro'.
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.users SET plan = 'pro', updated_at = now() WHERE id = $1`, userID,
+	); err != nil {
+		return fmt.Errorf("set user plan: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// ListPromoCodes returns all promo codes ordered by creation date descending.
+// Used by the promo-admin CLI.
+func (s *Store) ListPromoCodes(ctx context.Context) ([]*domain.PromoCode, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, code, allowed_email, max_usage_count, max_usage_per_user, disabled, notes, created_at
+		FROM auth.promo_codes ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list promo codes: %w", err)
+	}
+	defer rows.Close()
+
+	var codes []*domain.PromoCode
+	for rows.Next() {
+		var pc domain.PromoCode
+		if err := rows.Scan(&pc.ID, &pc.Code, &pc.AllowedEmail, &pc.MaxUsageCount, &pc.MaxUsagePerUser, &pc.Disabled, &pc.Notes, &pc.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan promo code: %w", err)
+		}
+		codes = append(codes, &pc)
+	}
+	return codes, rows.Err()
+}
+
+// CreatePromoCode inserts a new promo code. Used by the promo-admin CLI.
+func (s *Store) CreatePromoCode(ctx context.Context, pc *domain.PromoCode) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO auth.promo_codes (id, code, allowed_email, max_usage_count, max_usage_per_user, disabled, notes)
+		VALUES ($1, upper($2), $3, $4, $5, false, $6)`,
+		pc.ID, pc.Code, pc.AllowedEmail, pc.MaxUsageCount, pc.MaxUsagePerUser, pc.Notes,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("promo code already exists")
+		}
+		return fmt.Errorf("create promo code: %w", err)
+	}
+	return nil
+}
+
+// DisablePromoCode marks a promo code as disabled by its code string.
+func (s *Store) DisablePromoCode(ctx context.Context, code string) error {
+	tag, err := s.db.Exec(ctx, `
+		UPDATE auth.promo_codes SET disabled = true WHERE upper(code) = upper($1)`, code,
+	)
+	if err != nil {
+		return fmt.Errorf("disable promo code: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPromoCodeNotFound
+	}
+	return nil
+}
+
+// CountAllPromoCodeRedemptions returns redemption counts for every promo code in
+// a single query, keyed by promo code ID. Used by the promo-admin CLI to avoid
+// N+1 queries when listing codes.
+func (s *Store) CountAllPromoCodeRedemptions(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT promo_code_id, COUNT(*) FROM auth.promo_code_redemptions GROUP BY promo_code_id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("count all promo code redemptions: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, fmt.Errorf("scan redemption count: %w", err)
+		}
+		counts[id] = n
+	}
+	return counts, rows.Err()
 }
 
 func isUniqueViolation(err error) bool {

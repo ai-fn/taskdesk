@@ -31,11 +31,21 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// 402 → user hit a pro-only endpoint. Dispatch an event so the UI can show the paywall.
+// The PaywallRequired event bubbles up to App.tsx which renders a global PaywallModal.
+export const PAYWALL_EVENT = 'plan:required'
+
 // 401 → try refresh once, then retry the original request.
 // Subscriber queue prevents multiple parallel 401s from each calling
 // /refresh independently (which would invalidate the rotated token).
 let isRefreshing = false
-let refreshSubscribers: Array<(token: string) => void> = []
+type Subscriber = { onSuccess: (token: string) => void; onFailure: (err: unknown) => void }
+let refreshSubscribers: Subscriber[] = []
+
+// Auth endpoints return 401 for wrong credentials, not for expired tokens.
+// Never attempt a refresh for them — it wastes a round-trip and triggers
+// _onUnauthenticated() which navigates away from the login page.
+const AUTH_ENDPOINTS = ['/api/v1/auth/login', '/api/v1/auth/signup']
 
 api.interceptors.response.use(
   (response) => response,
@@ -43,16 +53,27 @@ api.interceptors.response.use(
     if (!axios.isAxiosError(error)) return Promise.reject(error)
 
     const cfg = error.config as AxiosRequestConfig & { _retry?: boolean }
-    if (error.response?.status !== 401 || cfg._retry) {
+
+    // Pro-only endpoint hit by free user → fire paywall event
+    if (error.response?.status === 402) {
+      window.dispatchEvent(new CustomEvent(PAYWALL_EVENT))
+      return Promise.reject(error)
+    }
+
+    const isAuthEndpoint = AUTH_ENDPOINTS.some((p) => cfg.url?.includes(p))
+    if (error.response?.status !== 401 || cfg._retry || isAuthEndpoint) {
       return Promise.reject(error)
     }
     cfg._retry = true
 
     if (isRefreshing) {
-      return new Promise<unknown>((resolve) => {
-        refreshSubscribers.push((token) => {
-          if (cfg.headers) cfg.headers['Authorization'] = `Bearer ${token}`
-          resolve(api(cfg))
+      return new Promise<unknown>((resolve, reject) => {
+        refreshSubscribers.push({
+          onSuccess: (token) => {
+            if (cfg.headers) cfg.headers['Authorization'] = `Bearer ${token}`
+            resolve(api(cfg))
+          },
+          onFailure: (err) => reject(err),
         })
       })
     }
@@ -65,10 +86,11 @@ api.interceptors.response.use(
         { withCredentials: true },
       )
       setToken(data.access_token)
-      refreshSubscribers.forEach((cb) => cb(data.access_token))
+      refreshSubscribers.forEach((s) => s.onSuccess(data.access_token))
       if (cfg.headers) cfg.headers['Authorization'] = `Bearer ${data.access_token}`
       return api(cfg)
-    } catch {
+    } catch (refreshError) {
+      refreshSubscribers.forEach((s) => s.onFailure(refreshError))
       setToken(null)
       _onUnauthenticated()
       return Promise.reject(error)

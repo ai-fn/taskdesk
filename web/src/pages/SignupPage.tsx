@@ -27,6 +27,7 @@ export function SignupPage() {
   const {
     register,
     handleSubmit,
+    setError,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>()
@@ -38,8 +39,15 @@ export function SignupPage() {
       await signup(values.email, values.password, values.name)
       navigate('/')
     } catch (err) {
-      if (axios.isAxiosError(err) && err.response?.data?.error) {
-        setApiError(err.response.data.error as string)
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status
+        if (status === 409) {
+          setError('email', { message: t('auth.signup.emailTaken') })
+        } else if (status === 429) {
+          setApiError(t('auth.signup.tooManyRequests'))
+        } else {
+          setApiError(t('auth.signup.failed'))
+        }
       } else {
         setApiError(t('auth.signup.failed'))
       }

@@ -39,6 +39,13 @@ type Config struct {
 	CodeTTL            time.Duration `env:"CODE_TTL"             default:"10m"`
 	CodeResendCooldown time.Duration `env:"CODE_RESEND_COOLDOWN" default:"3m"`
 	CodeMaxAttempts    int           `env:"CODE_MAX_ATTEMPTS"    default:"3"`
+
+	// Stripe (optional — omit STRIPE_SECRET_KEY to run without payments)
+	StripeSecretKey    string `env:"STRIPE_SECRET_KEY"    default:""`
+	StripeWebhookSec   string `env:"STRIPE_WEBHOOK_SECRET" default:""`
+	StripePriceID      string `env:"STRIPE_PRICE_ID"      default:""`
+	StripeSuccessURL   string `env:"STRIPE_SUCCESS_URL"   default:""`
+	StripeCancelURL    string `env:"STRIPE_CANCEL_URL"    default:""`
 }
 
 func main() {
@@ -91,7 +98,15 @@ func main() {
 		MaxAttempts:    cfg.CodeMaxAttempts,
 	}
 
-	svc := server.New(store.New(pool), maker, log, producer, codeCfg)
+	stripeCfg := server.StripeConfig{
+		SecretKey:     cfg.StripeSecretKey,
+		WebhookSecret: cfg.StripeWebhookSec,
+		PriceID:       cfg.StripePriceID,
+		SuccessURL:    cfg.StripeSuccessURL,
+		CancelURL:     cfg.StripeCancelURL,
+	}
+
+	svc := server.New(store.New(pool), maker, log, producer, codeCfg, stripeCfg)
 
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(pkgmetrics.UnaryServerInterceptor("auth", log)),

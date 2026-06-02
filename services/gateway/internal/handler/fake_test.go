@@ -96,3 +96,15 @@ func (f *fakeAuthClient) RequestEmailVerification(ctx context.Context, in *authv
 func (f *fakeAuthClient) ConfirmEmail(ctx context.Context, in *authv1.ConfirmEmailRequest, opts ...grpc.CallOption) (*authv1.ConfirmEmailResponse, error) {
 	panic("not used in handler tests")
 }
+func (f *fakeAuthClient) RedeemPromoCode(ctx context.Context, in *authv1.RedeemPromoCodeRequest, opts ...grpc.CallOption) (*authv1.RedeemPromoCodeResponse, error) {
+	panic("not used in handler tests")
+}
+func (f *fakeAuthClient) GetSubscription(ctx context.Context, in *authv1.GetSubscriptionRequest, opts ...grpc.CallOption) (*authv1.GetSubscriptionResponse, error) {
+	panic("not used in handler tests")
+}
+func (f *fakeAuthClient) CreateStripeCheckoutSession(ctx context.Context, in *authv1.CreateStripeCheckoutSessionRequest, opts ...grpc.CallOption) (*authv1.CreateStripeCheckoutSessionResponse, error) {
+	panic("not used in handler tests")
+}
+func (f *fakeAuthClient) HandleStripeWebhook(ctx context.Context, in *authv1.HandleStripeWebhookRequest, opts ...grpc.CallOption) (*authv1.HandleStripeWebhookResponse, error) {
+	panic("not used in handler tests")
+}

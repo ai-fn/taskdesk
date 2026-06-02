@@ -6,6 +6,8 @@ import { parseTask } from '@/api/tasks'
 import { Button } from '@/components/ui/Button'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
 import { Spinner } from '@/components/ui/Spinner'
+import { PAYWALL_EVENT } from '@/api/client'
+import { useAuth } from '@/hooks/useAuth'
 import axios from 'axios'
 
 interface Props {
@@ -16,6 +18,7 @@ interface Props {
 
 export function NaturalLanguageInput({ lists, onParsed, onCancel }: Props) {
   const { t } = useTranslation()
+  const { plan } = useAuth()
   const LOADING_MESSAGES: string[] = t('tasks.parse.loadingMessages', { returnObjects: true }) as string[]
   const [text, setText] = useState('')
   const [isParsing, setIsParsing] = useState(false)
@@ -105,6 +108,38 @@ export function NaturalLanguageInput({ lists, onParsed, onCancel }: Props) {
     if (e.key === 'Escape' && !isParsing) {
       onCancel()
     }
+  }
+
+  if (plan !== 'pro') {
+    return (
+      <div
+        className="group relative cursor-pointer select-none overflow-hidden rounded-lg border border-dashed border-indigo-200/70 bg-indigo-50/40 px-4 py-5 transition-all duration-200 hover:border-indigo-300/80 hover:bg-indigo-50/70 dark:border-indigo-800/40 dark:bg-indigo-950/10 dark:hover:border-indigo-700/60 dark:hover:bg-indigo-950/20"
+        onClick={() => window.dispatchEvent(new CustomEvent(PAYWALL_EVENT))}
+        role="button"
+        tabIndex={0}
+        aria-label={t('paywall.proFeature')}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') window.dispatchEvent(new CustomEvent(PAYWALL_EVENT)) }}
+      >
+        {/* Dimmed skeleton of the input */}
+        <div className="pointer-events-none space-y-3 opacity-40">
+          <div className="h-2 w-40 rounded-full bg-gray-400 dark:bg-gray-600" />
+          <div className="h-20 rounded-md border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-800" />
+          <div className="flex justify-end">
+            <div className="h-8 w-28 rounded-md bg-indigo-300 dark:bg-indigo-700" />
+          </div>
+        </div>
+
+        {/* Centered inline badge */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="flex items-center gap-2 rounded-full border border-indigo-200 bg-white/90 px-3.5 py-1.5 shadow-sm backdrop-blur-sm transition-all duration-200 group-hover:border-indigo-300 group-hover:shadow-md dark:border-indigo-800/70 dark:bg-gray-900/90 dark:group-hover:border-indigo-700">
+            <span className="text-indigo-400 dark:text-indigo-500 text-xs">✦</span>
+            <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400">{t('tasks.parse.describeLabel')}</span>
+            <span className="h-3 w-px bg-indigo-200 dark:bg-indigo-800" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 dark:text-indigo-500">Pro</span>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (

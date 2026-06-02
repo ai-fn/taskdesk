@@ -348,6 +348,8 @@ message SearchTasksRequest {
   string         user_id   = 1;
   repeated float embedding = 2;
   int32          limit     = 3;
+  // query is used for fulltext/trigram search when embedding is empty (free plan).
+  string         query     = 4;
 }
 
 message SearchTasksResponse {
