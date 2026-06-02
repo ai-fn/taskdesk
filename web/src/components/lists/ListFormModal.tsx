@@ -43,7 +43,6 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
   const { theme } = useTheme()
   const emojiTheme = (theme === 'dark' ? 'dark' : theme === 'light' ? 'light' : 'auto') as EmojiTheme
 
-  // Close picker when clicking outside it
   useEffect(() => {
     if (!showPicker) return
     function onPointerDown(e: PointerEvent) {
@@ -66,154 +65,143 @@ export function ListFormModal({ list, groups = [], onSave, onCancel, isLoading }
     onSave(name.trim(), color, groupId || undefined, icon || undefined)
   }
 
-  // The "custom" slot shows the current emoji if it's not a preset, or a pencil placeholder
   const isCustom = icon !== '' && !PRESET_ICONS.includes(icon)
+
+  const iconBtn = (active: boolean, dashed = false) =>
+    `flex aspect-square w-full items-center justify-center overflow-hidden rounded-lg border-2 text-lg leading-none transition-colors ${
+      active
+        ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
+        : dashed
+          ? 'border-dashed border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+          : 'border-transparent hover:border-gray-200 dark:hover:border-gray-600'
+    }`
 
   return (
     <Modal onClose={onCancel} className="max-w-sm">
-      <div className="rounded-2xl bg-white dark:bg-gray-800 p-6 shadow-xl">
-        <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {list ? t('lists.form.editTitle') : t('lists.form.newTitle')}
-        </h2>
+      <div className="rounded-2xl bg-white dark:bg-gray-800 shadow-xl p-5">
+          <h2 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">
+            {list ? t('lists.form.editTitle') : t('lists.form.newTitle')}
+          </h2>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <Input
-            label={t('lists.form.nameLabel')}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t('lists.form.namePlaceholder')}
-            autoFocus
-          />
+          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+            <Input
+              label={t('lists.form.nameLabel')}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t('lists.form.namePlaceholder')}
+              autoFocus
+            />
 
-          {/* Color picker */}
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('lists.form.colorLabel')}</label>
-            <div className="grid grid-cols-6 gap-2">
-              {COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setColor(c)}
-                  className="h-8 w-8 rounded-full transition-transform hover:scale-110"
-                  style={{
-                    backgroundColor: c,
-                    outline: color === c ? `3px solid ${c}` : 'none',
-                    outlineOffset: '2px',
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-
-          {/* Icon picker */}
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('lists.form.iconLabel')}</label>
-
-            <div className="grid grid-cols-7 gap-1">
-              {/* Slot 0 — opens emoji board */}
-              <div className="relative" ref={pickerRef}>
-                <button
-                  type="button"
-                  title={t('lists.form.iconPickerPlaceholder')}
-                  onClick={() => setShowPicker((v) => !v)}
-                  className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-base transition-colors ${
-                    showPicker || isCustom
-                      ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
-                      : 'border-dashed border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
-                  }`}
-                >
-                  {isCustom ? icon : '😀'}
-                </button>
-
-                {showPicker && (
-                  <div className="absolute left-0 top-11 z-[60]">
-                    <Suspense fallback={<div className="flex h-[380px] w-[320px] items-center justify-center rounded-lg border bg-white dark:bg-gray-800 dark:border-gray-700 text-sm text-gray-400">{t('common.loading')}</div>}>
-                      <EmojiPicker
-                        onEmojiClick={handleEmojiClick}
-                        theme={emojiTheme}
-                        width={320}
-                        height={380}
-                        searchPlaceholder={t('lists.form.iconSearch')}
-                        lazyLoadEmojis
-                      />
-                    </Suspense>
-                  </div>
-                )}
+            {/* Color picker */}
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-gray-700 dark:text-gray-300">
+                {t('lists.form.colorLabel')}
+              </label>
+              <div className="grid grid-cols-6 gap-1.5">
+                {COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setColor(c)}
+                    className="aspect-square w-full rounded-full transition-transform hover:scale-110"
+                    style={{
+                      backgroundColor: c,
+                      outline: color === c ? `3px solid ${c}` : 'none',
+                      outlineOffset: '2px',
+                    }}
+                  />
+                ))}
               </div>
-
-              {/* Slots 1–6: first row of presets */}
-              {PRESET_ICONS.slice(0, 6).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setIcon(p)}
-                  className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-base transition-colors ${
-                    icon === p ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30' : 'border-transparent hover:border-gray-200 dark:hover:border-gray-600'
-                  }`}
-                >
-                  {p}
-                </button>
-              ))}
             </div>
 
-            {/* Rows 2–6: remaining presets + "no icon" slot */}
-            {[6, 13, 20, 27].map((start) => (
-              <div key={start} className="mt-1 grid grid-cols-7 gap-1">
-                {start === 6 ? (
-                  // "No icon" clear button in position 0 of row 2
+            {/* Icon picker — all slots in one grid, identical size */}
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-gray-700 dark:text-gray-300">
+                {t('lists.form.iconLabel')}
+              </label>
+              <div className="grid grid-cols-8 gap-1">
+                {/* Slot 0: open emoji picker */}
+                <div className="relative" ref={pickerRef}>
                   <button
                     type="button"
-                    title={t('lists.form.noIcon')}
-                    onClick={() => setIcon('')}
-                    className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-xs text-gray-400 dark:text-gray-500 transition-colors ${
-                      !icon ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30' : 'border-dashed border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
-                    }`}
+                    title={t('lists.form.iconPickerPlaceholder')}
+                    onClick={() => setShowPicker((v) => !v)}
+                    className={iconBtn(showPicker || isCustom, !showPicker && !isCustom)}
                   >
-                    ✕
+                    {isCustom ? icon : '😀'}
                   </button>
-                ) : (
-                  <div />
-                )}
-                {PRESET_ICONS.slice(start, start + 6).map((p) => (
+                  {showPicker && (
+                    <div className="absolute left-0 top-[calc(100%+4px)] z-[60]">
+                      <Suspense fallback={
+                        <div className="flex h-[380px] w-[320px] items-center justify-center rounded-lg border bg-white dark:bg-gray-800 dark:border-gray-700 text-sm text-gray-400">
+                          {t('common.loading')}
+                        </div>
+                      }>
+                        <EmojiPicker
+                          onEmojiClick={handleEmojiClick}
+                          theme={emojiTheme}
+                          width={320}
+                          height={380}
+                          searchPlaceholder={t('lists.form.iconSearch')}
+                          lazyLoadEmojis
+                        />
+                      </Suspense>
+                    </div>
+                  )}
+                </div>
+
+                {/* Slot 1: clear / no icon */}
+                <button
+                  type="button"
+                  title={t('lists.form.noIcon')}
+                  onClick={() => setIcon('')}
+                  className={`${iconBtn(!icon, !!icon)} text-sm text-gray-400 dark:text-gray-500`}
+                >
+                  ✕
+                </button>
+
+                {/* Slots 2–37: presets */}
+                {PRESET_ICONS.map((p) => (
                   <button
                     key={p}
                     type="button"
                     onClick={() => setIcon(p)}
-                    className={`flex h-9 w-9 items-center justify-center rounded-lg border-2 text-base transition-colors ${
-                      icon === p ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30' : 'border-transparent hover:border-gray-200 dark:hover:border-gray-600'
-                    }`}
+                    className={iconBtn(icon === p)}
                   >
                     {p}
                   </button>
                 ))}
               </div>
-            ))}
-          </div>
-
-          {/* Group selector */}
-          {groups.length > 0 && (
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('lists.form.groupLabel')}</label>
-              <select
-                value={groupId}
-                onChange={(e) => setGroupId(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-              >
-                <option value="">{t('lists.form.noGroup')}</option>
-                {groups.map((g) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
             </div>
-          )}
 
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={onCancel}>{t('common.cancel')}</Button>
-            <Button type="submit" loading={isLoading} disabled={!name.trim()}>
-              {list ? t('common.save') : t('common.create')}
-            </Button>
-          </div>
-        </form>
+            {/* Group selector */}
+            {groups.length > 0 && (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+                  {t('lists.form.groupLabel')}
+                </label>
+                <select
+                  value={groupId}
+                  onChange={(e) => setGroupId(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                >
+                  <option value="">{t('lists.form.noGroup')}</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+              <Button type="button" variant="secondary" onClick={onCancel} className="w-full justify-center sm:w-auto">
+                {t('common.cancel')}
+              </Button>
+              <Button type="submit" loading={isLoading} disabled={!name.trim()} className="w-full justify-center sm:w-auto">
+                {list ? t('common.save') : t('common.create')}
+              </Button>
+            </div>
+          </form>
       </div>
     </Modal>
   )

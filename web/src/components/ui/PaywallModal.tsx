@@ -70,7 +70,7 @@ export function PaywallModal({ onClose, featureName }: Props) {
           <div className="mt-6 h-40 w-40 rounded-full bg-indigo-500/20 blur-3xl" />
         </div>
 
-        <div className="relative px-7 pb-7 pt-8">
+        <div className="relative px-5 pb-6 pt-7 sm:px-7 sm:pb-7 sm:pt-8">
           {/* Lock icon */}
           <div className="group mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/20 backdrop-blur-sm transition-all duration-300 hover:bg-white/15 hover:ring-white/30">
             <svg
@@ -144,12 +144,12 @@ export function PaywallModal({ onClose, featureName }: Props) {
                       onKeyDown={(e) => e.key === 'Enter' && handleRedeem()}
                       placeholder={t('paywall.promoPlaceholder')}
                       autoFocus
-                      className="flex-1 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-indigo-400/60 focus:border-indigo-400/60 focus:outline-none focus:ring-1 focus:ring-indigo-400/40"
+                      className="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-indigo-400/60 focus:border-indigo-400/60 focus:outline-none focus:ring-1 focus:ring-indigo-400/40"
                     />
                     <button
                       onClick={handleRedeem}
                       disabled={isLoadingPromo || !promoCode.trim()}
-                      className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isLoadingPromo ? '…' : t('paywall.promoRedeem')}
                     </button>
