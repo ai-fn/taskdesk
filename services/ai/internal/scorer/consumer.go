@@ -48,6 +48,17 @@ func (c *Consumer) Handle(ctx context.Context, r *kgo.Record) error {
 }
 
 func (c *Consumer) scoreTask(ctx context.Context, ev events.TaskEvent) error {
+	// Completion scoring is a pro feature — skip free users.
+	userResp, err := c.authClient.GetUserByID(ctx, &authv1.GetUserByIDRequest{UserId: ev.UserID})
+	if err != nil {
+		c.log.Warn("scorer: get user plan", "user_id", ev.UserID, "err", err)
+		return nil // fail closed: skip on auth error rather than waste API budget
+	}
+	if userResp.GetUser().GetPlan() != "pro" {
+		c.log.Debug("scorer: skip free user", "user_id", ev.UserID)
+		return nil
+	}
+
 	// Fetch the full task.
 	taskResp, err := c.todoClient.GetTask(ctx, &todov1.GetTaskRequest{
 		UserId: ev.UserID,
@@ -216,7 +227,7 @@ func (c *Consumer) Backfill(ctx context.Context) {
 	// permanently skip the backfill.
 	bCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	usersResp, err := c.authClient.ListUserIDs(bCtx, &authv1.ListUserIDsRequest{}, grpc.WaitForReady(true))
+	usersResp, err := c.authClient.ListUserIDs(bCtx, &authv1.ListUserIDsRequest{PlanFilter: "pro"}, grpc.WaitForReady(true))
 	if err != nil {
 		c.log.Error("scorer backfill: list users", "err", err)
 		return
