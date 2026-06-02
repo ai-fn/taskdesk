@@ -120,7 +120,9 @@
       "subtasksDone_other": "{{done}}/{{count}} subtasks done",
       "restore": "Restore",
       "confirmPurge": "Permanently delete this task? This cannot be undone.",
-      "statusBlocked": "Done (blocked)"
+      "statusBlocked": "Done (blocked)",
+      "scoreProOnly": "AI Score",
+      "scoreFeatureName": "AI Completion Score"
     },
     "list": {
       "failedToLoad": "Failed to load tasks",
@@ -239,7 +241,7 @@
   "plan": {
     "ready": "Your AI daily plan is ready!",
     "title": "AI Daily Plan",
-    "generating": "Generating…",
+    "generating": "Generating",
     "generate": "✦ Generate",
     "addTasksFirst": "Add some tasks first, then generate a plan.",
     "failed": "Failed to generate plan. Try again.",

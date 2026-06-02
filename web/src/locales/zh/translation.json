@@ -119,7 +119,9 @@
       "subtasksDone_other": "{{done}}/{{count}} 个子任务已完成",
       "restore": "恢复",
       "confirmPurge": "永久删除此任务？此操作无法撤销。",
-      "statusBlocked": "已完成（被阻塞）"
+      "statusBlocked": "已完成（被阻塞）",
+      "scoreProOnly": "AI 评分",
+      "scoreFeatureName": "AI 完成度评分"
     },
     "list": {
       "failedToLoad": "加载任务失败",

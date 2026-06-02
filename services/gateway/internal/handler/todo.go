@@ -62,6 +62,9 @@ func (h *TodoHandler) List(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
+	if mw.SubscriptionPlanFromContext(r.Context()) != "pro" {
+		stripCompletionScore(resp.Tasks)
+	}
 	protoOK(w, resp)
 }
 
@@ -122,6 +125,9 @@ func (h *TodoHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		handleGRPCError(w, err)
 		return
+	}
+	if mw.SubscriptionPlanFromContext(r.Context()) != "pro" {
+		stripCompletionScore([]*todov1.Task{resp.Task})
 	}
 	protoOK(w, resp.Task)
 }
@@ -281,6 +287,16 @@ func (h *TodoHandler) RemoveDependency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// stripCompletionScore zeros score fields on tasks for non-pro users.
+// Acts as a downgrade safety net: previously computed scores become invisible
+// on the next request as soon as a user's plan is revoked.
+func stripCompletionScore(tasks []*todov1.Task) {
+	for _, t := range tasks {
+		t.CompletionScore = 0
+		t.CompletionInsight = ""
+	}
 }
 
 // GET /api/v1/tasks/{taskID}/dependencies  → {depends_on: Task[], blocking: Task[]}

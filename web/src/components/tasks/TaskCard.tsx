@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/Button'
 import { useDeleteTask, useUpdateStatus, useToggleFlagged, useRestoreTask, usePurgeTask } from '@/hooks/useTaskMutations'
 import { SubtaskList } from './SubtaskList'
 import { toBCP47 } from '@/i18n/config'
+import { useAuth } from '@/hooks/useAuth'
+import { PaywallModal } from '@/components/ui/PaywallModal'
 
 const priorityColors: Record<Priority, string> = {
   [Priority.UNSPECIFIED]: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
@@ -39,6 +41,7 @@ interface Props {
 export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
   const { t, i18n } = useTranslation()
   const navigate = useNavigate()
+  const { plan } = useAuth()
   const del = useDeleteTask(filterKey)
   const updateStatus = useUpdateStatus(filterKey)
   const toggleFlagged = useToggleFlagged(filterKey)
@@ -46,6 +49,7 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
   const purge = usePurgeTask(filterKey)
 
   const [subtasksOpen, setSubtasksOpen] = useState(false)
+  const [paywallOpen, setPaywallOpen] = useState(false)
 
   const isDone = task.status === Status.DONE
   const isTemp = task.id.startsWith('temp-')
@@ -132,13 +136,28 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
                 {t('tasks.card.due', { date: new Date(task.due_at).toLocaleDateString(toBCP47(i18n.language)) })}
               </span>
             )}
-            {task.completion_score != null && task.completion_score > 0 && (
+            {plan === 'pro' && task.completion_score != null && task.completion_score > 0 && (
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-medium cursor-default ${scoreColor(task.completion_score)}`}
                 title={task.completion_insight || undefined}
               >
                 ✦ {task.completion_score}%
               </span>
+            )}
+            {plan === 'free' && (
+              <>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setPaywallOpen(true) }}
+                  className="rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
+                >
+                  🔒 {t('tasks.card.scoreProOnly')}
+                </button>
+                {paywallOpen && (
+                  <div onClick={stop}>
+                    <PaywallModal featureName={t('tasks.card.scoreFeatureName')} onClose={() => setPaywallOpen(false)} />
+                  </div>
+                )}
+              </>
             )}
           </div>
 

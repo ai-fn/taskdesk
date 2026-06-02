@@ -17,6 +17,8 @@ import { Spinner } from '@/components/ui/Spinner'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
+import { useAuth } from '@/hooks/useAuth'
+import { PaywallModal } from '@/components/ui/PaywallModal'
 
 const priorityColors: Record<Priority, string> = {
   [Priority.UNSPECIFIED]: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
@@ -57,12 +59,14 @@ export function TaskDetailPage() {
     enabled: !!taskId,
   })
 
+  const { plan } = useAuth()
   const updateStatus = useUpdateStatus()
   const toggleFlagged = useToggleFlagged()
   const updateTask = useUpdateTask()
 
   const [editOpen, setEditOpen] = useState(false)
   const [editError, setEditError] = useState('')
+  const [paywallOpen, setPaywallOpen] = useState(false)
 
   const list = useMemo(() => lists.find((l) => l.id === task?.list_id), [lists, task])
 
@@ -169,13 +173,26 @@ export function TaskDetailPage() {
                 </span>
               )}
 
-              {task.completion_score != null && task.completion_score > 0 && (
+              {plan === 'pro' && task.completion_score != null && task.completion_score > 0 && (
                 <span
                   className={`rounded-full px-3 py-1 text-xs font-medium cursor-default ${scoreColor(task.completion_score)}`}
                   title={task.completion_insight || undefined}
                 >
                   ✦ {task.completion_score}%
                 </span>
+              )}
+              {plan === 'free' && (
+                <>
+                  <button
+                    onClick={() => setPaywallOpen(true)}
+                    className="rounded-full px-3 py-1 text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
+                  >
+                    🔒 {t('tasks.card.scoreProOnly')}
+                  </button>
+                  {paywallOpen && (
+                    <PaywallModal featureName={t('tasks.card.scoreFeatureName')} onClose={() => setPaywallOpen(false)} />
+                  )}
+                </>
               )}
 
               {task.tags?.map((tag) => (
@@ -208,7 +225,7 @@ export function TaskDetailPage() {
           </div>
         </div>
 
-        {task.completion_insight && (
+        {plan === 'pro' && task.completion_insight && (
           <p className="mt-3 text-xs italic text-gray-500 dark:text-gray-400">
             ✦ {task.completion_insight}
           </p>

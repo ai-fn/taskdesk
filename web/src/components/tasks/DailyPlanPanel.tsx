@@ -91,7 +91,6 @@ export function DailyPlanPanel() {
 
   // Teaser text shown in collapsed bar
   function teaserText() {
-    if (generate.isPending) return t('plan.generating')
     if (plan) return t('plan.tasksRanked', { count: plan.items.length })
     return t('plan.noPlanShort')
   }
@@ -114,11 +113,7 @@ export function DailyPlanPanel() {
           <Spinner className="ml-1 h-3.5 w-3.5 text-indigo-400 shrink-0" />
         ) : (
           <span className="ml-1 truncate text-xs text-indigo-500 dark:text-indigo-400 flex-1">
-            {generate.isPending ? (
-              <>{t('plan.generating')}<span className="inline-block w-4 text-left">{dots}</span></>
-            ) : (
-              teaserText()
-            )}
+            {generate.isPending ? null : teaserText()}
           </span>
         )}
 
