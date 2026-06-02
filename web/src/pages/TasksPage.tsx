@@ -104,10 +104,10 @@ export function TasksPage() {
   async function handleCreate(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string; list_id?: string | null; flagged?: boolean; subtasks?: string[] }) {
     setFormError('')
     try {
-      const { list_id: _l, subtasks = [], ...rest } = values
+      const { subtasks = [], list_id, ...rest } = values
       const newTask = await createTask.mutateAsync({
         ...rest,
-        list_id: isCustomList ? listId : undefined,
+        list_id: list_id ?? undefined,
       })
       if (subtasks.length > 0) {
         await Promise.all(subtasks.map((title) =>
