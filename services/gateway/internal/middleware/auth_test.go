@@ -2,85 +2,95 @@ package middleware_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/fsociety/todo/pkg/tokens"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
+	"github.com/fsociety/todo/services/gateway/internal/auth"
 	"github.com/fsociety/todo/services/gateway/internal/middleware"
+	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// minimalAuthClient implements only ValidateToken; all other methods panic.
-type minimalAuthClient struct {
-	validateToken func(ctx context.Context, req *authv1.ValidateTokenRequest, opts ...grpc.CallOption) (*authv1.ValidateTokenResponse, error)
+// ── token + JWKS test helpers ───────────────────────────────────────────────
+
+func newKey(t *testing.T) (*rsa.PrivateKey, string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kid := fmt.Sprintf("%x", key.PublicKey.N.Bytes()[:8])
+	return key, kid
 }
 
-func (m *minimalAuthClient) ValidateToken(ctx context.Context, req *authv1.ValidateTokenRequest, opts ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
-	return m.validateToken(ctx, req, opts...)
+func mint(t *testing.T, key *rsa.PrivateKey, kid, userID, email, sid string, exp time.Time) string {
+	t.Helper()
+	claims := tokens.Claims{
+		UserID:    userID,
+		Email:     email,
+		SessionID: sid,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
+			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-time.Minute)),
+			ExpiresAt: jwt.NewNumericDate(exp),
+		},
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = kid
+	s, err := tok.SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
 
-func (m *minimalAuthClient) SignUp(ctx context.Context, in *authv1.SignUpRequest, opts ...grpc.CallOption) (*authv1.SignUpResponse, error) {
-	panic("not implemented")
+// fakeAuth implements authv1.AuthServiceClient; only GetJWKS/GetUserByID are
+// wired. Anything else nil-panics through the embedded interface.
+type fakeAuth struct {
+	authv1.AuthServiceClient
+	key  *rsa.PrivateKey
+	kid  string
+	plan string
+	lang string
+	// userErr, when set, makes GetUserByID fail (simulates auth-service down).
+	userErr error
 }
-func (m *minimalAuthClient) Login(ctx context.Context, in *authv1.LoginRequest, opts ...grpc.CallOption) (*authv1.LoginResponse, error) {
-	panic("not implemented")
+
+func (f *fakeAuth) GetJWKS(_ context.Context, _ *authv1.GetJWKSRequest, _ ...grpc.CallOption) (*authv1.GetJWKSResponse, error) {
+	return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{{
+		Kty: "RSA", Kid: f.kid, Use: "sig", Alg: "RS256",
+		N: base64.RawURLEncoding.EncodeToString(f.key.PublicKey.N.Bytes()),
+		E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(f.key.PublicKey.E)).Bytes()),
+	}}}, nil
 }
-func (m *minimalAuthClient) RefreshToken(ctx context.Context, in *authv1.RefreshTokenRequest, opts ...grpc.CallOption) (*authv1.RefreshTokenResponse, error) {
-	panic("not implemented")
+
+func (f *fakeAuth) GetUserByID(_ context.Context, in *authv1.GetUserByIDRequest, _ ...grpc.CallOption) (*authv1.GetUserByIDResponse, error) {
+	if f.userErr != nil {
+		return nil, f.userErr
+	}
+	return &authv1.GetUserByIDResponse{User: &authv1.UserSummary{
+		UserId: in.UserId, Language: f.lang, Plan: f.plan, EmailVerified: true,
+	}}, nil
 }
-func (m *minimalAuthClient) Logout(ctx context.Context, in *authv1.LogoutRequest, opts ...grpc.CallOption) (*authv1.LogoutResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) GetJWKS(ctx context.Context, in *authv1.GetJWKSRequest, opts ...grpc.CallOption) (*authv1.GetJWKSResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) ListUserIDs(ctx context.Context, in *authv1.ListUserIDsRequest, opts ...grpc.CallOption) (*authv1.ListUserIDsResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) GetUserByID(ctx context.Context, in *authv1.GetUserByIDRequest, opts ...grpc.CallOption) (*authv1.GetUserByIDResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) OAuthSignIn(ctx context.Context, in *authv1.OAuthSignInRequest, opts ...grpc.CallOption) (*authv1.OAuthSignInResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) ListSessions(ctx context.Context, in *authv1.ListSessionsRequest, opts ...grpc.CallOption) (*authv1.ListSessionsResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) RevokeSession(ctx context.Context, in *authv1.RevokeSessionRequest, opts ...grpc.CallOption) (*authv1.RevokeSessionResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) RevokeOtherSessions(ctx context.Context, in *authv1.RevokeOtherSessionsRequest, opts ...grpc.CallOption) (*authv1.RevokeOtherSessionsResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) UpdateUserLanguage(ctx context.Context, in *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) RequestPasswordReset(ctx context.Context, in *authv1.RequestPasswordResetRequest, opts ...grpc.CallOption) (*authv1.RequestPasswordResetResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) ResetPassword(ctx context.Context, in *authv1.ResetPasswordRequest, opts ...grpc.CallOption) (*authv1.ResetPasswordResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) RequestEmailVerification(ctx context.Context, in *authv1.RequestEmailVerificationRequest, opts ...grpc.CallOption) (*authv1.RequestEmailVerificationResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) ConfirmEmail(ctx context.Context, in *authv1.ConfirmEmailRequest, opts ...grpc.CallOption) (*authv1.ConfirmEmailResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) RedeemPromoCode(ctx context.Context, in *authv1.RedeemPromoCodeRequest, opts ...grpc.CallOption) (*authv1.RedeemPromoCodeResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) GetSubscription(ctx context.Context, in *authv1.GetSubscriptionRequest, opts ...grpc.CallOption) (*authv1.GetSubscriptionResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) CreateStripeCheckoutSession(ctx context.Context, in *authv1.CreateStripeCheckoutSessionRequest, opts ...grpc.CallOption) (*authv1.CreateStripeCheckoutSessionResponse, error) {
-	panic("not implemented")
-}
-func (m *minimalAuthClient) HandleStripeWebhook(ctx context.Context, in *authv1.HandleStripeWebhookRequest, opts ...grpc.CallOption) (*authv1.HandleStripeWebhookResponse, error) {
-	panic("not implemented")
+
+// newMiddleware builds the Authenticate middleware over a real Verifier backed
+// by the fake auth client.
+func newMiddleware(t *testing.T, f *fakeAuth) func(http.Handler) http.Handler {
+	t.Helper()
+	v := auth.NewVerifier(f)
+	t.Cleanup(v.Stop)
+	return middleware.Authenticate(v)
 }
 
 // probe is a simple next handler that captures the context values set by Authenticate.
@@ -100,18 +110,16 @@ func probeHandler(result *probeResult) http.Handler {
 	})
 }
 
-func makeAuthMiddleware(fn func(ctx context.Context, req *authv1.ValidateTokenRequest, opts ...grpc.CallOption) (*authv1.ValidateTokenResponse, error)) func(http.Handler) http.Handler {
-	return middleware.Authenticate(&minimalAuthClient{validateToken: fn})
-}
+// ── tests ───────────────────────────────────────────────────────────────────
 
 func TestAuthenticate_MissingToken(t *testing.T) {
-	mw := makeAuthMiddleware(nil) // ValidateToken should never be called
+	key, kid := newKey(t)
+	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
 	probe := &probeResult{}
-	handler := mw(probeHandler(probe))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/", nil)
-	handler.ServeHTTP(w, r)
+	mw(probeHandler(probe)).ServeHTTP(w, r)
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", w.Code)
@@ -122,20 +130,15 @@ func TestAuthenticate_MissingToken(t *testing.T) {
 }
 
 func TestAuthenticate_ValidToken_PopulatesContext(t *testing.T) {
-	mw := makeAuthMiddleware(func(_ context.Context, _ *authv1.ValidateTokenRequest, _ ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
-		return &authv1.ValidateTokenResponse{
-			UserId:    "user123",
-			Email:     "test@example.com",
-			SessionId: "sess456",
-		}, nil
-	})
+	key, kid := newKey(t)
+	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free", lang: "en"})
 	probe := &probeResult{}
-	handler := mw(probeHandler(probe))
 
+	tok := mint(t, key, kid, "user123", "test@example.com", "sess456", time.Now().Add(time.Hour))
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("Authorization", "Bearer mytoken")
-	handler.ServeHTTP(w, r)
+	r.Header.Set("Authorization", "Bearer "+tok)
+	mw(probeHandler(probe)).ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", w.Code)
@@ -155,13 +158,14 @@ func TestAuthenticate_ValidToken_PopulatesContext(t *testing.T) {
 }
 
 func TestAuthenticate_ValidToken_PopulatesLanguage(t *testing.T) {
-	mw := makeAuthMiddleware(func(_ context.Context, _ *authv1.ValidateTokenRequest, _ ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
-		return &authv1.ValidateTokenResponse{UserId: "u", Email: "u@x.com", SessionId: "s", Language: "zh"}, nil
-	})
+	key, kid := newKey(t)
+	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free", lang: "zh"})
 	probe := &probeResult{}
+
+	tok := mint(t, key, kid, "u", "u@x.com", "s", time.Now().Add(time.Hour))
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Authorization", "Bearer "+tok)
 	mw(probeHandler(probe)).ServeHTTP(w, r)
 
 	if probe.language != "zh" {
@@ -170,13 +174,14 @@ func TestAuthenticate_ValidToken_PopulatesLanguage(t *testing.T) {
 }
 
 func TestAuthenticate_MissingLanguage_DefaultsToEn(t *testing.T) {
-	mw := makeAuthMiddleware(func(_ context.Context, _ *authv1.ValidateTokenRequest, _ ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
-		return &authv1.ValidateTokenResponse{UserId: "u", Email: "u@x.com", SessionId: "s"}, nil
-	})
+	key, kid := newKey(t)
+	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free", lang: ""})
 	probe := &probeResult{}
+
+	tok := mint(t, key, kid, "u", "u@x.com", "s", time.Now().Add(time.Hour))
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Authorization", "Bearer "+tok)
 	mw(probeHandler(probe)).ServeHTTP(w, r)
 
 	if probe.language != "en" {
@@ -184,13 +189,15 @@ func TestAuthenticate_MissingLanguage_DefaultsToEn(t *testing.T) {
 	}
 }
 
-func TestAuthenticate_UnauthenticatedError_Returns401(t *testing.T) {
-	mw := makeAuthMiddleware(func(_ context.Context, _ *authv1.ValidateTokenRequest, _ ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
-		return nil, status.Error(codes.Unauthenticated, "token expired")
-	})
+func TestAuthenticate_InvalidToken_Returns401(t *testing.T) {
+	key, kid := newKey(t)
+	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
+
+	// Expired token: well-formed and correctly signed, but past its exp.
+	tok := mint(t, key, kid, "u", "u@x.com", "s", time.Now().Add(-time.Hour))
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("Authorization", "Bearer badtoken")
+	r.Header.Set("Authorization", "Bearer "+tok)
 	mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(w, r)
@@ -201,12 +208,17 @@ func TestAuthenticate_UnauthenticatedError_Returns401(t *testing.T) {
 }
 
 func TestAuthenticate_ServiceError_Returns503(t *testing.T) {
-	mw := makeAuthMiddleware(func(_ context.Context, _ *authv1.ValidateTokenRequest, _ ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
-		return nil, status.Error(codes.Unavailable, "auth down")
+	key, kid := newKey(t)
+	// Valid token, but the profile fetch (a cache miss) can't reach auth.
+	mw := newMiddleware(t, &fakeAuth{
+		key: key, kid: kid,
+		userErr: status.Error(codes.Unavailable, "auth down"),
 	})
+
+	tok := mint(t, key, kid, "u", "u@x.com", "s", time.Now().Add(time.Hour))
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/", nil)
-	r.Header.Set("Authorization", "Bearer sometoken")
+	r.Header.Set("Authorization", "Bearer "+tok)
 	mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(w, r)
@@ -218,16 +230,13 @@ func TestAuthenticate_ServiceError_Returns503(t *testing.T) {
 
 func TestAuthenticate_QueryParamFallback(t *testing.T) {
 	// WebSocket clients can't set headers — they use ?token= instead.
-	mw := makeAuthMiddleware(func(_ context.Context, req *authv1.ValidateTokenRequest, _ ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
-		if req.AccessToken != "wstoken" {
-			return nil, status.Error(codes.Unauthenticated, "wrong token")
-		}
-		return &authv1.ValidateTokenResponse{UserId: "wsuser", Email: "ws@x.com", SessionId: "wssid"}, nil
-	})
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest("GET", "/?token=wstoken", nil)
+	key, kid := newKey(t)
+	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
 	probe := &probeResult{}
+
+	tok := mint(t, key, kid, "wsuser", "ws@x.com", "wssid", time.Now().Add(time.Hour))
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/?token="+tok, nil)
 	mw(probeHandler(probe)).ServeHTTP(w, r)
 
 	if w.Code != http.StatusOK || !probe.called {
