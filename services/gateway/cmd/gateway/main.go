@@ -128,10 +128,14 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// Stop accepting HTTP and drain in-flight requests. Hijacked WebSocket
+	// connections are NOT covered here — cleanup drains the hub explicitly.
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error("graceful shutdown failed", "err", err)
 		os.Exit(1)
 	}
-	cleanup() // stop rate limiter background goroutines
+	// cleanup drains the WebSocket hub (close frames to clients) and stops
+	// background goroutines, bounded by the remaining shutdown budget.
+	cleanup(shutdownCtx)
 	log.Info("shutdown complete")
 }

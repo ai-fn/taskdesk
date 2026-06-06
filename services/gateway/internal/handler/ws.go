@@ -1,14 +1,13 @@
 package handler
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/fsociety/todo/services/gateway/internal/middleware"
+	"github.com/fsociety/todo/services/gateway/internal/ws"
 	"github.com/gorilla/websocket"
-	"github.com/redis/go-redis/v9"
 )
 
 var upgrader = websocket.Upgrader{
@@ -19,16 +18,16 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-// WSHandler upgrades HTTP to WebSocket and forwards Redis pub/sub messages
-// for the authenticated user. It expects the user_id to be set in the request
-// context by the Authenticate middleware (key: "user_id").
+// WSHandler upgrades HTTP to WebSocket and hands the connection to the per-pod
+// Hub, which fans out Redis pub/sub notifications for the authenticated user.
+// It expects user_id in the request context (set by Authenticate).
 type WSHandler struct {
-	redis *redis.Client
-	log   *slog.Logger
+	hub *ws.Hub
+	log *slog.Logger
 }
 
-func NewWSHandler(rdb *redis.Client, log *slog.Logger) *WSHandler {
-	return &WSHandler{redis: rdb, log: log}
+func NewWSHandler(hub *ws.Hub, log *slog.Logger) *WSHandler {
+	return &WSHandler{hub: hub, log: log}
 }
 
 func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -43,41 +42,9 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.log.Error("ws upgrade", "err", err)
 		return
 	}
-	defer conn.Close()
 
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
-	channel := "user:" + userID
-	sub := h.redis.Subscribe(ctx, channel)
-	defer sub.Close()
-
-	// Detect client disconnect via a read pump in a goroutine.
-	go func() {
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				cancel()
-				return
-			}
-		}
-	}()
-
-	h.log.Info("ws connected", "user_id", userID, "channel", channel)
-
-	msgCh := sub.Channel()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg, ok := <-msgCh:
-			if !ok {
-				return
-			}
-			if err := conn.WriteMessage(websocket.TextMessage, []byte(msg.Payload)); err != nil {
-				h.log.Error("ws write", "err", err)
-				return
-			}
-		}
-	}
+	h.log.Info("ws connected", "user_id", userID)
+	// Serve blocks until the peer disconnects (or returns immediately if the hub
+	// is shutting down). It owns conn's lifecycle from here.
+	h.hub.Serve(conn, userID, h.log)
 }
-
