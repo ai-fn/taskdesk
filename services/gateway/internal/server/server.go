@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
+	gwauth "github.com/fsociety/todo/services/gateway/internal/auth"
 	"github.com/fsociety/todo/services/gateway/internal/handler"
 	"github.com/fsociety/todo/services/gateway/internal/middleware"
 	"github.com/fsociety/todo/services/gateway/internal/oauth"
@@ -41,8 +42,16 @@ func New(
 		_, _ = w.Write([]byte("ok"))
 	})
 
+	// Local JWT verifier: validates tokens with a cached signing key and serves
+	// user profiles from a short-TTL cache, keeping auth off the per-request
+	// gRPC hot path. Shared across every authenticated mount below.
+	verifier := gwauth.NewVerifier(authClient)
+
 	auth := handler.NewAuthHandler(authClient, todoClient, log)
-	cleanup := auth.Stop
+	cleanup := func() {
+		auth.Stop()
+		verifier.Stop()
+	}
 	oauthH := handler.NewOAuthHandler(authClient, oauthProviders, log)
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/signup",  auth.SignUp)
@@ -59,7 +68,7 @@ func New(
 
 	todo := handler.NewTodoHandler(todoClient)
 	r.Route("/api/v1/tasks", func(r chi.Router) {
-		r.Use(middleware.Authenticate(authClient))
+		r.Use(middleware.Authenticate(verifier))
 
 		r.Get("/",                   todo.List)
 		r.Post("/",                  todo.Create)
@@ -78,7 +87,7 @@ func New(
 
 	lists := handler.NewListHandler(todoClient)
 	r.Route("/api/v1/lists", func(r chi.Router) {
-		r.Use(middleware.Authenticate(authClient))
+		r.Use(middleware.Authenticate(verifier))
 
 		r.Get("/",              lists.List)
 		r.Post("/",             lists.Create)
@@ -89,7 +98,7 @@ func New(
 
 	groups := handler.NewGroupHandler(todoClient)
 	r.Route("/api/v1/groups", func(r chi.Router) {
-		r.Use(middleware.Authenticate(authClient))
+		r.Use(middleware.Authenticate(verifier))
 
 		r.Get("/",              groups.List)
 		r.Post("/",             groups.Create)
@@ -101,7 +110,7 @@ func New(
 	// Daily plan (AI-generated) — pro only
 	plan := handler.NewPlanHandler(aiClient)
 	r.Route("/api/v1/plan", func(r chi.Router) {
-		r.Use(middleware.Authenticate(authClient))
+		r.Use(middleware.Authenticate(verifier))
 		r.Use(middleware.RequirePlan("pro"))
 		r.Get("/", plan.GetLatest)
 		r.Post("/generate", plan.Generate)
@@ -109,12 +118,12 @@ func New(
 
 	// Semantic search (pgvector) — available to all; pro uses vector, free uses fulltext.
 	search := handler.NewSearchHandler(aiClient, todoClient)
-	r.With(middleware.Authenticate(authClient)).Get("/api/v1/tasks/search", search.Search)
+	r.With(middleware.Authenticate(verifier)).Get("/api/v1/tasks/search", search.Search)
 
 	// Natural language task parsing — pro only
 	parseH := handler.NewParseHandler(aiClient)
 	r.Route("/api/v1/tasks/parse", func(r chi.Router) {
-		r.Use(middleware.Authenticate(authClient))
+		r.Use(middleware.Authenticate(verifier))
 		r.Use(middleware.RequirePlan("pro"))
 		r.Post("/", parseH.Parse)
 	})
@@ -122,7 +131,7 @@ func New(
 	// Subscriptions
 	sub := handler.NewSubscriptionHandler(authClient)
 	r.Route("/api/v1/subscriptions", func(r chi.Router) {
-		r.Use(middleware.Authenticate(authClient))
+		r.Use(middleware.Authenticate(verifier))
 		r.Get("/", sub.GetSubscription)
 		r.Post("/redeem", sub.RedeemPromoCode)
 		r.Post("/checkout", sub.CreateCheckout)
@@ -134,7 +143,7 @@ func New(
 
 	sessions := handler.NewSessionsHandler(authClient)
 	r.Route("/api/v1/sessions", func(r chi.Router) {
-		r.Use(middleware.Authenticate(authClient))
+		r.Use(middleware.Authenticate(verifier))
 		r.Get("/", sessions.List)
 		r.Delete("/{sessionID}", sessions.Revoke)
 		r.Post("/revoke-others", sessions.RevokeOthers)
@@ -142,7 +151,7 @@ func New(
 
 	account := handler.NewAccountHandler(authClient)
 	r.Route("/api/v1/account", func(r chi.Router) {
-		r.Use(middleware.Authenticate(authClient))
+		r.Use(middleware.Authenticate(verifier))
 		r.Get("/me", account.Me)
 		r.Patch("/language", account.UpdateLanguage)
 		r.Post("/email/verify/request", account.RequestEmailVerification)
@@ -151,7 +160,7 @@ func New(
 
 	// WebSocket: authenticated users subscribe to their real-time notifications.
 	ws := handler.NewWSHandler(rdb, log)
-	r.With(middleware.Authenticate(authClient)).Get("/api/v1/ws", ws.ServeHTTP)
+	r.With(middleware.Authenticate(verifier)).Get("/api/v1/ws", ws.ServeHTTP)
 
 	return r, cleanup
 }

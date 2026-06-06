@@ -2,10 +2,66 @@ package handler_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"fmt"
+	"math/big"
+	"time"
 
+	"github.com/fsociety/todo/pkg/tokens"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
+	"github.com/fsociety/todo/services/gateway/internal/auth"
+	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc"
 )
+
+// Handler tests authenticate through the real local Verifier, so they need a
+// signing key whose public half GetJWKS advertises, plus real minted tokens.
+// One key per test binary is enough.
+var (
+	testKey *rsa.PrivateKey
+	testKid string
+)
+
+func init() {
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(err)
+	}
+	testKey = k
+	testKid = fmt.Sprintf("%x", k.PublicKey.N.Bytes()[:8]) // mirrors tokens.go
+}
+
+// authVerifier builds a Verifier over the fake auth client for use with
+// middleware.Authenticate in handler tests.
+func authVerifier(fake *fakeAuthClient) *auth.Verifier {
+	return auth.NewVerifier(fake)
+}
+
+// mintTestToken signs a valid access token for the given identity.
+func mintTestToken(userID, email, sid string) string {
+	claims := tokens.Claims{
+		UserID:    userID,
+		Email:     email,
+		SessionID: sid,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
+			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-time.Minute)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = testKid
+	s, err := tok.SignedString(testKey)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+// u1Token is the bearer header value for the canonical test user (u1/s1).
+func u1Token() string { return "Bearer " + mintTestToken("u1", "u1@test.com", "s1") }
 
 // fakeAuthClient implements authv1.AuthServiceClient. Only the methods actually
 // exercised by handler tests need to have their func fields set; everything
@@ -63,7 +119,11 @@ func (f *fakeAuthClient) Logout(ctx context.Context, in *authv1.LogoutRequest, o
 	panic("not used in handler tests")
 }
 func (f *fakeAuthClient) GetJWKS(ctx context.Context, in *authv1.GetJWKSRequest, opts ...grpc.CallOption) (*authv1.GetJWKSResponse, error) {
-	panic("not used in handler tests")
+	return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{{
+		Kty: "RSA", Kid: testKid, Use: "sig", Alg: "RS256",
+		N: base64.RawURLEncoding.EncodeToString(testKey.PublicKey.N.Bytes()),
+		E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(testKey.PublicKey.E)).Bytes()),
+	}}}, nil
 }
 func (f *fakeAuthClient) ListUserIDs(ctx context.Context, in *authv1.ListUserIDsRequest, opts ...grpc.CallOption) (*authv1.ListUserIDsResponse, error) {
 	panic("not used in handler tests")
@@ -72,7 +132,11 @@ func (f *fakeAuthClient) GetUserByID(ctx context.Context, in *authv1.GetUserByID
 	if f.getUserByID != nil {
 		return f.getUserByID(ctx, in, opts...)
 	}
-	panic("not used in handler tests")
+	// Default profile so the Verifier can complete authentication in tests that
+	// don't care about plan/language. Free plan, English.
+	return &authv1.GetUserByIDResponse{User: &authv1.UserSummary{
+		UserId: in.UserId, Language: "en", Plan: "free", EmailVerified: true,
+	}}, nil
 }
 
 func (f *fakeAuthClient) UpdateUserLanguage(ctx context.Context, in *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error) {

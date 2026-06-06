@@ -127,24 +127,22 @@ func sampleTask(id string) *todov1.Task {
 // buildTodoRouter wires the Authenticate middleware + TodoHandler onto a chi router.
 func buildTodoRouter(auth *fakeAuthClient, todo *fakeTodoClient) http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.Authenticate(auth))
+	r.Use(middleware.Authenticate(authVerifier(auth)))
 	h := handler.NewTodoHandler(todo)
 	r.Get("/api/v1/tasks", h.List)
 	r.Get("/api/v1/tasks/{taskID}", h.Get)
 	return r
 }
 
-// validTokenWithPlan returns a fakeAuthClient whose ValidateToken always
-// authenticates as user "u1" with the given subscription plan.
+// validTokenWithPlan returns a fakeAuthClient that serves user "u1" with the
+// given subscription plan. Identity comes from the minted bearer token (u1Token);
+// the plan flows through the Verifier's profile lookup (GetUserByID).
 func validTokenWithPlan(plan string) *fakeAuthClient {
 	return &fakeAuthClient{
-		validateToken: func(_ context.Context, _ *authv1.ValidateTokenRequest, _ ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
-			return &authv1.ValidateTokenResponse{
-				UserId:           "u1",
-				Email:            "u1@test.com",
-				SessionId:        "s1",
-				SubscriptionPlan: plan,
-			}, nil
+		getUserByID: func(_ context.Context, req *authv1.GetUserByIDRequest, _ ...grpc.CallOption) (*authv1.GetUserByIDResponse, error) {
+			return &authv1.GetUserByIDResponse{User: &authv1.UserSummary{
+				UserId: req.UserId, Email: "u1@test.com", Plan: plan, Language: "en",
+			}}, nil
 		},
 	}
 }
@@ -160,7 +158,7 @@ func TestListTasks_CompletionScore_ProUser(t *testing.T) {
 	r := buildTodoRouter(validTokenWithPlan("pro"), todo)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
-	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Authorization", u1Token())
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -197,7 +195,7 @@ func TestListTasks_CompletionScore_FreeUser(t *testing.T) {
 	r := buildTodoRouter(validTokenWithPlan("free"), todo)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
-	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Authorization", u1Token())
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -236,7 +234,7 @@ func TestGetTask_CompletionScore_ProUser(t *testing.T) {
 	r := buildTodoRouter(validTokenWithPlan("pro"), todo)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/t1", nil)
-	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Authorization", u1Token())
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -268,7 +266,7 @@ func TestGetTask_CompletionScore_FreeUser(t *testing.T) {
 	r := buildTodoRouter(validTokenWithPlan("free"), todo)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/t1", nil)
-	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Authorization", u1Token())
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 

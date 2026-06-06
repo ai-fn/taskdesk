@@ -19,17 +19,16 @@ import (
 
 func buildAccountRouter(fake *fakeAuthClient) http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.Authenticate(fake))
+	r.Use(middleware.Authenticate(authVerifier(fake)))
 	h := handler.NewAccountHandler(fake)
 	r.Patch("/api/v1/account/language", h.UpdateLanguage)
 	r.Get("/api/v1/account/me", h.Me)
 	return r
 }
 
+// withValidToken is a no-op now that identity comes from the minted bearer
+// token (see u1Token); it remains so call sites read clearly.
 func withValidToken(fake *fakeAuthClient) *fakeAuthClient {
-	fake.validateToken = func(_ context.Context, _ *authv1.ValidateTokenRequest, _ ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
-		return &authv1.ValidateTokenResponse{UserId: "u1", Email: "u@test.com", SessionId: "s1", Language: "en"}, nil
-	}
 	return fake
 }
 
@@ -70,7 +69,7 @@ func TestAccountUpdateLanguage(t *testing.T) {
 			router := buildAccountRouter(fake)
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodPatch, "/api/v1/account/language", bytes.NewBufferString(tc.body))
-			req.Header.Set("Authorization", "Bearer tok")
+			req.Header.Set("Authorization", u1Token())
 			req.Header.Set("Content-Type", "application/json")
 			router.ServeHTTP(w, req)
 			if w.Code != tc.wantStatus {
@@ -91,7 +90,7 @@ func TestAccountMe(t *testing.T) {
 	router := buildAccountRouter(fake)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/account/me", nil)
-	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Authorization", u1Token())
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {

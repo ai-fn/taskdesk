@@ -21,7 +21,7 @@ import (
 // router — identical to how production does it in server.go.
 func buildRouter(fake *fakeAuthClient) http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.Authenticate(fake))
+	r.Use(middleware.Authenticate(authVerifier(fake)))
 	h := handler.NewSessionsHandler(fake)
 	r.Get("/api/v1/sessions", h.List)
 	r.Delete("/api/v1/sessions/{sessionID}", h.Revoke)
@@ -49,7 +49,7 @@ func validToken(fake *fakeAuthClient) *fakeAuthClient {
 
 func authedRequest(method, path string) *http.Request {
 	r := httptest.NewRequest(method, path, nil)
-	r.Header.Set("Authorization", "Bearer validtoken")
+	r.Header.Set("Authorization", u1Token())
 	return r
 }
 
