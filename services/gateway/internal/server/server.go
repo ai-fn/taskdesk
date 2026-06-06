@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/fsociety/todo/services/gateway/internal/handler"
 	"github.com/fsociety/todo/services/gateway/internal/middleware"
 	"github.com/fsociety/todo/services/gateway/internal/oauth"
+	"github.com/fsociety/todo/services/gateway/internal/ws"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
@@ -29,7 +31,7 @@ func New(
 	aiClient aiv1.AIServiceClient,
 	rdb *redis.Client,
 	oauthProviders oauth.Registry,
-) (http.Handler, func()) {
+) (http.Handler, func(context.Context)) {
 	r := chi.NewRouter()
 
 	r.Use(chimw.Recoverer)
@@ -47,8 +49,16 @@ func New(
 	// gRPC hot path. Shared across every authenticated mount below.
 	verifier := gwauth.NewVerifier(authClient)
 
+	// Per-pod WebSocket hub: one Redis PubSub fanned out to all connections,
+	// with dynamic per-user (un)subscribe and slow-consumer eviction.
+	hub := ws.NewHub(rdb.Subscribe(context.Background()), log)
+	hub.Run()
+
 	auth := handler.NewAuthHandler(authClient, todoClient, log)
-	cleanup := func() {
+	cleanup := func(ctx context.Context) {
+		// Drain hijacked WebSockets first (http.Server.Shutdown does not), then
+		// stop the cache janitors.
+		hub.Shutdown(ctx)
 		auth.Stop()
 		verifier.Stop()
 	}
@@ -159,8 +169,8 @@ func New(
 	})
 
 	// WebSocket: authenticated users subscribe to their real-time notifications.
-	ws := handler.NewWSHandler(rdb, log)
-	r.With(middleware.Authenticate(verifier)).Get("/api/v1/ws", ws.ServeHTTP)
+	wsHandler := handler.NewWSHandler(hub, log)
+	r.With(middleware.Authenticate(verifier)).Get("/api/v1/ws", wsHandler.ServeHTTP)
 
 	return r, cleanup
 }
