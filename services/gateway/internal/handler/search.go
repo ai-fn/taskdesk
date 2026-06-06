@@ -61,6 +61,9 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
+	if plan != "pro" {
+		stripCompletionScore(searchResp.Tasks)
+	}
 
 	protoOK(w, searchResp)
 }

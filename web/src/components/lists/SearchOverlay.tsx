@@ -197,7 +197,7 @@ export function SearchBar({ lists }: Props) {
                         {list.name}
                       </span>
                     )}
-                    {task.completion_score != null && task.completion_score > 0 && (
+                    {plan === 'pro' && task.completion_score != null && task.completion_score > 0 && (
                       <span
                         className={`shrink-0 rounded-full px-1.5 py-0.5 text-xs font-medium ${scoreColor(task.completion_score)}`}
                         title={task.completion_insight || undefined}
