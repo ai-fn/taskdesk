@@ -289,9 +289,9 @@ func (h *TodoHandler) RemoveDependency(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// stripCompletionScore zeros score fields on tasks for non-pro users.
-// Acts as a downgrade safety net: previously computed scores become invisible
-// on the next request as soon as a user's plan is revoked.
+// stripCompletionScore zeroes both score and insight fields for non-pro users.
+// Neither value reaches the client — score=0 and insight="" regardless of
+// what is stored in the DB.
 func stripCompletionScore(tasks []*todov1.Task) {
 	for _, t := range tasks {
 		t.CompletionScore = 0

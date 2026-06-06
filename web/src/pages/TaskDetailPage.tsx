@@ -18,7 +18,6 @@ import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
 import { useAuth } from '@/hooks/useAuth'
-import { PaywallModal } from '@/components/ui/PaywallModal'
 
 const priorityColors: Record<Priority, string> = {
   [Priority.UNSPECIFIED]: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
@@ -66,7 +65,6 @@ export function TaskDetailPage() {
 
   const [editOpen, setEditOpen] = useState(false)
   const [editError, setEditError] = useState('')
-  const [paywallOpen, setPaywallOpen] = useState(false)
 
   const list = useMemo(() => lists.find((l) => l.id === task?.list_id), [lists, task])
 
@@ -180,19 +178,6 @@ export function TaskDetailPage() {
                 >
                   ✦ {task.completion_score}%
                 </span>
-              )}
-              {plan === 'free' && (
-                <>
-                  <button
-                    onClick={() => setPaywallOpen(true)}
-                    className="shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
-                  >
-                    🔒 {t('tasks.card.scoreProOnly')}
-                  </button>
-                  {paywallOpen && (
-                    <PaywallModal featureName={t('tasks.card.scoreFeatureName')} onClose={() => setPaywallOpen(false)} />
-                  )}
-                </>
               )}
 
               {task.tags?.map((tag) => (
