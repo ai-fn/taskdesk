@@ -26,5 +26,7 @@ configMapGenerator:
       - 000010_fulltext_search.down.sql
       - 000011_attachments.up.sql
       - 000011_attachments.down.sql
+      - 000012_attachment_upload_id.up.sql
+      - 000012_attachment_upload_id.down.sql
 generatorOptions:
   disableNameSuffixHash: true
