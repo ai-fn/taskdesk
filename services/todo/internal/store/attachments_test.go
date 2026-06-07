@@ -295,3 +295,41 @@ func TestAttachments_ListAbandoned(t *testing.T) {
 		t.Fatalf("want 0 abandoned after purge, got %d", len(abandoned2))
 	}
 }
+
+func TestMultipart_CreateAndGetUploadID(t *testing.T) {
+	st := newStoreForAttachments(t)
+	ctx := context.Background()
+	const (
+		userID   = "user_1"
+		taskID   = "task_1"
+		attID    = "att_mp1"
+		uploadID = "upload-xyz-123"
+	)
+	seedTask(t, st, userID, taskID)
+
+	now := time.Now().UTC()
+	att := &domain.Attachment{
+		ID:          attID,
+		UserID:      userID,
+		TaskID:      taskID,
+		Filename:    "bigfile.mp4",
+		ContentType: "video/mp4",
+		SizeBytes:   200 << 20,
+		ObjectKey:   "eu/user_1/task_1/att_mp1/bigfile.mp4",
+		CreatedAt:   now,
+	}
+	if err := st.CreateMultipartPending(ctx, att, uploadID); err != nil {
+		t.Fatalf("CreateMultipartPending: %v", err)
+	}
+
+	got, err := st.GetAttachment(ctx, userID, attID)
+	if err != nil {
+		t.Fatalf("GetAttachment: %v", err)
+	}
+	if got.UploadID != uploadID {
+		t.Fatalf("UploadID = %q, want %q", got.UploadID, uploadID)
+	}
+	if got.Status != domain.AttachmentPending {
+		t.Fatalf("Status = %v, want pending", got.Status)
+	}
+}

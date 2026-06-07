@@ -12,16 +12,24 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const attachmentCols = `id, user_id, task_id, filename, content_type, size_bytes, object_key, status, scan_status, created_at`
+const attachmentCols = `id, user_id, task_id, filename, content_type, size_bytes, object_key, upload_id, status, scan_status, created_at`
 
 func scanAttachment(row interface {
 	Scan(dest ...any) error
 }, a *domain.Attachment) error {
-	return row.Scan(
+	var uploadID *string
+	err := row.Scan(
 		&a.ID, &a.UserID, &a.TaskID, &a.Filename,
-		&a.ContentType, &a.SizeBytes, &a.ObjectKey,
+		&a.ContentType, &a.SizeBytes, &a.ObjectKey, &uploadID,
 		&a.Status, &a.ScanStatus, &a.CreatedAt,
 	)
+	if err != nil {
+		return err
+	}
+	if uploadID != nil {
+		a.UploadID = *uploadID
+	}
+	return nil
 }
 
 // CreateAttachmentPending inserts an attachment row with status="pending".
@@ -29,11 +37,25 @@ func scanAttachment(row interface {
 func (s *Store) CreateAttachmentPending(ctx context.Context, a *domain.Attachment) error {
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO todo.attachments
-			(id, user_id, task_id, filename, content_type, size_bytes, object_key, status, scan_status, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+			(id, user_id, task_id, filename, content_type, size_bytes, object_key, upload_id, status, scan_status, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10)`,
 		a.ID, a.UserID, a.TaskID, a.Filename,
 		a.ContentType, a.SizeBytes, a.ObjectKey,
 		domain.AttachmentPending, domain.ScanClean, a.CreatedAt,
+	)
+	return err
+}
+
+// CreateMultipartPending inserts an attachment row for a multipart upload with
+// the S3 upload ID stored so the reaper can abort incomplete uploads.
+func (s *Store) CreateMultipartPending(ctx context.Context, att *domain.Attachment, uploadID string) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO todo.attachments
+			(id, user_id, task_id, filename, content_type, size_bytes, object_key, upload_id, status, scan_status, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		att.ID, att.UserID, att.TaskID, att.Filename,
+		att.ContentType, att.SizeBytes, att.ObjectKey, uploadID,
+		domain.AttachmentPending, domain.ScanClean, att.CreatedAt,
 	)
 	return err
 }
