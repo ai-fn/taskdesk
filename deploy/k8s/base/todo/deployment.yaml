@@ -33,6 +33,18 @@ spec:
                   key: DATABASE_URL
             - name: MIGRATIONS_DIR
               value: "file:///migrations/todo"
+            - name: BLOB_ENDPOINT
+              value: "http://minio.data.svc.cluster.local:9000"
+            - name: BLOB_REGION
+              value: "auto"
+            - name: BLOB_BUCKET
+              value: "attachments"
+            - name: BLOB_ACCESS_KEY
+              value: "minioadmin"
+            - name: BLOB_SECRET_KEY
+              value: "minioadmin"
+            - name: BLOB_REGION_LABEL
+              value: "local"
           volumeMounts:
             - name: migrations
               mountPath: /migrations/todo

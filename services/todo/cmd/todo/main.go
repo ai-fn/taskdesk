@@ -16,8 +16,10 @@ import (
 	pkglogger "github.com/fsociety/todo/pkg/logger"
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	pkgpgx "github.com/fsociety/todo/pkg/pgx"
+	"github.com/fsociety/todo/pkg/blobstore"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/todo/internal/outbox"
+	"github.com/fsociety/todo/services/todo/internal/reaper"
 	"github.com/fsociety/todo/services/todo/internal/server"
 	"github.com/fsociety/todo/services/todo/internal/store"
 	"google.golang.org/grpc"
@@ -30,6 +32,14 @@ type Config struct {
 	ListenAddr    string `env:"LISTEN_ADDR"    default:":50052"`
 	MigrationsDir string `env:"MIGRATIONS_DIR" default:"file:///migrations/todo"`
 	KafkaBrokers  string `env:"KAFKA_BROKERS"  default:"todo-kafka-bootstrap.data.svc.cluster.local:9092"`
+	// BlobRegionLabel is the cell/region name stamped into object keys for residency scoping.
+	BlobRegionLabel string `env:"BLOB_REGION_LABEL" default:"local"`
+	// Flattened blobstore fields (not embedded to avoid naming clash with pkgpgx.Config).
+	BlobEndpoint  string `env:"BLOB_ENDPOINT"   default:"http://minio.data.svc.cluster.local:9000"`
+	BlobRegion    string `env:"BLOB_REGION"     default:"auto"`
+	BlobBucket    string `env:"BLOB_BUCKET"     default:"attachments"`
+	BlobAccessKey string `env:"BLOB_ACCESS_KEY" default:"minioadmin"`
+	BlobSecretKey string `env:"BLOB_SECRET_KEY" default:"minioadmin"`
 	pkgpgx.Config
 }
 
@@ -65,13 +75,20 @@ func main() {
 	}
 	defer producer.Close()
 
+	blob := blobstore.New(blobstore.Config{
+		Endpoint:  cfg.BlobEndpoint,
+		Region:    cfg.BlobRegion,
+		Bucket:    cfg.BlobBucket,
+		AccessKey: cfg.BlobAccessKey,
+		SecretKey: cfg.BlobSecretKey,
+	})
+
 	st := store.New(pool)
 	pub := outbox.New(st, producer, log)
 
-	// wg tracks the outbox publisher so we can wait for any in-flight flush to
-	// finish before pool.Close() and producer.Close() run via defer.
-	// Without this, a mid-flush batch (read from DB, published to Kafka, but not
-	// yet marked published) gets cut off and will be re-delivered on next startup.
+	// wg tracks background workers (outbox publisher + reaper) so we can wait for
+	// them to finish any in-flight work before pool.Close() and producer.Close()
+	// run via defer.
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -79,9 +96,14 @@ func main() {
 		pub.Run(ctx)
 	}()
 
-	// blob and region are wired in Task 11; nil causes attachment RPCs to return
-	// Internal until the blobstore is configured.
-	svc := server.New(st, nil, "", log)
+	reaperSvc := reaper.New(st, blob, log)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reaperSvc.Run(ctx)
+	}()
+
+	svc := server.New(st, blob, cfg.BlobRegionLabel, log)
 
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(pkgmetrics.UnaryServerInterceptor("todo", log)),
