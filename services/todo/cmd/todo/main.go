@@ -79,7 +79,9 @@ func main() {
 		pub.Run(ctx)
 	}()
 
-	svc := server.New(st, log)
+	// blob and region are wired in Task 11; nil causes attachment RPCs to return
+	// Internal until the blobstore is configured.
+	svc := server.New(st, nil, "", log)
 
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(pkgmetrics.UnaryServerInterceptor("todo", log)),

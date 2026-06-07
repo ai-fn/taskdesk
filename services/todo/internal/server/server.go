@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/fsociety/todo/pkg/blobstore"
 	"github.com/fsociety/todo/pkg/events"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/todo/internal/domain"
@@ -22,12 +23,14 @@ import (
 
 type Server struct {
 	todov1.UnimplementedTodoServiceServer
-	store *store.Store
-	log   *slog.Logger
+	store  *store.Store
+	blob   blobstore.Store
+	region string
+	log    *slog.Logger
 }
 
-func New(st *store.Store, log *slog.Logger) *Server {
-	return &Server{store: st, log: log}
+func New(st *store.Store, blob blobstore.Store, region string, log *slog.Logger) *Server {
+	return &Server{store: st, blob: blob, region: region, log: log}
 }
 
 // ── CreateTask ────────────────────────────────────────────────────────────────
