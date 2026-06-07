@@ -50,6 +50,20 @@ func (p *Producer) Publish(ctx context.Context, topic, key string, v any) error 
 	return nil
 }
 
+// PublishRaw produces a pre-encoded payload to topic with key, without re-marshaling.
+// Use this when the outbox already holds the serialized event bytes.
+func (p *Producer) PublishRaw(ctx context.Context, topic, key string, payload []byte) error {
+	results := p.client.ProduceSync(ctx, &kgo.Record{
+		Topic: topic,
+		Key:   []byte(key),
+		Value: payload,
+	})
+	if err := results.FirstErr(); err != nil {
+		return fmt.Errorf("produce to %s: %w", topic, err)
+	}
+	return nil
+}
+
 // Close flushes and shuts down the underlying client.
 func (p *Producer) Close() {
 	p.client.Close()
