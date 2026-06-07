@@ -47,8 +47,10 @@ func StartPostgres() (pool *pgxpool.Pool, teardown func()) {
 
 	ctx := context.Background()
 
+	// pgvector/pgvector:pg16 is used instead of postgres:16-alpine because
+	// migration 000006 requires the vector extension.
 	container, err := tcpostgres.Run(ctx,
-		"postgres:16-alpine",
+		"pgvector/pgvector:pg16",
 		tcpostgres.WithDatabase("testtodo"),
 		tcpostgres.WithUsername("testuser"),
 		tcpostgres.WithPassword("testpass"),
