@@ -6,6 +6,9 @@ import "time"
 // Topic is the Kafka topic for all task events.
 const Topic = "task.events.v1"
 
+// FileTopic is the Kafka topic for file attachment events.
+const FileTopic = "file.events.v1"
+
 // AuthEmailTopic is the Kafka topic for transactional auth emails.
 const AuthEmailTopic = "auth.email.v1"
 
@@ -15,6 +18,11 @@ const (
 	TypeTaskUpdated   = "task.updated"
 	TypeTaskCompleted = "task.completed"
 	TypeTaskDeleted   = "task.deleted"
+)
+
+// File event types.
+const (
+	TypeFileUploaded = "file.uploaded"
 )
 
 // Auth email purposes.
@@ -49,4 +57,20 @@ type TaskEvent struct {
 	TaskTitle  string    `json:"task_title"`
 	OccurredAt time.Time `json:"occurred_at"`
 	Language   string    `json:"language"`
+}
+
+// FileEvent is the JSON payload written to todo.outbox for attachment events.
+// Language is denormalized so notification-service can localize without an auth lookup.
+type FileEvent struct {
+	EventID      string    `json:"event_id"`
+	EventType    string    `json:"event_type"`
+	UserID       string    `json:"user_id"`
+	TaskID       string    `json:"task_id"`
+	AttachmentID string    `json:"attachment_id"`
+	Filename     string    `json:"filename"`
+	ContentType  string    `json:"content_type"`
+	SizeBytes    int64     `json:"size_bytes"`
+	ObjectKey    string    `json:"object_key"`
+	Language     string    `json:"language"`
+	OccurredAt   time.Time `json:"occurred_at"`
 }

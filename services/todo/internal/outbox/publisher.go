@@ -53,19 +53,34 @@ func (p *Publisher) flush(ctx context.Context) error {
 
 	var published []string
 	for _, e := range entries {
-		// Decode just to get the user_id for use as the Kafka partition key.
-		var ev events.TaskEvent
-		if err := json.Unmarshal(e.Payload, &ev); err != nil {
+		// Decode only the fields needed for routing; the full payload is forwarded as-is.
+		var pk partitionKey
+		if err := json.Unmarshal(e.Payload, &pk); err != nil {
 			p.log.Error("decode outbox payload", "id", e.ID, "err", err)
 			continue
 		}
 
-		if err := p.producer.Publish(ctx, events.Topic, ev.UserID, ev); err != nil {
-			p.log.Error("publish to kafka", "id", e.ID, "err", err)
+		topic := topicForEventType(e.EventType)
+		if err := p.producer.PublishRaw(ctx, topic, pk.UserID, e.Payload); err != nil {
+			p.log.Error("publish to kafka", "id", e.ID, "topic", topic, "err", err)
 			continue
 		}
 		published = append(published, e.ID)
 	}
 
 	return p.store.MarkPublished(ctx, published)
+}
+
+// partitionKey extracts the user_id from any outbox event payload for use as
+// the Kafka partition key, ensuring all events for a user land on one partition.
+type partitionKey struct {
+	UserID string `json:"user_id"`
+}
+
+// topicForEventType maps an event_type string to the correct Kafka topic.
+func topicForEventType(eventType string) string {
+	if len(eventType) >= 5 && eventType[:5] == "file." {
+		return events.FileTopic
+	}
+	return events.Topic
 }
