@@ -96,11 +96,14 @@ func New(
 		r.Delete("/{taskID}/dependencies/{dependsOnID}", todo.RemoveDependency)
 
 		// Attachments
-		r.Get("/{taskID}/attachments",                                    att.List)
-		r.Post("/{taskID}/attachments/upload-url",                        att.CreateUploadURL)
-		r.Post("/{taskID}/attachments/{attachmentID}/confirm",            att.Confirm)
-		r.Get("/{taskID}/attachments/{attachmentID}/download-url",        att.GetDownloadURL)
-		r.Delete("/{taskID}/attachments/{attachmentID}",                  att.Delete)
+		r.Get("/{taskID}/attachments",                                          att.List)
+		r.Post("/{taskID}/attachments/upload-url",                              att.CreateUploadURL)
+		r.Post("/{taskID}/attachments/multipart/initiate",                      att.InitiateMultipart)
+		r.Post("/{taskID}/attachments/{attachmentID}/confirm",                  att.Confirm)
+		r.Get("/{taskID}/attachments/{attachmentID}/parts/{partNumber}",        att.GetPartURL)
+		r.Post("/{taskID}/attachments/{attachmentID}/multipart/complete",       att.CompleteMultipart)
+		r.Get("/{taskID}/attachments/{attachmentID}/download-url",              att.GetDownloadURL)
+		r.Delete("/{taskID}/attachments/{attachmentID}",                        att.Delete)
 	})
 
 	lists := handler.NewListHandler(todoClient)
