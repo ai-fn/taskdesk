@@ -124,6 +124,15 @@ func (f *fakeTodoClient) GetAttachmentDownloadURL(ctx context.Context, in *todov
 func (f *fakeTodoClient) DeleteAttachment(ctx context.Context, in *todov1.DeleteAttachmentRequest, opts ...grpc.CallOption) (*todov1.DeleteAttachmentResponse, error) {
 	panic("not used")
 }
+func (f *fakeTodoClient) InitiateMultipartUpload(ctx context.Context, in *todov1.InitiateMultipartUploadRequest, opts ...grpc.CallOption) (*todov1.InitiateMultipartUploadResponse, error) {
+	panic("not used")
+}
+func (f *fakeTodoClient) GetUploadPartURL(ctx context.Context, in *todov1.GetUploadPartURLRequest, opts ...grpc.CallOption) (*todov1.GetUploadPartURLResponse, error) {
+	panic("not used")
+}
+func (f *fakeTodoClient) CompleteMultipartUpload(ctx context.Context, in *todov1.CompleteMultipartUploadRequest, opts ...grpc.CallOption) (*todov1.CompleteMultipartUploadResponse, error) {
+	panic("not used")
+}
 
 // sampleTask returns a task with completion_score and completion_insight set,
 // simulating what todo-service would return for a scored task.
