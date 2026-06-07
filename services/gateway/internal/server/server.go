@@ -77,6 +77,7 @@ func New(
 	})
 
 	todo := handler.NewTodoHandler(todoClient)
+	att := handler.NewAttachmentHandler(todoClient)
 	r.Route("/api/v1/tasks", func(r chi.Router) {
 		r.Use(middleware.Authenticate(verifier))
 
@@ -93,6 +94,13 @@ func New(
 		r.Get("/{taskID}/dependency-tree",               todo.GetDependencyTree)
 		r.Post("/{taskID}/dependencies",                 todo.AddDependency)
 		r.Delete("/{taskID}/dependencies/{dependsOnID}", todo.RemoveDependency)
+
+		// Attachments
+		r.Get("/{taskID}/attachments",                                    att.List)
+		r.Post("/{taskID}/attachments/upload-url",                        att.CreateUploadURL)
+		r.Post("/{taskID}/attachments/{attachmentID}/confirm",            att.Confirm)
+		r.Get("/{taskID}/attachments/{attachmentID}/download-url",        att.GetDownloadURL)
+		r.Delete("/{taskID}/attachments/{attachmentID}",                  att.Delete)
 	})
 
 	lists := handler.NewListHandler(todoClient)
