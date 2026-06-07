@@ -5,3 +5,26 @@ resources:
   - deployment.yaml
   - service.yaml
   - secret.yaml
+configMapGenerator:
+  - name: todo-migrations
+    files:
+      - 000003_task_lists.up.sql
+      - 000003_task_lists.down.sql
+      - 000004_list_groups.up.sql
+      - 000004_list_groups.down.sql
+      - 000005_list_icon.up.sql
+      - 000005_list_icon.down.sql
+      - 000006_task_embeddings.up.sql
+      - 000006_task_embeddings.down.sql
+      - 000007_completion_score.up.sql
+      - 000007_completion_score.down.sql
+      - 000008_subtasks.up.sql
+      - 000008_subtasks.down.sql
+      - 000009_task_dependencies.up.sql
+      - 000009_task_dependencies.down.sql
+      - 000010_fulltext_search.up.sql
+      - 000010_fulltext_search.down.sql
+      - 000011_attachments.up.sql
+      - 000011_attachments.down.sql
+generatorOptions:
+  disableNameSuffixHash: true
