@@ -42,6 +42,13 @@ service TodoService {
   rpc RemoveDependency(RemoveDependencyRequest)   returns (RemoveDependencyResponse);
   rpc ListDependencies(ListDependenciesRequest)   returns (ListDependenciesResponse);
   rpc GetDependencyTree(GetDependencyTreeRequest) returns (GetDependencyTreeResponse);
+
+  // Attachments
+  rpc CreateAttachmentUploadURL(CreateAttachmentUploadURLRequest) returns (CreateAttachmentUploadURLResponse);
+  rpc ConfirmAttachment(ConfirmAttachmentRequest)                 returns (ConfirmAttachmentResponse);
+  rpc ListAttachments(ListAttachmentsRequest)                     returns (ListAttachmentsResponse);
+  rpc GetAttachmentDownloadURL(GetAttachmentDownloadURLRequest)   returns (GetAttachmentDownloadURLResponse);
+  rpc DeleteAttachment(DeleteAttachmentRequest)                   returns (DeleteAttachmentResponse);
 }
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -417,3 +424,69 @@ message GetDependencyTreeResponse {
   repeated DependencyTreeNode depends_on = 2; // transitive upstream (blockers)
   repeated DependencyTreeNode blocking   = 3; // transitive downstream
 }
+
+// ── Attachments ──────────────────────────────────────────────────────────────
+
+message Attachment {
+  string id           = 1;
+  string user_id      = 2;
+  string task_id      = 3;
+  string filename     = 4;
+  string content_type = 5;
+  int64  size_bytes   = 6;
+  string object_key   = 7;
+  string status       = 8;
+  string scan_status  = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+message CreateAttachmentUploadURLRequest {
+  string user_id      = 1;
+  string task_id      = 2;
+  string filename     = 3;
+  string content_type = 4;
+  int64  size_bytes   = 5;
+  string plan         = 6; // "free" | "pro" — enforced at presign time
+}
+
+message CreateAttachmentUploadURLResponse {
+  string upload_url    = 1; // presigned PUT URL
+  string attachment_id = 2; // opaque ID to pass to ConfirmAttachment
+}
+
+message ConfirmAttachmentRequest {
+  string user_id      = 1;
+  string attachment_id = 2;
+}
+
+message ConfirmAttachmentResponse {
+  Attachment attachment = 1;
+}
+
+message ListAttachmentsRequest {
+  string user_id    = 1;
+  string task_id    = 2;
+  int32  page_size  = 3;
+  string page_token = 4;
+}
+
+message ListAttachmentsResponse {
+  repeated Attachment attachments     = 1;
+  string              next_page_token = 2;
+}
+
+message GetAttachmentDownloadURLRequest {
+  string user_id      = 1;
+  string attachment_id = 2;
+}
+
+message GetAttachmentDownloadURLResponse {
+  string download_url = 1; // presigned GET URL (TTL: 15 min)
+}
+
+message DeleteAttachmentRequest {
+  string user_id      = 1;
+  string attachment_id = 2;
+}
+
+message DeleteAttachmentResponse {}
