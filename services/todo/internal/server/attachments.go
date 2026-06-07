@@ -22,6 +22,7 @@ const (
 	freeMaxFilesPerTask       = 10
 	freeUserQuotaBytes  int64 = 1 << 30           // 1 GiB
 	proMaxFileBytes     int64 = 100 << 30         // 100 GiB soft cap
+	multipartThreshold  int64 = 100 << 20         // 100 MiB — pro uploads above this must use multipart
 )
 
 func (s *Server) CreateAttachmentUploadURL(ctx context.Context, req *todov1.CreateAttachmentUploadURLRequest) (*todov1.CreateAttachmentUploadURLResponse, error) {
@@ -57,6 +58,10 @@ func (s *Server) CreateAttachmentUploadURL(ctx context.Context, req *todov1.Crea
 		// Pro: only the per-file soft cap applies.
 		if req.SizeBytes > proMaxFileBytes {
 			return nil, status.Errorf(codes.ResourceExhausted, "file exceeds 100 GiB soft cap")
+		}
+		if req.SizeBytes > multipartThreshold {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"file exceeds single-PUT limit of 100 MiB; use the multipart upload flow")
 		}
 	}
 
