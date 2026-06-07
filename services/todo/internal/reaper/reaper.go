@@ -26,6 +26,7 @@ type Store interface {
 // Blob is the subset of blobstore.Store the reaper needs.
 type Blob interface {
 	Delete(ctx context.Context, key string) error
+	AbortMultipart(ctx context.Context, key, uploadID string) error
 }
 
 // Reaper periodically scans for pending attachments that have exceeded the TTL
@@ -71,10 +72,18 @@ func (r *Reaper) reap(ctx context.Context) error {
 		return err
 	}
 	for _, a := range atts {
-		if err := r.blob.Delete(ctx, a.ObjectKey); err != nil {
-			// Log but continue — the row purge below is still safe even if
-			// the blob is already absent or temporarily inaccessible.
-			r.log.Warn("reaper blob delete", "key", a.ObjectKey, "err", err)
+		if a.UploadID != "" {
+			if err := r.blob.AbortMultipart(ctx, a.ObjectKey, a.UploadID); err != nil {
+				// Log but continue — the row purge below is still safe even if
+				// the upload is already absent or temporarily inaccessible.
+				r.log.Warn("reaper abort multipart", "key", a.ObjectKey, "uploadID", a.UploadID, "err", err)
+			}
+		} else {
+			if err := r.blob.Delete(ctx, a.ObjectKey); err != nil {
+				// Log but continue — the row purge below is still safe even if
+				// the blob is already absent or temporarily inaccessible.
+				r.log.Warn("reaper blob delete", "key", a.ObjectKey, "err", err)
+			}
 		}
 		if err := r.store.PurgeAttachmentRow(ctx, a.ID); err != nil {
 			r.log.Error("reaper purge row", "id", a.ID, "err", err)
