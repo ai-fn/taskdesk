@@ -18,3 +18,9 @@ func TestKey_SlugifiesFilename(t *testing.T) {
 		t.Fatalf("Key() slash/space slug = %q, want %q", got, "eu/u/t/a/a-b-c.pdf")
 	}
 }
+
+// Compile-time proof that *S3Store satisfies Store (including the four new
+// multipart methods). No offline presign test: PresignUploadPart requires a
+// live S3-compatible endpoint; coverage lives in the todo-service integration
+// tests that run against MinIO via testcontainers.
+var _ Store = (*S3Store)(nil)

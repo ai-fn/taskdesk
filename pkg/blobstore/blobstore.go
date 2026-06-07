@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // Store is the subset of object-store operations the todo service needs.
@@ -28,6 +29,25 @@ type Store interface {
 	Head(ctx context.Context, key string) (int64, error)
 	// Delete removes the object (no error if already absent).
 	Delete(ctx context.Context, key string) error
+	// InitiateMultipart starts an S3 multipart upload and returns the upload ID.
+	// The upload ID must be stored in the DB; it is passed to PresignUploadPart and
+	// CompleteMultipart.
+	InitiateMultipart(ctx context.Context, key, contentType string) (uploadID string, err error)
+	// PresignUploadPart returns a presigned URL the client can PUT a single part to.
+	// partNumber is 1-based as required by S3.
+	PresignUploadPart(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error)
+	// CompleteMultipart finalises a multipart upload. parts must be sorted by
+	// PartNumber (ascending) as required by S3.
+	CompleteMultipart(ctx context.Context, key, uploadID string, parts []CompletedPart) error
+	// AbortMultipart cancels an incomplete multipart upload and frees staged parts.
+	AbortMultipart(ctx context.Context, key, uploadID string) error
+}
+
+// CompletedPart carries the part number and ETag returned by the client after
+// a successful part PUT, needed to finalise a multipart upload.
+type CompletedPart struct {
+	PartNumber int32
+	ETag       string
 }
 
 // Config configures an S3Store.
@@ -101,6 +121,63 @@ func (s *S3Store) Delete(ctx context.Context, key string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("delete object: %w", err)
+	}
+	return nil
+}
+
+func (s *S3Store) InitiateMultipart(ctx context.Context, key, contentType string) (string, error) {
+	out, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String(contentType),
+	})
+	if err != nil {
+		return "", fmt.Errorf("initiate multipart: %w", err)
+	}
+	return aws.ToString(out.UploadId), nil
+}
+
+func (s *S3Store) PresignUploadPart(ctx context.Context, key, uploadID string, partNumber int32, ttl time.Duration) (string, error) {
+	req, err := s.presign.PresignUploadPart(ctx, &s3.UploadPartInput{
+		Bucket:     aws.String(s.bucket),
+		Key:        aws.String(key),
+		UploadId:   aws.String(uploadID),
+		PartNumber: partNumber,
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", fmt.Errorf("presign upload part: %w", err)
+	}
+	return req.URL, nil
+}
+
+func (s *S3Store) CompleteMultipart(ctx context.Context, key, uploadID string, parts []CompletedPart) error {
+	completed := make([]types.CompletedPart, len(parts))
+	for i, p := range parts {
+		completed[i] = types.CompletedPart{
+			PartNumber: p.PartNumber,
+			ETag:       aws.String(p.ETag),
+		}
+	}
+	_, err := s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(s.bucket),
+		Key:             aws.String(key),
+		UploadId:        aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: completed},
+	})
+	if err != nil {
+		return fmt.Errorf("complete multipart: %w", err)
+	}
+	return nil
+}
+
+func (s *S3Store) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	_, err := s.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(s.bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+	})
+	if err != nil {
+		return fmt.Errorf("abort multipart: %w", err)
 	}
 	return nil
 }
