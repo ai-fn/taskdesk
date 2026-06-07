@@ -49,6 +49,9 @@ service TodoService {
   rpc ListAttachments(ListAttachmentsRequest)                     returns (ListAttachmentsResponse);
   rpc GetAttachmentDownloadURL(GetAttachmentDownloadURLRequest)   returns (GetAttachmentDownloadURLResponse);
   rpc DeleteAttachment(DeleteAttachmentRequest)                   returns (DeleteAttachmentResponse);
+  rpc InitiateMultipartUpload(InitiateMultipartUploadRequest)   returns (InitiateMultipartUploadResponse);
+  rpc GetUploadPartURL(GetUploadPartURLRequest)                 returns (GetUploadPartURLResponse);
+  rpc CompleteMultipartUpload(CompleteMultipartUploadRequest)   returns (CompleteMultipartUploadResponse);
 }
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -490,3 +493,42 @@ message DeleteAttachmentRequest {
 }
 
 message DeleteAttachmentResponse {}
+
+message CompletedPart {
+  int32  part_number = 1; // 1-based, as required by S3
+  string etag        = 2; // ETag returned by the part PUT response
+}
+
+message InitiateMultipartUploadRequest {
+  string user_id      = 1;
+  string task_id      = 2;
+  string filename     = 3;
+  string content_type = 4;
+  int64  size_bytes   = 5;
+  string plan         = 6; // "free" | "pro"
+}
+
+message InitiateMultipartUploadResponse {
+  string attachment_id = 1; // opaque ID for subsequent part/complete calls
+  string upload_id     = 2; // S3 multipart upload ID — client must persist this
+}
+
+message GetUploadPartURLRequest {
+  string user_id       = 1;
+  string attachment_id = 2;
+  int32  part_number   = 3; // 1-based
+}
+
+message GetUploadPartURLResponse {
+  string upload_url = 1; // presigned PUT URL for this part (TTL: 15 min)
+}
+
+message CompleteMultipartUploadRequest {
+  string user_id       = 1;
+  string attachment_id = 2;
+  repeated CompletedPart parts = 3; // must be sorted by part_number ascending
+}
+
+message CompleteMultipartUploadResponse {
+  Attachment attachment = 1;
+}
