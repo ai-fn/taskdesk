@@ -52,6 +52,7 @@ service TodoService {
   rpc InitiateMultipartUpload(InitiateMultipartUploadRequest)   returns (InitiateMultipartUploadResponse);
   rpc GetUploadPartURL(GetUploadPartURLRequest)                 returns (GetUploadPartURLResponse);
   rpc CompleteMultipartUpload(CompleteMultipartUploadRequest)   returns (CompleteMultipartUploadResponse);
+  rpc UpdateScanStatus(UpdateScanStatusRequest) returns (UpdateScanStatusResponse);
 }
 
 // ── Enums ────────────────────────────────────────────────────────────────────
@@ -534,3 +535,9 @@ message CompleteMultipartUploadRequest {
 message CompleteMultipartUploadResponse {
   Attachment attachment = 1;
 }
+
+message UpdateScanStatusRequest {
+  string attachment_id = 1;
+  string scan_status   = 2; // "clean" | "quarantined"
+}
+message UpdateScanStatusResponse {}

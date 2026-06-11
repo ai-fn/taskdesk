@@ -133,6 +133,9 @@ func (f *fakeTodoClient) GetUploadPartURL(ctx context.Context, in *todov1.GetUpl
 func (f *fakeTodoClient) CompleteMultipartUpload(ctx context.Context, in *todov1.CompleteMultipartUploadRequest, opts ...grpc.CallOption) (*todov1.CompleteMultipartUploadResponse, error) {
 	panic("not used")
 }
+func (f *fakeTodoClient) UpdateScanStatus(ctx context.Context, in *todov1.UpdateScanStatusRequest, opts ...grpc.CallOption) (*todov1.UpdateScanStatusResponse, error) {
+	panic("not used")
+}
 
 // sampleTask returns a task with completion_score and completion_insight set,
 // simulating what todo-service would return for a scored task.
