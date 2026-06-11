@@ -179,6 +179,13 @@ func (s *Server) GetAttachmentDownloadURL(ctx context.Context, req *todov1.GetAt
 		return nil, status.Error(codes.FailedPrecondition, "attachment is not yet committed")
 	}
 
+	switch att.ScanStatus {
+	case domain.ScanQuarantined:
+		return nil, status.Error(codes.FailedPrecondition, "attachment failed malware scan and cannot be downloaded")
+	case domain.ScanPending:
+		return nil, status.Error(codes.FailedPrecondition, "attachment is pending malware scan; try again shortly")
+	}
+
 	url, err := s.blob.PresignGet(ctx, att.ObjectKey, downloadURLTTL)
 	if err != nil {
 		s.log.Error("presign get", "err", err)

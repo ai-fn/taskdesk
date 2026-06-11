@@ -103,10 +103,10 @@ func (s *Store) ConfirmAttachment(ctx context.Context, userID, attID string, siz
 	err := withTx(ctx, s.db, func(tx pgx.Tx) error {
 		err := scanAttachment(tx.QueryRow(ctx, `
 			UPDATE todo.attachments
-			SET status = $1
+			SET status = $1, scan_status = $5
 			WHERE id = $2 AND user_id = $3 AND status = $4
 			RETURNING `+attachmentCols,
-			domain.AttachmentCommitted, attID, userID, domain.AttachmentPending,
+			domain.AttachmentCommitted, attID, userID, domain.AttachmentPending, domain.ScanPending,
 		), &att)
 		if err == pgx.ErrNoRows {
 			return ErrNotFound
@@ -310,6 +310,22 @@ func (s *Store) ListAbandonedAttachments(ctx context.Context, ttl time.Duration,
 func (s *Store) PurgeAttachmentRow(ctx context.Context, attID string) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM todo.attachments WHERE id = $1`, attID)
 	return err
+}
+
+// UpdateScanStatus sets the scan_status field on an attachment row.
+// Returns ErrNotFound when no row with the given ID exists.
+func (s *Store) UpdateScanStatus(ctx context.Context, attID, scanStatus string) error {
+	tag, err := s.db.Exec(ctx,
+		`UPDATE todo.attachments SET scan_status = $1 WHERE id = $2`,
+		scanStatus, attID,
+	)
+	if err != nil {
+		return fmt.Errorf("update scan status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ── outbox helper ─────────────────────────────────────────────────────────────

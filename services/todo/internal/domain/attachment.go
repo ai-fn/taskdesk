@@ -6,6 +6,8 @@ const (
 	AttachmentPending   = "pending"
 	AttachmentCommitted = "committed"
 	ScanClean           = "clean"
+	ScanPending         = "pending"     // awaiting ClamAV scan
+	ScanQuarantined     = "quarantined" // virus detected
 )
 
 type Attachment struct {
