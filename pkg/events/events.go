@@ -25,6 +25,14 @@ const (
 	TypeFileUploaded = "file.uploaded"
 )
 
+// Scan status values shared across service boundaries.
+// notification-service writes these; todo-service reads them.
+const (
+	ScanStatusClean       = "clean"
+	ScanStatusPending     = "pending"
+	ScanStatusQuarantined = "quarantined"
+)
+
 // Auth email purposes.
 const (
 	PurposePasswordReset = "password_reset"

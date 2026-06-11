@@ -102,6 +102,85 @@ func TestAttachments_PendingAndConfirm(t *testing.T) {
 	}
 }
 
+func TestAttachments_ScanStatusPendingAfterConfirm(t *testing.T) {
+	st := newStoreForAttachments(t)
+	ctx := context.Background()
+	const (
+		userID = "user_sc1"
+		taskID = "task_sc1"
+		attID  = "att_sc1"
+	)
+	seedTask(t, st, userID, taskID)
+
+	now := time.Now().UTC()
+	a := &domain.Attachment{
+		ID: attID, UserID: userID, TaskID: taskID,
+		Filename: "doc.pdf", ContentType: "application/pdf",
+		SizeBytes: 512, ObjectKey: "key/sc1", CreatedAt: now,
+	}
+	if err := st.CreateAttachmentPending(ctx, a); err != nil {
+		t.Fatalf("CreateAttachmentPending: %v", err)
+	}
+
+	confirmed, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes)
+	if err != nil {
+		t.Fatalf("ConfirmAttachment: %v", err)
+	}
+	if confirmed.ScanStatus != domain.ScanPending {
+		t.Errorf("want scan_status=%q after confirm, got %q", domain.ScanPending, confirmed.ScanStatus)
+	}
+}
+
+func TestUpdateScanStatus(t *testing.T) {
+	st := newStoreForAttachments(t)
+	ctx := context.Background()
+	const (
+		userID = "user_sc2"
+		taskID = "task_sc2"
+		attID  = "att_sc2"
+	)
+	seedTask(t, st, userID, taskID)
+
+	now := time.Now().UTC()
+	a := &domain.Attachment{
+		ID: attID, UserID: userID, TaskID: taskID,
+		Filename: "img.png", ContentType: "image/png",
+		SizeBytes: 200, ObjectKey: "key/sc2", CreatedAt: now,
+	}
+	if err := st.CreateAttachmentPending(ctx, a); err != nil {
+		t.Fatalf("CreateAttachmentPending: %v", err)
+	}
+	if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes); err != nil {
+		t.Fatalf("ConfirmAttachment: %v", err)
+	}
+
+	// Transition to quarantined.
+	if err := st.UpdateScanStatus(ctx, attID, domain.ScanQuarantined); err != nil {
+		t.Fatalf("UpdateScanStatus quarantined: %v", err)
+	}
+	got, err := st.GetAttachment(ctx, userID, attID)
+	if err != nil {
+		t.Fatalf("GetAttachment: %v", err)
+	}
+	if got.ScanStatus != domain.ScanQuarantined {
+		t.Errorf("want %q, got %q", domain.ScanQuarantined, got.ScanStatus)
+	}
+
+	// Transition to clean.
+	if err := st.UpdateScanStatus(ctx, attID, domain.ScanClean); err != nil {
+		t.Fatalf("UpdateScanStatus clean: %v", err)
+	}
+	got2, _ := st.GetAttachment(ctx, userID, attID)
+	if got2.ScanStatus != domain.ScanClean {
+		t.Errorf("want %q, got %q", domain.ScanClean, got2.ScanStatus)
+	}
+
+	// Non-existent ID returns ErrNotFound.
+	if err := st.UpdateScanStatus(ctx, "no-such-id", domain.ScanClean); err != store.ErrNotFound {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
 func TestAttachments_ConfirmIdempotentNotFound(t *testing.T) {
 	st := newStoreForAttachments(t)
 	ctx := context.Background()
