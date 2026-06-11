@@ -98,7 +98,7 @@ func (s *Store) TaskCommittedAttachmentCount(ctx context.Context, taskID string)
 //   - bumps attachment_count and attachment_bytes on the task row
 //   - upserts user_storage used_bytes
 //   - writes a file.uploaded outbox event in the same transaction
-func (s *Store) ConfirmAttachment(ctx context.Context, userID, attID string, sizeBytes int64) (*domain.Attachment, error) {
+func (s *Store) ConfirmAttachment(ctx context.Context, userID, attID string, sizeBytes int64, language string) (*domain.Attachment, error) {
 	var att domain.Attachment
 	err := withTx(ctx, s.db, func(tx pgx.Tx) error {
 		err := scanAttachment(tx.QueryRow(ctx, `
@@ -135,7 +135,7 @@ func (s *Store) ConfirmAttachment(ctx context.Context, userID, attID string, siz
 			return err
 		}
 
-		return insertFileUploadedOutbox(ctx, tx, &att)
+		return insertFileUploadedOutbox(ctx, tx, &att, language)
 	})
 	if err != nil {
 		return nil, err
@@ -313,8 +313,15 @@ func (s *Store) PurgeAttachmentRow(ctx context.Context, attID string) error {
 }
 
 // UpdateScanStatus sets the scan_status field on an attachment row.
-// Returns ErrNotFound when no row with the given ID exists.
+// Returns ErrNotFound when no row with the given ID exists. The value is
+// validated against the known scan states so an unexpected string can never
+// reach the column and silently bypass the download gate.
 func (s *Store) UpdateScanStatus(ctx context.Context, attID, scanStatus string) error {
+	switch scanStatus {
+	case domain.ScanClean, domain.ScanPending, domain.ScanQuarantined:
+	default:
+		return fmt.Errorf("update scan status: invalid scan_status %q", scanStatus)
+	}
 	tag, err := s.db.Exec(ctx,
 		`UPDATE todo.attachments SET scan_status = $1 WHERE id = $2`,
 		scanStatus, attID,
@@ -330,7 +337,7 @@ func (s *Store) UpdateScanStatus(ctx context.Context, attID, scanStatus string) 
 
 // ── outbox helper ─────────────────────────────────────────────────────────────
 
-func insertFileUploadedOutbox(ctx context.Context, tx pgx.Tx, a *domain.Attachment) error {
+func insertFileUploadedOutbox(ctx context.Context, tx pgx.Tx, a *domain.Attachment, language string) error {
 	ev := events.FileEvent{
 		EventID:      uuid.New().String(),
 		EventType:    events.TypeFileUploaded,
@@ -341,6 +348,7 @@ func insertFileUploadedOutbox(ctx context.Context, tx pgx.Tx, a *domain.Attachme
 		ContentType:  a.ContentType,
 		SizeBytes:    a.SizeBytes,
 		ObjectKey:    a.ObjectKey,
+		Language:     language,
 		OccurredAt:   time.Now().UTC(),
 	}
 	payload, err := json.Marshal(ev)

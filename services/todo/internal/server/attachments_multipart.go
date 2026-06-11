@@ -133,7 +133,7 @@ func (s *Server) CompleteMultipartUpload(ctx context.Context, req *todov1.Comple
 		return nil, status.Error(codes.Internal, "HEAD after complete failed")
 	}
 
-	confirmed, err := s.store.ConfirmAttachment(ctx, req.UserId, req.AttachmentId, storedSize)
+	confirmed, err := s.store.ConfirmAttachment(ctx, req.UserId, req.AttachmentId, storedSize, req.Language)
 	if errors.Is(err, store.ErrNotFound) {
 		// Race: another request confirmed it first; re-fetch the committed row.
 		if att, _ = s.store.GetAttachment(ctx, req.UserId, req.AttachmentId); att != nil {

@@ -102,6 +102,7 @@ func (h *AttachmentHandler) CompleteMultipart(w http.ResponseWriter, r *http.Req
 		UserId:       userID,
 		AttachmentId: attID,
 		Parts:        parts,
+		Language:     mw.LanguageFromContext(r.Context()),
 	})
 	if err != nil {
 		handleGRPCError(w, err)

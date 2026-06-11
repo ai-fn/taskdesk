@@ -460,6 +460,7 @@ message CreateAttachmentUploadURLResponse {
 message ConfirmAttachmentRequest {
   string user_id      = 1;
   string attachment_id = 2;
+  string language     = 3; // user's preferred language, denormalized onto the file.uploaded event
 }
 
 message ConfirmAttachmentResponse {
@@ -527,6 +528,7 @@ message CompleteMultipartUploadRequest {
   string user_id       = 1;
   string attachment_id = 2;
   repeated CompletedPart parts = 3; // must be sorted by part_number ascending
+  string language      = 4; // user's preferred language, denormalized onto the file.uploaded event
 }
 
 message CompleteMultipartUploadResponse {
