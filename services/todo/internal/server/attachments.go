@@ -218,6 +218,30 @@ func (s *Server) DeleteAttachment(ctx context.Context, req *todov1.DeleteAttachm
 	return &todov1.DeleteAttachmentResponse{}, nil
 }
 
+// UpdateScanStatus records the malware-scan verdict for an attachment. It is a
+// trusted server-to-server callback from notification-service (over
+// cluster-internal gRPC), not a user-facing action — so unlike the sibling
+// attachment handlers it intentionally has no user_id ownership fence and keys
+// solely on attachment_id. If this RPC is ever exposed beyond trusted internal
+// callers, gate it with peer auth (mTLS) before relying on the absence here.
+func (s *Server) UpdateScanStatus(ctx context.Context, req *todov1.UpdateScanStatusRequest) (*todov1.UpdateScanStatusResponse, error) {
+	if req.AttachmentId == "" {
+		return nil, status.Error(codes.InvalidArgument, "attachment_id is required")
+	}
+	if req.ScanStatus != domain.ScanClean && req.ScanStatus != domain.ScanQuarantined {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"invalid scan_status %q; must be %q or %q",
+			req.ScanStatus, domain.ScanClean, domain.ScanQuarantined)
+	}
+	if err := s.store.UpdateScanStatus(ctx, req.AttachmentId, req.ScanStatus); err == store.ErrNotFound {
+		return nil, status.Error(codes.NotFound, "attachment not found")
+	} else if err != nil {
+		s.log.Error("update scan status", "attachment_id", req.AttachmentId, "err", err)
+		return nil, status.Error(codes.Internal, "failed to update scan status")
+	}
+	return &todov1.UpdateScanStatusResponse{}, nil
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func attachmentToProto(a *domain.Attachment) *todov1.Attachment {
