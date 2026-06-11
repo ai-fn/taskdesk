@@ -8,6 +8,7 @@ package blobstore
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -41,6 +42,9 @@ type Store interface {
 	CompleteMultipart(ctx context.Context, key, uploadID string, parts []CompletedPart) error
 	// AbortMultipart cancels an incomplete multipart upload and frees staged parts.
 	AbortMultipart(ctx context.Context, key, uploadID string) error
+	// Get downloads the object and returns its byte stream.
+	// The caller must close the returned ReadCloser after use.
+	Get(ctx context.Context, key string) (io.ReadCloser, error)
 }
 
 // CompletedPart carries the part number and ETag returned by the client after
@@ -180,6 +184,17 @@ func (s *S3Store) AbortMultipart(ctx context.Context, key, uploadID string) erro
 		return fmt.Errorf("abort multipart: %w", err)
 	}
 	return nil
+}
+
+func (s *S3Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get object %s: %w", key, err)
+	}
+	return out.Body, nil
 }
 
 // Key builds a residency-scoped, content-addressed-safe object key. The filename
