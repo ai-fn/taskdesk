@@ -67,6 +67,7 @@ func (h *AttachmentHandler) Confirm(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.client.ConfirmAttachment(r.Context(), &todov1.ConfirmAttachmentRequest{
 		UserId:       userID,
 		AttachmentId: attID,
+		Language:     mw.LanguageFromContext(r.Context()),
 	})
 	if err != nil {
 		handleGRPCError(w, err)

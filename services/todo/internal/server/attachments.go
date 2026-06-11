@@ -121,7 +121,7 @@ func (s *Server) ConfirmAttachment(ctx context.Context, req *todov1.ConfirmAttac
 		return nil, status.Error(codes.FailedPrecondition, "object not found in storage — upload may have failed")
 	}
 
-	confirmed, err := s.store.ConfirmAttachment(ctx, req.UserId, req.AttachmentId, storedSize)
+	confirmed, err := s.store.ConfirmAttachment(ctx, req.UserId, req.AttachmentId, storedSize, req.Language)
 	if err == store.ErrNotFound {
 		// Race: another request confirmed it first.
 		confirmed, _ = s.store.GetAttachment(ctx, req.UserId, req.AttachmentId)
@@ -179,10 +179,12 @@ func (s *Server) GetAttachmentDownloadURL(ctx context.Context, req *todov1.GetAt
 		return nil, status.Error(codes.FailedPrecondition, "attachment is not yet committed")
 	}
 
-	switch att.ScanStatus {
-	case domain.ScanQuarantined:
-		return nil, status.Error(codes.FailedPrecondition, "attachment failed malware scan and cannot be downloaded")
-	case domain.ScanPending:
+	// Fail closed: only a "clean" verdict permits download. Quarantined and
+	// pending get specific messages; any unexpected value is treated as not-yet-scanned.
+	if att.ScanStatus != domain.ScanClean {
+		if att.ScanStatus == domain.ScanQuarantined {
+			return nil, status.Error(codes.FailedPrecondition, "attachment failed malware scan and cannot be downloaded")
+		}
 		return nil, status.Error(codes.FailedPrecondition, "attachment is pending malware scan; try again shortly")
 	}
 

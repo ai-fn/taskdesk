@@ -76,7 +76,7 @@ func TestAttachments_PendingAndConfirm(t *testing.T) {
 		t.Fatalf("want count=0 before confirm, got %d", count)
 	}
 
-	confirmed, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes)
+	confirmed, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes, "en")
 	if err != nil {
 		t.Fatalf("ConfirmAttachment: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestAttachments_ScanStatusPendingAfterConfirm(t *testing.T) {
 		t.Fatalf("CreateAttachmentPending: %v", err)
 	}
 
-	confirmed, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes)
+	confirmed, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes, "en")
 	if err != nil {
 		t.Fatalf("ConfirmAttachment: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestUpdateScanStatus(t *testing.T) {
 	if err := st.CreateAttachmentPending(ctx, a); err != nil {
 		t.Fatalf("CreateAttachmentPending: %v", err)
 	}
-	if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes); err != nil {
+	if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes, "en"); err != nil {
 		t.Fatalf("ConfirmAttachment: %v", err)
 	}
 
@@ -200,11 +200,11 @@ func TestAttachments_ConfirmIdempotentNotFound(t *testing.T) {
 	if err := st.CreateAttachmentPending(ctx, a); err != nil {
 		t.Fatalf("CreateAttachmentPending: %v", err)
 	}
-	if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes); err != nil {
+	if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes, "en"); err != nil {
 		t.Fatalf("first confirm: %v", err)
 	}
 	// Second confirm should return not-found (row is no longer pending).
-	_, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes)
+	_, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes, "en")
 	if err != store.ErrNotFound {
 		t.Fatalf("want ErrNotFound on double-confirm, got %v", err)
 	}
@@ -231,7 +231,7 @@ func TestAttachments_ListAndGet(t *testing.T) {
 		if err := st.CreateAttachmentPending(ctx, a); err != nil {
 			t.Fatalf("CreateAttachmentPending %d: %v", i, err)
 		}
-		if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes); err != nil {
+		if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes, "en"); err != nil {
 			t.Fatalf("ConfirmAttachment %d: %v", i, err)
 		}
 	}
@@ -288,7 +288,7 @@ func TestAttachments_Delete(t *testing.T) {
 	if err := st.CreateAttachmentPending(ctx, a); err != nil {
 		t.Fatalf("CreateAttachmentPending: %v", err)
 	}
-	if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes); err != nil {
+	if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes, "en"); err != nil {
 		t.Fatalf("ConfirmAttachment: %v", err)
 	}
 
