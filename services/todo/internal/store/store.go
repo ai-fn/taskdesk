@@ -32,7 +32,7 @@ const taskCols = `id, user_id, title, description, priority, status, tags,
                   due_at, created_at, updated_at, list_id, flagged, deleted_at,
                   completion_score, COALESCE(completion_insight, ''),
                   parent_task_id, 0::int, 0::int,
-                  false, ARRAY[]::text[]`
+                  false, ARRAY[]::text[], attachment_count`
 
 func scanTask(row interface {
 	Scan(dest ...any) error
@@ -44,7 +44,7 @@ func scanTask(row interface {
 		&t.ListID, &t.Flagged, &t.DeletedAt,
 		&t.CompletionScore, &t.CompletionInsight,
 		&t.ParentTaskID, &t.SubtaskCount, &t.SubtaskDoneCount,
-		&t.Blocked, &t.DependsOnTaskIDs,
+		&t.Blocked, &t.DependsOnTaskIDs, &t.AttachmentCount,
 	)
 }
 
@@ -119,7 +119,8 @@ func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, er
 		       COALESCE(sc.subtask_count, 0)::int,
 		       COALESCE(sc.subtask_done_count, 0)::int,
 		       COALESCE(dep.blocked, false) AS blocked,
-		       COALESCE(dep.dep_ids, ARRAY[]::text[]) AS depends_on_task_ids
+		       COALESCE(dep.dep_ids, ARRAY[]::text[]) AS depends_on_task_ids,
+		       t.attachment_count
 		FROM todo.tasks t
 		LEFT JOIN (
 		  SELECT parent_task_id,
