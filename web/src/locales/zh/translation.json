@@ -395,6 +395,11 @@
     "empty": "暂无附件",
     "errorTooLargeFree": "文件超过免费版 {{max}} 限制",
     "errorNeedsPro": "超过 100 MB 的文件需要专业版",
-    "count_other": "{{count}} 个附件"
+    "count_other": "{{count}} 个附件",
+    "attachFiles": "附加文件",
+    "attachedCount_other": "已附加 {{count}} 个文件",
+    "uploadingFiles": "正在上传附件…",
+    "skipToDetail": "上传失败 — 请从任务详情页继续",
+    "errorTooLargeForCreate": "超过 100 MB 的文件需在任务创建后附加"
   }
 }

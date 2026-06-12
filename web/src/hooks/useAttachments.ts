@@ -18,6 +18,8 @@ import { useAuth } from '@/hooks/useAuth'
 
 // 100 MiB — must mirror multipartThreshold in services/todo/internal/server/attachments.go
 export const MULTIPART_THRESHOLD = 100 * 1024 * 1024
+// 10 MiB — must mirror freeMaxFileBytes in services/todo/internal/server/attachments.go
+export const FREE_MAX_FILE_BYTES = 10 * 1024 * 1024
 // 16 MiB per part
 const PART_SIZE = 16 * 1024 * 1024
 

@@ -3,16 +3,13 @@ import { useTranslation } from 'react-i18next'
 import axios from 'axios'
 import { toBCP47 } from '@/i18n/config'
 import { formatBytes } from '@/lib/format'
-import { useAttachments, useUploadAttachment, useDeleteAttachment, useDownloadAttachment, MULTIPART_THRESHOLD } from '@/hooks/useAttachments'
+import { useAttachments, useUploadAttachment, useDeleteAttachment, useDownloadAttachment, MULTIPART_THRESHOLD, FREE_MAX_FILE_BYTES } from '@/hooks/useAttachments'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import type { Attachment } from '@/types'
-
-// 10 MiB — must mirror freeMaxFileBytes in services/todo/internal/server/attachments.go
-const FREE_MAX_FILE_BYTES = 10 * 1024 * 1024
 
 interface UploadState {
   filename: string
