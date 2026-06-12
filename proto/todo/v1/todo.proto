@@ -95,6 +95,7 @@ message Task {
   int32   subtask_done_count = 18; // computed: done non-deleted subtasks
   bool    blocked            = 19; // true if any depends_on task is not Done
   repeated string depends_on_task_ids = 20; // task IDs this task is blocked by
+  int32  attachment_count = 21; // denormalized count of committed attachments
 }
 
 // ── TaskList message ──────────────────────────────────────────────────────────

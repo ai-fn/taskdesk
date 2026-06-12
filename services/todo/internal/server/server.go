@@ -619,6 +619,7 @@ func toProto(t *domain.Task) *todov1.Task {
 	p.SubtaskDoneCount = int32(t.SubtaskDoneCount)
 	p.Blocked = t.Blocked
 	p.DependsOnTaskIds = t.DependsOnTaskIDs
+	p.AttachmentCount = t.AttachmentCount
 	return p
 }
 
