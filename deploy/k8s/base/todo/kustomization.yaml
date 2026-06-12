@@ -8,6 +8,10 @@ resources:
 configMapGenerator:
   - name: todo-migrations
     files:
+      - 000001_init.up.sql
+      - 000001_init.down.sql
+      - 000002_outbox.up.sql
+      - 000002_outbox.down.sql
       - 000003_task_lists.up.sql
       - 000003_task_lists.down.sql
       - 000004_list_groups.up.sql

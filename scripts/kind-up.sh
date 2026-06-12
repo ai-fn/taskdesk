@@ -112,6 +112,23 @@ kubectl apply -f "${ROOT}/infra/elk/filebeat-rbac.yaml"
 kubectl apply -f "${ROOT}/infra/elk/filebeat-config-cm.yaml"
 kubectl apply -f "${ROOT}/infra/elk/filebeat-daemonset.yaml"
 
+bold "→ patching CoreDNS to use 8.8.8.8 (VPN-friendly external DNS)"
+# kind nodes forward external DNS via /etc/resolv.conf which is unreachable
+# behind a corporate VPN. Switch to Google public DNS so pods can reach
+# external APIs (Stripe, Claude, etc.) without changing the host resolver.
+kubectl get configmap coredns -n kube-system -o json \
+  | python3 -c "
+import json, sys
+cm = json.load(sys.stdin)
+cm['data']['Corefile'] = cm['data']['Corefile'].replace(
+    'forward . /etc/resolv.conf {',
+    'forward . 8.8.8.8 8.8.4.4 {'
+)
+print(json.dumps(cm))
+" | kubectl apply -f -
+kubectl rollout restart deployment/coredns -n kube-system
+kubectl rollout status  deployment/coredns -n kube-system --timeout=60s
+
 bold "→ generating JWT key (idempotent)"
 "${ROOT}/scripts/gen-jwt-key.sh"
 
