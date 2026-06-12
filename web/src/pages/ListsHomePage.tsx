@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { listTasks } from '@/api/tasks'
@@ -7,6 +7,9 @@ import { useLists, useCreateList } from '@/hooks/useLists'
 import { useGroups } from '@/hooks/useGroups'
 import { useCreateTask } from '@/hooks/useTaskMutations'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
+import { useAuth } from '@/hooks/useAuth'
+import { FREE_MAX_FILE_BYTES } from '@/hooks/useAttachments'
+import { createUploadURL, putToStorage, confirmAttachment } from '@/api/attachments'
 import { SYSTEM_LISTS } from '@/types'
 import type { ListGroup, TaskList } from '@/types'
 import { ListCard, SystemListCard } from '@/components/lists/ListCard'
@@ -18,6 +21,7 @@ import { TaskForm, type TaskPrefill } from '@/components/tasks/TaskForm'
 import { NaturalLanguageInput } from '@/components/tasks/NaturalLanguageInput'
 import { Spinner } from '@/components/ui/Spinner'
 import { Modal } from '@/components/ui/Modal'
+import { ToastContainer, type ToastMessage } from '@/components/ui/Toast'
 
 type TaskMode = 'quick' | 'ai'
 
@@ -37,9 +41,12 @@ export function ListsHomePage() {
   const [showCreateTask, setShowCreateTask] = useState(false)
   const [taskMode, setTaskMode] = useState<TaskMode>('quick')
   const [nlPrefill, setNlPrefill] = useState<TaskPrefill | undefined>()
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number> | undefined>(undefined)
+  const [toasts, setToasts] = useState<ToastMessage[]>([])
 
   const { data: lists = [], isLoading: listsLoading } = useLists()
   const { data: groups = [], isLoading: groupsLoading } = useGroups()
+  const { plan } = useAuth()
   const createList = useCreateList()
   const createTask = useCreateTask()
 
@@ -94,9 +101,57 @@ export function ListsHomePage() {
     setShowCreateTask(false)
     setTaskMode('quick')
     setNlPrefill(undefined)
+    setUploadProgress(undefined)
+  }
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id))
+  }, [])
+
+  async function handleCreateTask(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string; list_id?: string | null; flagged?: boolean; subtasks?: string[]; files?: File[] }) {
+    const { list_id, subtasks = [], files = [], ...rest } = values
+    const newTask = await createTask.mutateAsync({ ...rest, list_id: list_id ?? undefined })
+    if (subtasks.length > 0) {
+      await Promise.all(subtasks.map((title) =>
+        createTask.mutateAsync({ title, parent_task_id: newTask.id, list_id: newTask.list_id ?? undefined })
+      ))
+    }
+    if (files.length > 0) {
+      setUploadProgress({})
+      for (const file of files) {
+        if (plan === 'free' && file.size > FREE_MAX_FILE_BYTES) {
+          setToasts((prev) => [...prev, { id: Date.now(), text: t('attachments.errorTooLargeFree', { max: '10 MiB' }) }])
+          continue
+        }
+        try {
+          setUploadProgress((p) => ({ ...(p ?? {}), [file.name]: 0 }))
+          const { upload_url, attachment_id } = await createUploadURL(newTask.id, {
+            filename: file.name,
+            content_type: file.type || 'application/octet-stream',
+            size_bytes: file.size,
+          })
+          await putToStorage(upload_url, file, file.type || 'application/octet-stream', (percent) => {
+            setUploadProgress((p) => ({ ...(p ?? {}), [file.name]: percent }))
+          })
+          await confirmAttachment(newTask.id, attachment_id)
+        } catch {
+          setToasts((prev) => [...prev, { id: Date.now(), text: `${file.name}: ${t('attachments.skipToDetail')}` }])
+        } finally {
+          setUploadProgress((p) => {
+            if (!p) return p
+            const next = { ...p }
+            delete next[file.name]
+            return next
+          })
+        }
+      }
+    }
+    closeTaskModal()
   }
 
   return (
+    <>
+    <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     <div className="min-h-screen bg-gray-100 dark:bg-gray-950">
       <div className="mx-auto max-w-2xl px-4 py-6 pb-24">
 
@@ -242,18 +297,10 @@ export function ListsHomePage() {
                   <TaskForm
                     prefill={nlPrefill}
                     lists={lists}
-                    onSubmit={async (values) => {
-                      const { list_id, subtasks = [], ...rest } = values
-                      const newTask = await createTask.mutateAsync({ ...rest, list_id: list_id ?? undefined })
-                      if (subtasks.length > 0) {
-                        await Promise.all(subtasks.map((title) =>
-                          createTask.mutateAsync({ title, parent_task_id: newTask.id, list_id: newTask.list_id ?? undefined })
-                        ))
-                      }
-                      closeTaskModal()
-                    }}
+                    onSubmit={handleCreateTask}
                     onCancel={closeTaskModal}
                     isLoading={createTask.isPending}
+                    uploadProgress={uploadProgress}
                   />
                 ) : (
                   <NaturalLanguageInput
@@ -271,5 +318,6 @@ export function ListsHomePage() {
         </Modal>
       )}
     </div>
+    </>
   )
 }

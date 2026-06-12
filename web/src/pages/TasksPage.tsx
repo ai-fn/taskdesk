@@ -16,6 +16,9 @@ import { ToastContainer, type ToastMessage } from '@/components/ui/Toast'
 import { useCreateTask, useUpdateTask } from '@/hooks/useTaskMutations'
 import { useLists } from '@/hooks/useLists'
 import { useNotifications, type TaskNotification } from '@/hooks/useNotifications'
+import { useAuth } from '@/hooks/useAuth'
+import { FREE_MAX_FILE_BYTES } from '@/hooks/useAttachments'
+import { createUploadURL, putToStorage, confirmAttachment } from '@/api/attachments'
 import axios from 'axios'
 
 type TaskMode = 'quick' | 'ai'
@@ -46,6 +49,7 @@ export function TasksPage() {
   const [formError, setFormError] = useState('')
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number> | undefined>(undefined)
 
   const { data: lists = [] } = useLists()
 
@@ -79,6 +83,7 @@ export function TasksPage() {
 
   useNotifications(handleNotification)
 
+  const { plan } = useAuth()
   const createTask = useCreateTask()
   const updateTask = useUpdateTask()
 
@@ -94,6 +99,7 @@ export function TasksPage() {
     setTaskMode('quick')
     setNlPrefill(undefined)
     setFormError('')
+    setUploadProgress(undefined)
   }
 
   function handleEdit(task: Task) {
@@ -101,10 +107,10 @@ export function TasksPage() {
     setModal({ type: 'edit', task })
   }
 
-  async function handleCreate(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string; list_id?: string | null; flagged?: boolean; subtasks?: string[] }) {
+  async function handleCreate(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string; list_id?: string | null; flagged?: boolean; subtasks?: string[]; files?: File[] }) {
     setFormError('')
     try {
-      const { subtasks = [], list_id, ...rest } = values
+      const { subtasks = [], files = [], list_id, ...rest } = values
       const newTask = await createTask.mutateAsync({
         ...rest,
         list_id: list_id ?? undefined,
@@ -113,6 +119,37 @@ export function TasksPage() {
         await Promise.all(subtasks.map((title) =>
           createTask.mutateAsync({ title, parent_task_id: newTask.id, list_id: newTask.list_id ?? undefined })
         ))
+      }
+      // Upload queued files sequentially so progress is clearly visible per file
+      if (files.length > 0) {
+        setUploadProgress({})
+        for (const file of files) {
+          if (plan === 'free' && file.size > FREE_MAX_FILE_BYTES) {
+            setToasts((prev) => [...prev, { id: Date.now(), text: t('attachments.errorTooLargeFree', { max: '10 MiB' }) }])
+            continue
+          }
+          try {
+            setUploadProgress((p) => ({ ...(p ?? {}), [file.name]: 0 }))
+            const { upload_url, attachment_id } = await createUploadURL(newTask.id, {
+              filename: file.name,
+              content_type: file.type || 'application/octet-stream',
+              size_bytes: file.size,
+            })
+            await putToStorage(upload_url, file, file.type || 'application/octet-stream', (percent) => {
+              setUploadProgress((p) => ({ ...(p ?? {}), [file.name]: percent }))
+            })
+            await confirmAttachment(newTask.id, attachment_id)
+          } catch {
+            setToasts((prev) => [...prev, { id: Date.now(), text: `${file.name}: ${t('attachments.skipToDetail')}` }])
+          } finally {
+            setUploadProgress((p) => {
+              if (!p) return p
+              const next = { ...p }
+              delete next[file.name]
+              return next
+            })
+          }
+        }
       }
       closeModal()
     } catch (err) {
@@ -275,6 +312,7 @@ export function TasksPage() {
                         onSubmit={handleCreate}
                         onCancel={closeModal}
                         isLoading={createTask.isPending}
+                        uploadProgress={uploadProgress}
                       />
                     ) : (
                       <NaturalLanguageInput

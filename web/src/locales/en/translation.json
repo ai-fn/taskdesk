@@ -399,6 +399,12 @@
     "errorTooLargeFree": "File exceeds the {{max}} free-plan limit",
     "errorNeedsPro": "Files over 100 MB require a Pro plan",
     "count_one": "{{count}} attachment",
-    "count_other": "{{count}} attachments"
+    "count_other": "{{count}} attachments",
+    "attachFiles": "Attach files",
+    "attachedCount_one": "{{count}} file attached",
+    "attachedCount_other": "{{count}} files attached",
+    "uploadingFiles": "Uploading attachments…",
+    "skipToDetail": "Upload failed — finish from task detail",
+    "errorTooLargeForCreate": "Files over 100 MB can be attached after the task is created"
   }
 }
