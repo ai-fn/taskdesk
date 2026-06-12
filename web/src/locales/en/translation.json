@@ -383,5 +383,22 @@
     "successMessage": "Your subscription is active. Enjoy all Pro features.",
     "canceledTitle": "Payment not completed",
     "canceledMessage": "No charge was made. You can upgrade any time."
+  },
+  "attachments": {
+    "title": "Attachments",
+    "add": "Add file",
+    "dropHint": "Drop files here or click to browse",
+    "uploading": "Uploading…",
+    "scanning": "Scanning…",
+    "clean": "Clean",
+    "quarantined": "Blocked — failed scan",
+    "download": "Download",
+    "delete": "Delete",
+    "confirmDelete": "Delete this attachment?",
+    "empty": "No attachments yet",
+    "errorTooLargeFree": "File exceeds the {{max}} free-plan limit",
+    "errorNeedsPro": "Files over 100 MB require a Pro plan",
+    "count_one": "{{count}} attachment",
+    "count_other": "{{count}} attachments"
   }
 }

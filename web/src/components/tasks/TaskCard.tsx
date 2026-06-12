@@ -144,6 +144,14 @@ export function TaskCard({ task, onEdit, filterKey, isDeletedView }: Props) {
                 ✦ {task.completion_score}%
               </span>
             )}
+            {!!task.attachment_count && task.attachment_count > 0 && (
+              <span
+                className="shrink-0 whitespace-nowrap rounded-full bg-gray-100 dark:bg-gray-700 px-2 py-0.5 text-xs text-gray-600 dark:text-gray-300"
+                title={t('attachments.count', { count: task.attachment_count })}
+              >
+                📎 {task.attachment_count}
+              </span>
+            )}
           </div>
 
           {/* Subtask progress bar */}

@@ -4,6 +4,7 @@ export const taskKeys = {
   detail: (id: string) => [...taskKeys.all, 'detail', id] as const,
   dependencies: (id: string) => [...taskKeys.all, 'dependencies', id] as const,
   dependencyTree: (id: string) => [...taskKeys.all, 'dependency-tree', id] as const,
+  attachments: (taskId: string) => [...taskKeys.detail(taskId), 'attachments'] as const,
 }
 
 export const listKeys = {
