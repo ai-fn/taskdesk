@@ -8,13 +8,18 @@ import (
 	"strings"
 	"syscall"
 
+	pkgblobstore "github.com/fsociety/todo/pkg/blobstore"
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
+	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/notification/internal/consumer"
 	"github.com/fsociety/todo/services/notification/internal/mailer"
+	"github.com/fsociety/todo/services/notification/internal/scanner"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Config struct {
@@ -25,6 +30,26 @@ type Config struct {
 	SMTPFrom     string `env:"SMTP_FROM"      default:"noreply@todo.local"`
 	SMTPUser     string `env:"SMTP_USER"      default:""`
 	SMTPPass     string `env:"SMTP_PASS"      default:""`
+
+	// todo-service gRPC (for the UpdateScanStatus callback). Matches todo-service's
+	// default LISTEN_ADDR (:50052).
+	TodoAddr string `env:"TODO_ADDR" default:"todo-service.default.svc.cluster.local:50052"`
+
+	// ClamAV — empty string disables scanning (dev mode: all files approved immediately).
+	ClamAVAddr string `env:"CLAMAV_ADDR" default:""`
+}
+
+// todoScanUpdater wraps the todo-service gRPC client to satisfy consumer.ScanResultUpdater.
+type todoScanUpdater struct {
+	client todov1.TodoServiceClient
+}
+
+func (u *todoScanUpdater) UpdateScanStatus(ctx context.Context, attachmentID, scanStatus string) error {
+	_, err := u.client.UpdateScanStatus(ctx, &todov1.UpdateScanStatusRequest{
+		AttachmentId: attachmentID,
+		ScanStatus:   scanStatus,
+	})
+	return err
 }
 
 func main() {
@@ -35,6 +60,13 @@ func main() {
 		log.Error("load config", "err", err)
 		os.Exit(1)
 	}
+
+	blobCfg, err := pkgconfig.Load[pkgblobstore.Config]()
+	if err != nil {
+		log.Error("load blob config", "err", err)
+		os.Exit(1)
+	}
+	blobStore := pkgblobstore.New(blobCfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -51,8 +83,25 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	defer rdb.Close()
 
+	todoConn, err := grpc.NewClient(cfg.TodoAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Error("dial todo-service", "err", err)
+		os.Exit(1)
+	}
+	defer todoConn.Close()
+	todoClient := todov1.NewTodoServiceClient(todoConn)
+
+	// Scanner is optional: if CLAMAV_ADDR is not set, every file is approved without scanning.
+	var scn consumer.ScannerClient
+	if cfg.ClamAVAddr != "" {
+		scn = scanner.New(cfg.ClamAVAddr)
+		log.Info("ClamAV scanning enabled", "addr", cfg.ClamAVAddr)
+	} else {
+		log.Info("ClamAV scanning disabled (CLAMAV_ADDR not set) — all files auto-approved")
+	}
+
 	m := mailer.New(cfg.SMTPAddr, cfg.SMTPFrom, cfg.SMTPUser, cfg.SMTPPass)
-	h := consumer.New(m, rdb, log)
+	h := consumer.New(m, rdb, scn, blobStore, &todoScanUpdater{client: todoClient}, log)
 
 	go func() {
 		mux := http.NewServeMux()
@@ -66,6 +115,8 @@ func main() {
 		"brokers", cfg.KafkaBrokers,
 		"group", cfg.KafkaGroup,
 		"redis", cfg.RedisAddr,
+		"todo", cfg.TodoAddr,
+		"clamav", cfg.ClamAVAddr,
 	)
 
 	if err := consumer.Run(ctx, brokers, kafkaConsumer, h); err != nil {
