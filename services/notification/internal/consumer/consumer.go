@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"text/template"
 	"time"
@@ -21,27 +22,48 @@ import (
 // DailyPlanTopic is the Kafka topic published by ai-service.
 const DailyPlanTopic = "daily-plan.generated.v1"
 
+// ScannerClient abstracts the ClamAV scanner so tests can inject fakes.
+type ScannerClient interface {
+	Scan(ctx context.Context, r io.Reader) (clean bool, virusName string, err error)
+}
+
+// BlobGetter downloads a single object from object storage by key.
+type BlobGetter interface {
+	Get(ctx context.Context, key string) (io.ReadCloser, error)
+}
+
+// ScanResultUpdater reports a scan outcome back to todo-service.
+type ScanResultUpdater interface {
+	UpdateScanStatus(ctx context.Context, attachmentID, scanStatus string) error
+}
+
 // Handler consumes task.events.v1 and daily-plan.generated.v1, sends email,
 // and publishes in-app notifications to Redis pub/sub.
 type Handler struct {
 	mailer      *mailer.Mailer
 	redis       *redis.Client
 	notifyEmail func(userID string) string
+	scanner     ScannerClient // nil = skip scan (dev without ClamAV)
+	blob        BlobGetter
+	scanUpdater ScanResultUpdater
 	log         *slog.Logger
 }
 
-func New(m *mailer.Mailer, rdb *redis.Client, log *slog.Logger) *Handler {
+func New(m *mailer.Mailer, rdb *redis.Client, scanner ScannerClient, blob BlobGetter, scanUpdater ScanResultUpdater, log *slog.Logger) *Handler {
 	return &Handler{
 		mailer:      m,
 		redis:       rdb,
 		notifyEmail: stubEmail,
+		scanner:     scanner,
+		blob:        blob,
+		scanUpdater: scanUpdater,
 		log:         log,
 	}
 }
 
 // Topics returns the list of topics this handler needs to subscribe to.
 func Topics() []string {
-	return []string{events.Topic, DailyPlanTopic, events.AuthEmailTopic}
+	return []string{events.Topic, DailyPlanTopic, events.AuthEmailTopic, events.FileTopic}
 }
 
 // Handle dispatches based on topic.
@@ -53,6 +75,8 @@ func (h *Handler) Handle(ctx context.Context, r *kgo.Record) error {
 		return h.handleDailyPlan(ctx, r)
 	case events.AuthEmailTopic:
 		return h.handleAuthEmail(ctx, r)
+	case events.FileTopic:
+		return h.handleFileUploaded(ctx, r)
 	default:
 		h.log.Warn("unknown topic", "topic", r.Topic)
 		return nil
@@ -302,6 +326,73 @@ func (h *Handler) handleAuthEmail(ctx context.Context, r *kgo.Record) error {
 	}
 
 	h.log.Info("auth email dispatched", "user_id", ev.UserID, "purpose", ev.Purpose)
+	return nil
+}
+
+// ── file events (malware scan pipeline) ──────────────────────────────────────
+
+func (h *Handler) handleFileUploaded(ctx context.Context, r *kgo.Record) error {
+	var ev events.FileEvent
+	if err := json.Unmarshal(r.Value, &ev); err != nil {
+		h.log.Error("decode file event", "err", err)
+		return nil // poison pill — skip
+	}
+	if ev.EventType != events.TypeFileUploaded {
+		return nil
+	}
+
+	// When scanner is not configured (dev without ClamAV), approve immediately.
+	if h.scanner == nil {
+		return h.setScanStatus(ctx, ev.AttachmentID, events.ScanStatusClean)
+	}
+
+	// A configured scanner with no blob getter is a wiring error; fail loudly
+	// rather than nil-panic the consumer goroutine. Same discipline as the
+	// nil-scanner guard above.
+	if h.blob == nil {
+		h.log.Error("scanner configured but blob getter is nil; cannot download for scan",
+			"attachment_id", ev.AttachmentID)
+		return fmt.Errorf("blob getter not configured")
+	}
+
+	body, err := h.blob.Get(ctx, ev.ObjectKey)
+	if err != nil {
+		h.log.Error("download for scan", "attachment_id", ev.AttachmentID, "err", err)
+		return err // retryable
+	}
+	defer body.Close()
+
+	clean, virusName, err := h.scanner.Scan(ctx, body)
+	if err != nil {
+		h.log.Error("clamd scan failed", "attachment_id", ev.AttachmentID, "err", err)
+		return err // retryable — consumer will redeliver
+	}
+
+	scanStatus := events.ScanStatusClean
+	if !clean {
+		scanStatus = events.ScanStatusQuarantined
+		h.log.Warn("malware detected",
+			"attachment_id", ev.AttachmentID,
+			"virus", virusName,
+			"user_id", ev.UserID,
+		)
+	}
+	return h.setScanStatus(ctx, ev.AttachmentID, scanStatus)
+}
+
+// setScanStatus reports the verdict to todo-service. A failure here returns an
+// error so the Kafka record is redelivered. Note: redelivery re-runs the whole
+// handler, re-downloading and re-scanning the object. That is wasteful during a
+// todo-service outage but acceptable — scans are idempotent (no duplicate DB
+// side effects: the same verdict is written again), and outages are expected to
+// be brief. If scan amplification becomes a problem, persist the verdict locally
+// (side-table or DLQ) so retries only re-attempt the callback, not the scan.
+func (h *Handler) setScanStatus(ctx context.Context, attachmentID, scanStatus string) error {
+	if err := h.scanUpdater.UpdateScanStatus(ctx, attachmentID, scanStatus); err != nil {
+		h.log.Error("update scan status", "attachment_id", attachmentID, "status", scanStatus, "err", err)
+		return err
+	}
+	h.log.Info("scan complete", "attachment_id", attachmentID, "status", scanStatus)
 	return nil
 }
 
