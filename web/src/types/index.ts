@@ -36,6 +36,25 @@ export interface Task {
   subtask_done_count?: number  // computed
   blocked?: boolean              // computed: true if any dependency is unfinished
   depends_on_task_ids?: string[] // computed: task IDs this is blocked by
+  attachment_count?: number      // denormalized committed-attachment count
+}
+
+export interface Attachment {
+  id: string
+  user_id: string
+  task_id: string
+  filename: string
+  content_type: string
+  size_bytes: number
+  object_key: string
+  status: 'pending' | 'committed'
+  scan_status: 'pending' | 'clean' | 'quarantined'
+  created_at: string
+}
+
+export interface AttachmentListResponse {
+  attachments: Attachment[]
+  next_page_token: string
 }
 
 export interface TaskList {

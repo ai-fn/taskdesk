@@ -380,5 +380,21 @@
     "successMessage": "您的订阅已激活，尽享全部专业版功能。",
     "canceledTitle": "支付未完成",
     "canceledMessage": "未产生任何费用，您可随时升级。"
+  },
+  "attachments": {
+    "title": "附件",
+    "add": "添加文件",
+    "dropHint": "拖放文件到此处或点击浏览",
+    "uploading": "上传中…",
+    "scanning": "扫描中…",
+    "clean": "安全",
+    "quarantined": "已拦截 — 未通过扫描",
+    "download": "下载",
+    "delete": "删除",
+    "confirmDelete": "确定删除此附件？",
+    "empty": "暂无附件",
+    "errorTooLargeFree": "文件超过免费版 {{max}} 限制",
+    "errorNeedsPro": "超过 100 MB 的文件需要专业版",
+    "count_other": "{{count}} 个附件"
   }
 }

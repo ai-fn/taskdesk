@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useCallback } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
@@ -12,11 +12,14 @@ import { useLists } from '@/hooks/useLists'
 import { useUpdateStatus, useToggleFlagged, useUpdateTask } from '@/hooks/useTaskMutations'
 import { SubtaskList } from '@/components/tasks/SubtaskList'
 import { DependencyPicker } from '@/components/tasks/DependencyPicker'
+import { AttachmentSection } from '@/components/tasks/AttachmentSection'
 import { TaskForm } from '@/components/tasks/TaskForm'
 import { Spinner } from '@/components/ui/Spinner'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { ErrorMessage } from '@/components/ui/ErrorMessage'
+import { ToastContainer } from '@/components/ui/Toast'
+import type { ToastMessage } from '@/components/ui/Toast'
 import { useAuth } from '@/hooks/useAuth'
 
 const priorityColors: Record<Priority, string> = {
@@ -65,6 +68,11 @@ export function TaskDetailPage() {
 
   const [editOpen, setEditOpen] = useState(false)
   const [editError, setEditError] = useState('')
+  const [toasts, setToasts] = useState<ToastMessage[]>([])
+  const addToast = useCallback(
+    (text: string) => setToasts((prev) => [...prev, { id: Date.now(), text }]),
+    [],
+  )
 
   const list = useMemo(() => lists.find((l) => l.id === task?.list_id), [lists, task])
 
@@ -223,6 +231,9 @@ export function TaskDetailPage() {
         <SubtaskList parentTask={task} />
       </section>
 
+      {/* Attachments */}
+      <AttachmentSection taskId={taskId} addToast={addToast} />
+
       {/* Blocked by */}
       <section className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-sm">
         <div className="mb-3 flex items-baseline justify-between gap-3">
@@ -259,6 +270,11 @@ export function TaskDetailPage() {
           <DependencyChain nodes={blocking} rootTitle={task.title} direction="down" />
         </section>
       )}
+
+      <ToastContainer
+        toasts={toasts}
+        onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
+      />
 
       {editOpen && (
         <Modal onClose={() => setEditOpen(false)} className="max-w-xl">
