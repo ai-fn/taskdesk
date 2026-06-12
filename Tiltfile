@@ -213,14 +213,6 @@ k8s_yaml(kustomize('deploy/k8s/base/caddy'))
 k8s_yaml(kustomize('deploy/k8s/base/gateway'))
 k8s_yaml(kustomize('deploy/k8s/base/auth'))
 k8s_yaml(kustomize('deploy/k8s/base/todo'))
-# Migration ConfigMap is generated directly from migrations/todo/ so new
-# migration files are picked up automatically without editing kustomization.yaml.
-# watch_file() makes Tilt re-evaluate the Tiltfile (and re-apply the ConfigMap)
-# whenever any file in the migrations directory changes.
-watch_file('migrations/todo')
-k8s_yaml(local(
-    'kubectl create configmap todo-migrations -n todo --from-file=migrations/todo/ --dry-run=client -o yaml',
-))
 k8s_yaml(kustomize('deploy/k8s/base/notification'))
 k8s_yaml(kustomize('deploy/k8s/base/ai'))
 k8s_yaml(kustomize('deploy/k8s/base/scheduler'))
