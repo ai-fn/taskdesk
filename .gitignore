@@ -33,5 +33,6 @@ dist/
 
 
 /scheduler
+services/scheduler/scheduler
 /promo-admin
 docs/superpowers/
