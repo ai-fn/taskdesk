@@ -75,9 +75,9 @@ var _ Store = (*S3Store)(nil)
 // New builds an S3Store. UsePathStyle is required for MinIO and harmless for R2.
 func New(cfg Config) *S3Store {
 	client := s3.New(s3.Options{
-		EndpointResolver: s3.EndpointResolverFromURL(cfg.Endpoint),
-		Region:           cfg.Region,
-		UsePathStyle:     true,
+		BaseEndpoint: aws.String(cfg.Endpoint),
+		Region:       cfg.Region,
+		UsePathStyle: true,
 		Credentials: credentials.NewStaticCredentialsProvider(
 			cfg.AccessKey, cfg.SecretKey, ""),
 	})
@@ -115,7 +115,7 @@ func (s *S3Store) Head(ctx context.Context, key string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("head object: %w", err)
 	}
-	return out.ContentLength, nil
+	return aws.ToInt64(out.ContentLength), nil
 }
 
 func (s *S3Store) Delete(ctx context.Context, key string) error {
@@ -146,7 +146,7 @@ func (s *S3Store) PresignUploadPart(ctx context.Context, key, uploadID string, p
 		Bucket:     aws.String(s.bucket),
 		Key:        aws.String(key),
 		UploadId:   aws.String(uploadID),
-		PartNumber: partNumber,
+		PartNumber: aws.Int32(partNumber),
 	}, s3.WithPresignExpires(ttl))
 	if err != nil {
 		return "", fmt.Errorf("presign upload part: %w", err)
@@ -158,7 +158,7 @@ func (s *S3Store) CompleteMultipart(ctx context.Context, key, uploadID string, p
 	completed := make([]types.CompletedPart, len(parts))
 	for i, p := range parts {
 		completed[i] = types.CompletedPart{
-			PartNumber: p.PartNumber,
+			PartNumber: aws.Int32(p.PartNumber),
 			ETag:       aws.String(p.ETag),
 		}
 	}
