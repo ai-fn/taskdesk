@@ -32,5 +32,6 @@ dist/
 .vite/
 
 
-scheduler
-promo-admin
+/scheduler
+/promo-admin
+docs/superpowers/
