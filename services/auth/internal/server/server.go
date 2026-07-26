@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 	ua "github.com/mileusna/useragent"
 	stripe "github.com/stripe/stripe-go/v82"
-	stripeclient "github.com/stripe/stripe-go/v82/client"
 	"github.com/stripe/stripe-go/v82/webhook"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
@@ -41,11 +40,11 @@ type CodeConfig struct {
 
 // StripeConfig holds credentials and identifiers for the Stripe integration.
 type StripeConfig struct {
-	SecretKey      string // STRIPE_SECRET_KEY
-	WebhookSecret  string // STRIPE_WEBHOOK_SECRET — used to verify webhook signatures
-	PriceID        string // STRIPE_PRICE_ID — the recurring price to subscribe users to
-	SuccessURL     string // STRIPE_SUCCESS_URL — redirect after successful checkout
-	CancelURL      string // STRIPE_CANCEL_URL  — redirect when user cancels checkout
+	SecretKey     string // STRIPE_SECRET_KEY
+	WebhookSecret string // STRIPE_WEBHOOK_SECRET — used to verify webhook signatures
+	PriceID       string // STRIPE_PRICE_ID — the recurring price to subscribe users to
+	SuccessURL    string // STRIPE_SUCCESS_URL — redirect after successful checkout
+	CancelURL     string // STRIPE_CANCEL_URL  — redirect when user cancels checkout
 }
 
 type Server struct {
@@ -56,7 +55,7 @@ type Server struct {
 	producer     *pkgkafka.Producer // nil if Kafka is not configured
 	codeCfg      CodeConfig
 	stripe       StripeConfig
-	stripeClient *stripeclient.API // per-server Stripe client; avoids mutating stripe.Key global
+	stripeClient *stripe.Client // per-server Stripe client; avoids mutating stripe.Key global
 }
 
 func New(st *store.Store, tm *tokens.Maker, log *slog.Logger, producer *pkgkafka.Producer, codeCfg CodeConfig, stripeCfg StripeConfig) *Server {
@@ -67,7 +66,7 @@ func New(st *store.Store, tm *tokens.Maker, log *slog.Logger, producer *pkgkafka
 		producer:     producer,
 		codeCfg:      codeCfg,
 		stripe:       stripeCfg,
-		stripeClient: stripeclient.New(stripeCfg.SecretKey, nil),
+		stripeClient: stripe.NewClient(stripeCfg.SecretKey),
 	}
 }
 
@@ -749,8 +748,7 @@ func (s *Server) CreateStripeCheckoutSession(ctx context.Context, req *authv1.Cr
 	} else {
 		customerCtx, customerCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer customerCancel()
-		c, err := s.stripeClient.Customers.New(&stripe.CustomerParams{
-			Params:   stripe.Params{Context: customerCtx},
+		c, err := s.stripeClient.V1Customers.Create(customerCtx, &stripe.CustomerCreateParams{
 			Email:    stripe.String(req.Email),
 			Metadata: map[string]string{"user_id": req.UserId},
 		})
@@ -767,17 +765,16 @@ func (s *Server) CreateStripeCheckoutSession(ctx context.Context, req *authv1.Cr
 
 	sessionCtx, sessionCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer sessionCancel()
-	params := &stripe.CheckoutSessionParams{
-		Params:   stripe.Params{Context: sessionCtx},
+	params := &stripe.CheckoutSessionCreateParams{
 		Customer: stripe.String(customerID),
 		Mode:     stripe.String(string(stripe.CheckoutSessionModeSubscription)),
-		LineItems: []*stripe.CheckoutSessionLineItemParams{
+		LineItems: []*stripe.CheckoutSessionCreateLineItemParams{
 			{Price: stripe.String(s.stripe.PriceID), Quantity: stripe.Int64(1)},
 		},
 		SuccessURL: stripe.String(s.stripe.SuccessURL),
 		CancelURL:  stripe.String(s.stripe.CancelURL),
 	}
-	sess, err := s.stripeClient.CheckoutSessions.New(params)
+	sess, err := s.stripeClient.V1CheckoutSessions.Create(sessionCtx, params)
 	if err != nil {
 		s.log.Error("create stripe checkout session", "err", err)
 		return nil, status.Error(codes.Internal, "checkout failed")
