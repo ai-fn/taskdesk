@@ -11,7 +11,6 @@ import (
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
@@ -94,11 +93,10 @@ func (f *fakeAuthClient) HandleStripeWebhook(ctx context.Context, in *authv1.Han
 }
 
 type fakeTodoClient struct {
-	getTask         func(ctx context.Context, req *todov1.GetTaskRequest, opts ...grpc.CallOption) (*todov1.GetTaskResponse, error)
-	listTasks       func(ctx context.Context, req *todov1.ListTasksRequest, opts ...grpc.CallOption) (*todov1.ListTasksResponse, error)
+	getTask          func(ctx context.Context, req *todov1.GetTaskRequest, opts ...grpc.CallOption) (*todov1.GetTaskResponse, error)
+	listTasks        func(ctx context.Context, req *todov1.ListTasksRequest, opts ...grpc.CallOption) (*todov1.ListTasksResponse, error)
 	listDependencies func(ctx context.Context, req *todov1.ListDependenciesRequest, opts ...grpc.CallOption) (*todov1.ListDependenciesResponse, error)
-	updateTaskScore func(ctx context.Context, req *todov1.UpdateTaskScoreRequest, opts ...grpc.CallOption) (*todov1.UpdateTaskScoreResponse, error)
-	listUserIDs     func(ctx context.Context, req *authv1.ListUserIDsRequest, opts ...grpc.CallOption) (*authv1.ListUserIDsResponse, error)
+	updateTaskScore  func(ctx context.Context, req *todov1.UpdateTaskScoreRequest, opts ...grpc.CallOption) (*todov1.UpdateTaskScoreResponse, error)
 }
 
 func (f *fakeTodoClient) GetTask(ctx context.Context, req *todov1.GetTaskRequest, opts ...grpc.CallOption) (*todov1.GetTaskResponse, error) {
@@ -203,16 +201,6 @@ func userByPlan(plan string) func(context.Context, *authv1.GetUserByIDRequest, .
 		return &authv1.GetUserByIDResponse{
 			User: &authv1.UserSummary{Plan: plan},
 		}, nil
-	}
-}
-
-func minimalTask() *todov1.Task {
-	return &todov1.Task{
-		Id:        "task-1",
-		UserId:    "user-1",
-		Title:     "Write docs",
-		CreatedAt: timestamppb.Now(),
-		UpdatedAt: timestamppb.Now(),
 	}
 }
 
