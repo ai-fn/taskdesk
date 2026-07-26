@@ -95,11 +95,13 @@ jobs:
             exit 1
           fi
 
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v7
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           working-directory: ${{ matrix.module }}
-          args: --timeout=5m
+          # v7 requires --path-mode=abs when combined with working-directory,
+          # otherwise annotation paths don't resolve correctly.
+          args: --timeout=5m --path-mode=abs
 
   build-go:
     needs: generate-proto
