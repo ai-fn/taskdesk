@@ -1,8 +1,8 @@
 package server
 
 import (
-	"encoding/hex"
 	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 
 	ua "github.com/mileusna/useragent"
@@ -24,7 +24,9 @@ func TestHashToken(t *testing.T) {
 
 func TestHashToken_Deterministic(t *testing.T) {
 	tok := "some-token"
-	if hashToken(tok) != hashToken(tok) {
+	first := hashToken(tok)
+	second := hashToken(tok)
+	if first != second {
 		t.Error("hashToken is not deterministic")
 	}
 }
