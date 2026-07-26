@@ -11,7 +11,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GOLANGCI_LINT_VERSION: v1.64.8
+  # v1.64.8 was built with Go 1.24 and refuses to run against modules that
+  # declare `go 1.25.0` (golangci-lint requires being built with a Go
+  # version >= the target module's go directive). v2.12.2 is built with
+  # Go 1.25+ and resolves it; no .golangci.yml exists in this repo so
+  # there's no v1->v2 config schema to migrate.
+  GOLANGCI_LINT_VERSION: v2.12.2
 
 jobs:
   # proto/gen is .gitignored (hand-maintained go.mod, generated *.pb.go) but every
