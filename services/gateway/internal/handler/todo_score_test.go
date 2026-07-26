@@ -109,33 +109,6 @@ func (f *fakeTodoClient) ListDependencies(ctx context.Context, in *todov1.ListDe
 func (f *fakeTodoClient) GetDependencyTree(ctx context.Context, in *todov1.GetDependencyTreeRequest, opts ...grpc.CallOption) (*todov1.GetDependencyTreeResponse, error) {
 	panic("not used")
 }
-func (f *fakeTodoClient) CompleteMultipartUpload(ctx context.Context, in *todov1.CompleteMultipartUploadRequest, opts ...grpc.CallOption) (*todov1.CompleteMultipartUploadResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) CreateAttachmentUploadURL(ctx context.Context, in *todov1.CreateAttachmentUploadURLRequest, opts ...grpc.CallOption) (*todov1.CreateAttachmentUploadURLResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) ConfirmAttachment(ctx context.Context, in *todov1.ConfirmAttachmentRequest, opts ...grpc.CallOption) (*todov1.ConfirmAttachmentResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) ListAttachments(ctx context.Context, in *todov1.ListAttachmentsRequest, opts ...grpc.CallOption) (*todov1.ListAttachmentsResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) GetAttachmentDownloadURL(ctx context.Context, in *todov1.GetAttachmentDownloadURLRequest, opts ...grpc.CallOption) (*todov1.GetAttachmentDownloadURLResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) DeleteAttachment(ctx context.Context, in *todov1.DeleteAttachmentRequest, opts ...grpc.CallOption) (*todov1.DeleteAttachmentResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) InitiateMultipartUpload(ctx context.Context, in *todov1.InitiateMultipartUploadRequest, opts ...grpc.CallOption) (*todov1.InitiateMultipartUploadResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) GetUploadPartURL(ctx context.Context, in *todov1.GetUploadPartURLRequest, opts ...grpc.CallOption) (*todov1.GetUploadPartURLResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) UpdateScanStatus(ctx context.Context, in *todov1.UpdateScanStatusRequest, opts ...grpc.CallOption) (*todov1.UpdateScanStatusResponse, error) {
-	panic("not used")
-}
 
 // sampleTask returns a task with completion_score and completion_insight set,
 // simulating what todo-service would return for a scored task.

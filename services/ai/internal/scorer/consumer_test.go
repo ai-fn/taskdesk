@@ -11,6 +11,7 @@ import (
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
@@ -93,10 +94,11 @@ func (f *fakeAuthClient) HandleStripeWebhook(ctx context.Context, in *authv1.Han
 }
 
 type fakeTodoClient struct {
-	getTask          func(ctx context.Context, req *todov1.GetTaskRequest, opts ...grpc.CallOption) (*todov1.GetTaskResponse, error)
-	listTasks        func(ctx context.Context, req *todov1.ListTasksRequest, opts ...grpc.CallOption) (*todov1.ListTasksResponse, error)
+	getTask         func(ctx context.Context, req *todov1.GetTaskRequest, opts ...grpc.CallOption) (*todov1.GetTaskResponse, error)
+	listTasks       func(ctx context.Context, req *todov1.ListTasksRequest, opts ...grpc.CallOption) (*todov1.ListTasksResponse, error)
 	listDependencies func(ctx context.Context, req *todov1.ListDependenciesRequest, opts ...grpc.CallOption) (*todov1.ListDependenciesResponse, error)
-	updateTaskScore  func(ctx context.Context, req *todov1.UpdateTaskScoreRequest, opts ...grpc.CallOption) (*todov1.UpdateTaskScoreResponse, error)
+	updateTaskScore func(ctx context.Context, req *todov1.UpdateTaskScoreRequest, opts ...grpc.CallOption) (*todov1.UpdateTaskScoreResponse, error)
+	listUserIDs     func(ctx context.Context, req *authv1.ListUserIDsRequest, opts ...grpc.CallOption) (*authv1.ListUserIDsResponse, error)
 }
 
 func (f *fakeTodoClient) GetTask(ctx context.Context, req *todov1.GetTaskRequest, opts ...grpc.CallOption) (*todov1.GetTaskResponse, error) {
@@ -189,33 +191,6 @@ func (f *fakeTodoClient) RemoveDependency(ctx context.Context, in *todov1.Remove
 func (f *fakeTodoClient) GetDependencyTree(ctx context.Context, in *todov1.GetDependencyTreeRequest, opts ...grpc.CallOption) (*todov1.GetDependencyTreeResponse, error) {
 	panic("not used")
 }
-func (f *fakeTodoClient) CompleteMultipartUpload(ctx context.Context, in *todov1.CompleteMultipartUploadRequest, opts ...grpc.CallOption) (*todov1.CompleteMultipartUploadResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) CreateAttachmentUploadURL(ctx context.Context, in *todov1.CreateAttachmentUploadURLRequest, opts ...grpc.CallOption) (*todov1.CreateAttachmentUploadURLResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) ConfirmAttachment(ctx context.Context, in *todov1.ConfirmAttachmentRequest, opts ...grpc.CallOption) (*todov1.ConfirmAttachmentResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) ListAttachments(ctx context.Context, in *todov1.ListAttachmentsRequest, opts ...grpc.CallOption) (*todov1.ListAttachmentsResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) GetAttachmentDownloadURL(ctx context.Context, in *todov1.GetAttachmentDownloadURLRequest, opts ...grpc.CallOption) (*todov1.GetAttachmentDownloadURLResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) DeleteAttachment(ctx context.Context, in *todov1.DeleteAttachmentRequest, opts ...grpc.CallOption) (*todov1.DeleteAttachmentResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) InitiateMultipartUpload(ctx context.Context, in *todov1.InitiateMultipartUploadRequest, opts ...grpc.CallOption) (*todov1.InitiateMultipartUploadResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) GetUploadPartURL(ctx context.Context, in *todov1.GetUploadPartURLRequest, opts ...grpc.CallOption) (*todov1.GetUploadPartURLResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) UpdateScanStatus(ctx context.Context, in *todov1.UpdateScanStatusRequest, opts ...grpc.CallOption) (*todov1.UpdateScanStatusResponse, error) {
-	panic("not used")
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -228,6 +203,16 @@ func userByPlan(plan string) func(context.Context, *authv1.GetUserByIDRequest, .
 		return &authv1.GetUserByIDResponse{
 			User: &authv1.UserSummary{Plan: plan},
 		}, nil
+	}
+}
+
+func minimalTask() *todov1.Task {
+	return &todov1.Task{
+		Id:        "task-1",
+		UserId:    "user-1",
+		Title:     "Write docs",
+		CreatedAt: timestamppb.Now(),
+		UpdatedAt: timestamppb.Now(),
 	}
 }
 
