@@ -45,10 +45,10 @@ Useful once the cluster is up:
 
 ## Code style
 
-There's no linter/formatter wired into CI yet, so please self-check before pushing:
+CI (`.github/workflows/ci.yml`) runs lint, build, and test on every push/PR to `main`, but it's still faster to self-check before pushing:
 
-- **Go**: run `gofmt -l .` and `go vet ./...` from the module root; keep code idiomatic per `go-reviewer` conventions (explicit error handling, no `context.Background()` inside handlers, no swallowed errors — see the "Conventions" and "Don't" sections in `CLAUDE.md`).
-- **Frontend (`web/`)**: run `npx tsc -b` (via `npm run build`) to catch type errors; follow existing component/hook patterns. Every new user-facing string needs an entry in both `web/src/locales/en/translation.json` and `web/src/locales/zh/translation.json` — see the i18n section in `CLAUDE.md`.
+- **Go**: run `gofmt -l .` and `go vet ./...` from each module root, and `golangci-lint run ./...` (CI pins `v1.64.8`); keep code idiomatic per `go-reviewer` conventions (explicit error handling, no `context.Background()` inside handlers, no swallowed errors — see the "Conventions" and "Don't" sections in `CLAUDE.md`).
+- **Frontend (`web/`)**: run `npm run lint` (ESLint) and `npm run build` (`tsc -b && vite build`) to catch type/lint errors; follow existing component/hook patterns. Every new user-facing string needs an entry in both `web/src/locales/en/translation.json` and `web/src/locales/zh/translation.json` — see the i18n section in `CLAUDE.md`.
 - **Proto changes**: always run `./scripts/proto-gen.sh` after editing a `.proto` file, and never hand-edit generated code under `proto/gen/`.
 
 ## Testing
@@ -63,13 +63,13 @@ go test ./pkg/tokens/ ./services/gateway/...
 go test ./pkg/... && go test ./services/auth/... -timeout 120s && go test ./services/gateway/...
 ```
 
-Add or update tests for any new functionality or bug fix. There's no CI pipeline yet (planned — see README Status table), so running the relevant test layers locally before opening a PR is currently the only gate.
+Add or update tests for any new functionality or bug fix. CI runs the fast, Docker-free layer (Layer 1 + 3) on every push/PR; Layer 2 integration tests (testcontainers + Postgres) aren't wired into CI yet, so run those locally before opening a PR that touches `services/auth/internal/store` or `services/auth/internal/server`.
 
 ## Submitting a pull request
 
 1. Open a PR against `main`.
 2. Describe **what** changed and **why**; link any related issue with `Closes #123` or `Relates to #123`.
-3. Note which test layers you ran locally (no CI to fall back on yet).
+3. Note which test layers you ran locally, especially Layer 2 (integration) since CI doesn't cover it yet.
 4. Expect review within a few days — changes requested are normal, not a rejection.
 
 ## Reporting issues

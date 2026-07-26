@@ -1,0 +1,203 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOLANGCI_LINT_VERSION: v1.64.8
+
+jobs:
+  # proto/gen is .gitignored (hand-maintained go.mod, generated *.pb.go) but every
+  # Go module lists it in go.work, so it must exist before any build/lint/test can
+  # run. Generate it once here and share it with the other jobs via an artifact
+  # instead of re-running protoc install in every matrix leg.
+  generate-proto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+
+      - name: Generate proto/gen
+        run: ./scripts/proto-gen.sh
+
+      - name: Restore proto/gen/go.mod
+        # proto-gen.sh does `rm -rf proto/gen` before regenerating, which wipes the
+        # hand-maintained go.mod along with the generated code. Recreate it and
+        # let `go mod tidy` fill in the checksums.
+        run: |
+          cat > proto/gen/go.mod <<'EOF'
+          module github.com/fsociety/todo/proto/gen
+
+          go 1.25.0
+
+          require (
+          	google.golang.org/grpc v1.81.0
+          	google.golang.org/protobuf v1.36.11
+          )
+          EOF
+          cd proto/gen && go mod tidy
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proto-gen
+          path: proto/gen
+          retention-days: 1
+
+  lint-go:
+    needs: generate-proto
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - pkg
+          - services/ai
+          - services/auth
+          - services/gateway
+          - services/notification
+          - services/scheduler
+          - services/todo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: proto-gen
+          path: proto/gen
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache-dependency-path: go.work.sum
+
+      - name: gofmt
+        working-directory: ${{ matrix.module }}
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            echo "::error::gofmt found unformatted files (run 'gofmt -w .')"
+            exit 1
+          fi
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: ${{ matrix.module }}
+          args: --timeout=5m
+
+  build-go:
+    needs: generate-proto
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - pkg
+          - services/ai
+          - services/auth
+          - services/gateway
+          - services/notification
+          - services/scheduler
+          - services/todo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: proto-gen
+          path: proto/gen
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache-dependency-path: go.work.sum
+
+      - name: go build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+
+  test-go:
+    needs: generate-proto
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - pkg
+          - services/ai
+          - services/auth
+          - services/gateway
+          - services/notification
+          - services/scheduler
+          - services/todo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: proto-gen
+          path: proto/gen
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache-dependency-path: go.work.sum
+
+      - name: go test
+        working-directory: ${{ matrix.module }}
+        # Fast, Docker-free layer only (see CLAUDE.md "Testing" section). auth's
+        # internal/server and internal/store packages spin up a real Postgres via
+        # testcontainers in TestMain and are intentionally excluded here — they
+        # belong to the (not-yet-wired) integration layer.
+        run: |
+          if [ "${{ matrix.module }}" = "services/auth" ]; then
+            pkgs=$(go list ./... | grep -v '/internal/server$' | grep -v '/internal/store$')
+            go test -timeout 60s $pkgs
+          else
+            go test -timeout 60s ./...
+          fi
+
+  lint-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+
+  build-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npm run build
