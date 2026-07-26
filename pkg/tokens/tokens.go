@@ -74,7 +74,7 @@ func NewMakerFromPEM(pemBytes []byte) (*Maker, error) {
 	}
 
 	// kid = first 8 bytes of the public modulus in hex — stable across restarts
-	kid := fmt.Sprintf("%x", rsaKey.PublicKey.N.Bytes()[:8])
+	kid := fmt.Sprintf("%x", rsaKey.N.Bytes()[:8])
 	return &Maker{privateKey: rsaKey, kid: kid}, nil
 }
 
@@ -141,12 +141,12 @@ func (m *Maker) Verify(tokenStr string) (*Claims, error) {
 
 // PublicKeyN returns the base64url-encoded modulus of the public key (for JWKS).
 func (m *Maker) PublicKeyN() string {
-	return base64.RawURLEncoding.EncodeToString(m.privateKey.PublicKey.N.Bytes())
+	return base64.RawURLEncoding.EncodeToString(m.privateKey.N.Bytes())
 }
 
 // PublicKeyE returns the base64url-encoded exponent of the public key (for JWKS).
 func (m *Maker) PublicKeyE() string {
-	e := big.NewInt(int64(m.privateKey.PublicKey.E))
+	e := big.NewInt(int64(m.privateKey.E))
 	return base64.RawURLEncoding.EncodeToString(e.Bytes())
 }
 

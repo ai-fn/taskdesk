@@ -44,14 +44,22 @@ func main() {
 		log.Error("dial auth-service", "err", err)
 		os.Exit(1)
 	}
-	defer authConn.Close()
+	defer func() {
+		if err := authConn.Close(); err != nil {
+			log.Warn("close auth-service conn", "err", err)
+		}
+	}()
 
 	aiConn, err := grpc.NewClient(cfg.AIServiceAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Error("dial ai-service", "err", err)
 		os.Exit(1)
 	}
-	defer aiConn.Close()
+	defer func() {
+		if err := aiConn.Close(); err != nil {
+			log.Warn("close ai-service conn", "err", err)
+		}
+	}()
 
 	authClient := authv1.NewAuthServiceClient(authConn)
 	aiClient := aiv1.NewAIServiceClient(aiConn)

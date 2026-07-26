@@ -102,7 +102,7 @@ func TestAccessToken_TTL(t *testing.T) {
 	tok, _ := m.CreateAccessToken("u", "e@x.com", "s")
 	claims, _ := m.Verify(tok)
 
-	ttl := claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time)
+	ttl := claims.ExpiresAt.Sub(claims.IssuedAt.Time)
 	// Allow 5 s of slack around the 15 min TTL.
 	if ttl < tokens.AccessTokenTTL-5*time.Second || ttl > tokens.AccessTokenTTL+5*time.Second {
 		t.Errorf("access TTL = %v, want ~%v", ttl, tokens.AccessTokenTTL)
@@ -115,7 +115,7 @@ func TestRefreshToken_TTL(t *testing.T) {
 	tok, _ := m.CreateRefreshToken("u", "e@x.com", "s")
 	claims, _ := m.Verify(tok)
 
-	ttl := claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time)
+	ttl := claims.ExpiresAt.Sub(claims.IssuedAt.Time)
 	if ttl < tokens.RefreshTokenTTL-5*time.Second || ttl > tokens.RefreshTokenTTL+5*time.Second {
 		t.Errorf("refresh TTL = %v, want ~%v", ttl, tokens.RefreshTokenTTL)
 	}

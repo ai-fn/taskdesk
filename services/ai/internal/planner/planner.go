@@ -249,7 +249,7 @@ func (p *Planner) GenerateStream(ctx context.Context, uc UserContext, lang strin
 			),
 		},
 	})
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	var acc anthropic.Message
 	var narrative strings.Builder

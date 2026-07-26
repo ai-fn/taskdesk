@@ -49,7 +49,11 @@ func main() {
 	defer kafkaConsumer.Close()
 
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
-	defer rdb.Close()
+	defer func() {
+		if err := rdb.Close(); err != nil {
+			log.Warn("close redis client", "err", err)
+		}
+	}()
 
 	m := mailer.New(cfg.SMTPAddr, cfg.SMTPFrom, cfg.SMTPUser, cfg.SMTPPass)
 	h := consumer.New(m, rdb, log)

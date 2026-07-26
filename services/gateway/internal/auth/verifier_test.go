@@ -31,7 +31,7 @@ func newSigningKey(t *testing.T) (*rsa.PrivateKey, string) {
 		t.Fatal(err)
 	}
 	// Mirror tokens.go kid derivation: first 8 bytes of the modulus, hex.
-	kid := fmt.Sprintf("%x", key.PublicKey.N.Bytes()[:8])
+	kid := fmt.Sprintf("%x", key.N.Bytes()[:8])
 	return key, kid
 }
 
@@ -59,7 +59,7 @@ func mint(t *testing.T, key *rsa.PrivateKey, kid, userID string, exp time.Time) 
 func jwkFor(key *rsa.PrivateKey, kid string) *authv1.JWK {
 	return &authv1.JWK{
 		Kty: "RSA", Kid: kid, Use: "sig", Alg: "RS256",
-		N: base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
+		N: base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
 		E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.PublicKey.E)).Bytes()),
 	}
 }

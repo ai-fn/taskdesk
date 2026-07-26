@@ -53,28 +53,44 @@ func main() {
 		log.Error("dial auth-service", "err", err)
 		os.Exit(1)
 	}
-	defer authConn.Close()
+	defer func() {
+		if err := authConn.Close(); err != nil {
+			log.Warn("close auth-service conn", "err", err)
+		}
+	}()
 
 	todoConn, err := grpc.NewClient(cfg.TodoAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Error("dial todo-service", "err", err)
 		os.Exit(1)
 	}
-	defer todoConn.Close()
+	defer func() {
+		if err := todoConn.Close(); err != nil {
+			log.Warn("close todo-service conn", "err", err)
+		}
+	}()
 
 	aiConn, err := grpc.NewClient(cfg.AIAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Error("dial ai-service", "err", err)
 		os.Exit(1)
 	}
-	defer aiConn.Close()
+	defer func() {
+		if err := aiConn.Close(); err != nil {
+			log.Warn("close ai-service conn", "err", err)
+		}
+	}()
 
 	authClient := authv1.NewAuthServiceClient(authConn)
 	todoClient := todov1.NewTodoServiceClient(todoConn)
 	aiClient := aiv1.NewAIServiceClient(aiConn)
 
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
-	defer rdb.Close()
+	defer func() {
+		if err := rdb.Close(); err != nil {
+			log.Warn("close redis client", "err", err)
+		}
+	}()
 
 	// OAuth providers — only register the ones whose credentials are configured.
 	providers := oauth.Registry{}

@@ -99,7 +99,10 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		switch p := chunk.Payload.(type) {
 		case *aiv1.PlanStreamChunk_TextDelta:
 			msg, _ := json.Marshal(map[string]string{"type": "text", "delta": p.TextDelta})
-			fmt.Fprintf(w, "data: %s\n\n", msg)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", msg); err != nil {
+				// Client gone — nothing more we can do with this stream.
+				return
+			}
 			flusher.Flush()
 
 		case *aiv1.PlanStreamChunk_Plan:
@@ -112,7 +115,9 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 				writeSSEError(w, flusher, "marshal failed")
 				return
 			}
-			fmt.Fprintf(w, "data: {\"type\":\"done\",\"plan\":%s}\n\n", planJSON)
+			if _, err := fmt.Fprintf(w, "data: {\"type\":\"done\",\"plan\":%s}\n\n", planJSON); err != nil {
+				return
+			}
 			flusher.Flush()
 			return
 
@@ -133,6 +138,9 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 
 func writeSSEError(w http.ResponseWriter, flusher http.Flusher, msg string) {
 	payload, _ := json.Marshal(map[string]string{"type": "error", "error": msg})
-	fmt.Fprintf(w, "data: %s\n\n", payload)
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
+		// Client gone — nothing more we can do with this stream.
+		return
+	}
 	flusher.Flush()
 }

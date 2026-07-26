@@ -30,7 +30,7 @@ func init() {
 		panic(err)
 	}
 	testKey = k
-	testKid = fmt.Sprintf("%x", k.PublicKey.N.Bytes()[:8]) // mirrors tokens.go
+	testKid = fmt.Sprintf("%x", k.N.Bytes()[:8]) // mirrors tokens.go
 }
 
 // authVerifier builds a Verifier over the fake auth client for use with
@@ -121,7 +121,7 @@ func (f *fakeAuthClient) Logout(ctx context.Context, in *authv1.LogoutRequest, o
 func (f *fakeAuthClient) GetJWKS(ctx context.Context, in *authv1.GetJWKSRequest, opts ...grpc.CallOption) (*authv1.GetJWKSResponse, error) {
 	return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{{
 		Kty: "RSA", Kid: testKid, Use: "sig", Alg: "RS256",
-		N: base64.RawURLEncoding.EncodeToString(testKey.PublicKey.N.Bytes()),
+		N: base64.RawURLEncoding.EncodeToString(testKey.N.Bytes()),
 		E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(testKey.PublicKey.E)).Bytes()),
 	}}}, nil
 }

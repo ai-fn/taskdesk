@@ -30,7 +30,7 @@ func newKey(t *testing.T) (*rsa.PrivateKey, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kid := fmt.Sprintf("%x", key.PublicKey.N.Bytes()[:8])
+	kid := fmt.Sprintf("%x", key.N.Bytes()[:8])
 	return key, kid
 }
 
@@ -70,7 +70,7 @@ type fakeAuth struct {
 func (f *fakeAuth) GetJWKS(_ context.Context, _ *authv1.GetJWKSRequest, _ ...grpc.CallOption) (*authv1.GetJWKSResponse, error) {
 	return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{{
 		Kty: "RSA", Kid: f.kid, Use: "sig", Alg: "RS256",
-		N: base64.RawURLEncoding.EncodeToString(f.key.PublicKey.N.Bytes()),
+		N: base64.RawURLEncoding.EncodeToString(f.key.N.Bytes()),
 		E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(f.key.PublicKey.E)).Bytes()),
 	}}}, nil
 }

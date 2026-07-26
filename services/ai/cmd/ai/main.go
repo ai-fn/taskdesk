@@ -85,7 +85,11 @@ func main() {
 		log.Error("dial todo-service", "err", err)
 		os.Exit(1)
 	}
-	defer todoConn.Close()
+	defer func() {
+		if err := todoConn.Close(); err != nil {
+			log.Warn("close todo-service conn", "err", err)
+		}
+	}()
 	todoClient := todov1.NewTodoServiceClient(todoConn)
 
 	authConn, err := grpc.NewClient(cfg.AuthServiceAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -93,7 +97,11 @@ func main() {
 		log.Error("dial auth-service", "err", err)
 		os.Exit(1)
 	}
-	defer authConn.Close()
+	defer func() {
+		if err := authConn.Close(); err != nil {
+			log.Warn("close auth-service conn", "err", err)
+		}
+	}()
 	authClient := authv1.NewAuthServiceClient(authConn)
 
 	emb := embedder.New(cfg.VoyageAPIKey)
