@@ -48,7 +48,7 @@ type ScoreInput struct {
 type HistoryTask struct {
 	Title       string `json:"title"`
 	Priority    string `json:"priority"`
-	Status      string `json:"status"` // "done" or "open"
+	Status      string `json:"status"`       // "done" or "open"
 	DaysElapsed int    `json:"days_elapsed"` // days since creation
 }
 
@@ -77,10 +77,10 @@ func New(apiKey string) *Scorer {
 // a short insight explaining the key factor driving the estimate.
 func (sc *Scorer) Score(ctx context.Context, today string, task ScoreInput, history []HistoryTask) (*ScoreResult, error) {
 	type userMsg struct {
-		Today        string        `json:"today"`
-		Task         ScoreInput    `json:"task"`
-		RecentTasks  []HistoryTask `json:"recent_tasks_30d"` // up to 50 entries
-		OpenTaskCount int          `json:"open_task_count"`
+		Today         string        `json:"today"`
+		Task          ScoreInput    `json:"task"`
+		RecentTasks   []HistoryTask `json:"recent_tasks_30d"` // up to 50 entries
+		OpenTaskCount int           `json:"open_task_count"`
 	}
 
 	// Count open tasks from history for workload context.

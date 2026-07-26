@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	"github.com/fsociety/todo/services/gateway/internal/oauth"
+	"github.com/go-chi/chi/v5"
 )
 
 const (
@@ -22,8 +22,8 @@ const (
 
 // OAuthHandler runs the Authorization Code flow for any registered provider.
 //
-//   GET /api/v1/auth/oauth/{provider}            → Start
-//   GET /api/v1/auth/oauth/{provider}/callback   → Callback
+//	GET /api/v1/auth/oauth/{provider}            → Start
+//	GET /api/v1/auth/oauth/{provider}/callback   → Callback
 type OAuthHandler struct {
 	client    authv1.AuthServiceClient
 	providers oauth.Registry

@@ -41,11 +41,11 @@ type Config struct {
 	CodeMaxAttempts    int           `env:"CODE_MAX_ATTEMPTS"    default:"3"`
 
 	// Stripe (optional — omit STRIPE_SECRET_KEY to run without payments)
-	StripeSecretKey    string `env:"STRIPE_SECRET_KEY"    default:""`
-	StripeWebhookSec   string `env:"STRIPE_WEBHOOK_SECRET" default:""`
-	StripePriceID      string `env:"STRIPE_PRICE_ID"      default:""`
-	StripeSuccessURL   string `env:"STRIPE_SUCCESS_URL"   default:""`
-	StripeCancelURL    string `env:"STRIPE_CANCEL_URL"    default:""`
+	StripeSecretKey  string `env:"STRIPE_SECRET_KEY"    default:""`
+	StripeWebhookSec string `env:"STRIPE_WEBHOOK_SECRET" default:""`
+	StripePriceID    string `env:"STRIPE_PRICE_ID"      default:""`
+	StripeSuccessURL string `env:"STRIPE_SUCCESS_URL"   default:""`
+	StripeCancelURL  string `env:"STRIPE_CANCEL_URL"    default:""`
 }
 
 func main() {

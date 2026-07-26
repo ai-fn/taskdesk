@@ -95,7 +95,7 @@ type ListFilter struct {
 	// List / flag filters
 	ListIDFilter   *string // nil = all; &"" = tasks with no list; &"<id>" = specific list
 	FlaggedOnly    bool
-	IncludeDeleted bool   // true = show ONLY soft-deleted; false = show only active
+	IncludeDeleted bool // true = show ONLY soft-deleted; false = show only active
 	DueTodayOnly   bool
 	HasDueDate     bool
 	ParentTaskID   *string // nil = root tasks only; set = subtasks of this parent

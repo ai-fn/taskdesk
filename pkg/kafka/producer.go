@@ -22,7 +22,7 @@ type Producer struct {
 func NewProducer(brokers []string, log *slog.Logger) (*Producer, error) {
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(brokers...),
-		kgo.AllowAutoTopicCreation(), // topics are pre-created via KafkaTopic CRD; this is a safety net
+		kgo.AllowAutoTopicCreation(),     // topics are pre-created via KafkaTopic CRD; this is a safety net
 		kgo.ProducerBatchMaxBytes(1<<20), // 1 MiB
 	)
 	if err != nil {

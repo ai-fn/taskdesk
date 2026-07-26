@@ -8,14 +8,14 @@ import (
 	"net/http"
 
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
+	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
+	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
+	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	gwauth "github.com/fsociety/todo/services/gateway/internal/auth"
 	"github.com/fsociety/todo/services/gateway/internal/handler"
 	"github.com/fsociety/todo/services/gateway/internal/middleware"
 	"github.com/fsociety/todo/services/gateway/internal/oauth"
 	"github.com/fsociety/todo/services/gateway/internal/ws"
-	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
-	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
-	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/redis/go-redis/v9"
@@ -64,15 +64,15 @@ func New(
 	}
 	oauthH := handler.NewOAuthHandler(authClient, oauthProviders, log)
 	r.Route("/api/v1/auth", func(r chi.Router) {
-		r.Post("/signup",  auth.SignUp)
-		r.Post("/login",   auth.Login)
+		r.Post("/signup", auth.SignUp)
+		r.Post("/login", auth.Login)
 		r.Post("/refresh", auth.Refresh)
-		r.Post("/logout",  auth.Logout)
+		r.Post("/logout", auth.Logout)
 
 		r.Post("/password/forgot", auth.ForgotPassword)
-		r.Post("/password/reset",  auth.ResetPassword)
+		r.Post("/password/reset", auth.ResetPassword)
 
-		r.Get("/oauth/{provider}",          oauthH.Start)
+		r.Get("/oauth/{provider}", oauthH.Start)
 		r.Get("/oauth/{provider}/callback", oauthH.Callback)
 	})
 
@@ -80,18 +80,18 @@ func New(
 	r.Route("/api/v1/tasks", func(r chi.Router) {
 		r.Use(middleware.Authenticate(verifier))
 
-		r.Get("/",                   todo.List)
-		r.Post("/",                  todo.Create)
-		r.Get("/{taskID}",           todo.Get)
-		r.Patch("/{taskID}",         todo.Update)
-		r.Delete("/{taskID}",        todo.Delete)
+		r.Get("/", todo.List)
+		r.Post("/", todo.Create)
+		r.Get("/{taskID}", todo.Get)
+		r.Patch("/{taskID}", todo.Update)
+		r.Delete("/{taskID}", todo.Delete)
 		r.Post("/{taskID}/complete", todo.Complete)
-		r.Post("/{taskID}/restore",  todo.Restore)
-		r.Delete("/{taskID}/purge",  todo.Purge)
+		r.Post("/{taskID}/restore", todo.Restore)
+		r.Delete("/{taskID}/purge", todo.Purge)
 
-		r.Get("/{taskID}/dependencies",                  todo.ListDependencies)
-		r.Get("/{taskID}/dependency-tree",               todo.GetDependencyTree)
-		r.Post("/{taskID}/dependencies",                 todo.AddDependency)
+		r.Get("/{taskID}/dependencies", todo.ListDependencies)
+		r.Get("/{taskID}/dependency-tree", todo.GetDependencyTree)
+		r.Post("/{taskID}/dependencies", todo.AddDependency)
 		r.Delete("/{taskID}/dependencies/{dependsOnID}", todo.RemoveDependency)
 	})
 
@@ -99,22 +99,22 @@ func New(
 	r.Route("/api/v1/lists", func(r chi.Router) {
 		r.Use(middleware.Authenticate(verifier))
 
-		r.Get("/",              lists.List)
-		r.Post("/",             lists.Create)
-		r.Post("/reorder",      lists.Reorder)
-		r.Patch("/{listID}",    lists.Update)
-		r.Delete("/{listID}",   lists.Delete)
+		r.Get("/", lists.List)
+		r.Post("/", lists.Create)
+		r.Post("/reorder", lists.Reorder)
+		r.Patch("/{listID}", lists.Update)
+		r.Delete("/{listID}", lists.Delete)
 	})
 
 	groups := handler.NewGroupHandler(todoClient)
 	r.Route("/api/v1/groups", func(r chi.Router) {
 		r.Use(middleware.Authenticate(verifier))
 
-		r.Get("/",              groups.List)
-		r.Post("/",             groups.Create)
-		r.Post("/reorder",      groups.Reorder)
-		r.Patch("/{groupID}",   groups.Update)
-		r.Delete("/{groupID}",  groups.Delete)
+		r.Get("/", groups.List)
+		r.Post("/", groups.Create)
+		r.Post("/reorder", groups.Reorder)
+		r.Patch("/{groupID}", groups.Update)
+		r.Delete("/{groupID}", groups.Delete)
 	})
 
 	// Daily plan (AI-generated) — pro only
@@ -165,7 +165,7 @@ func New(
 		r.Get("/me", account.Me)
 		r.Patch("/language", account.UpdateLanguage)
 		r.Post("/email/verify/request", account.RequestEmailVerification)
-		r.Post("/email/verify/confirm",  account.ConfirmEmail)
+		r.Post("/email/verify/confirm", account.ConfirmEmail)
 	})
 
 	// WebSocket: authenticated users subscribe to their real-time notifications.

@@ -165,8 +165,9 @@ func (s *Store) queryTasksByDep(ctx context.Context, userID, idSubquery, paramTa
 }
 
 // TreeNode is a single entry in a transitive dependency walk.
-//   Depth=1 ⇒ direct dep of the starting task. Depth>1 ⇒ reached via ViaTaskID.
-//   ViaTaskID is the immediate predecessor on the chain — the root task at depth=1.
+//
+//	Depth=1 ⇒ direct dep of the starting task. Depth>1 ⇒ reached via ViaTaskID.
+//	ViaTaskID is the immediate predecessor on the chain — the root task at depth=1.
 type TreeNode struct {
 	Task  *domain.Task
 	Depth int
@@ -193,8 +194,9 @@ func (s *Store) GetDependencyTree(ctx context.Context, userID, taskID string) (d
 }
 
 // walkTree runs a recursive CTE in the chosen direction.
-//   upstream=true  → follow d.task_id → d.depends_on_id (what `start` is blocked by)
-//   upstream=false → follow d.depends_on_id → d.task_id (what `start` blocks)
+//
+//	upstream=true  → follow d.task_id → d.depends_on_id (what `start` is blocked by)
+//	upstream=false → follow d.depends_on_id → d.task_id (what `start` blocks)
 func (s *Store) walkTree(ctx context.Context, userID, start string, upstream bool) ([]*TreeNode, error) {
 	// Two near-identical recursive CTEs differ only in which column they
 	// "follow" through the dependencies table. Keep separate to stay readable.

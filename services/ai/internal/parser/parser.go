@@ -53,11 +53,16 @@ type ParsedTask struct {
 // PriorityInt converts the string priority to the proto int32 representation.
 func (p *ParsedTask) PriorityInt() int32 {
 	switch strings.ToLower(p.Priority) {
-	case "low":    return 1
-	case "medium": return 2
-	case "high":   return 3
-	case "urgent": return 4
-	default:       return 0
+	case "low":
+		return 1
+	case "medium":
+		return 2
+	case "high":
+		return 3
+	case "urgent":
+		return 4
+	default:
+		return 0
 	}
 }
 
@@ -153,8 +158,8 @@ func (p *Parser) Parse(ctx context.Context, text, today, lang string, listNames 
 								"description": "Name of the list/project this task belongs to.",
 							},
 							"tags": map[string]any{
-								"type":  "array",
-								"items": map[string]any{"type": "string"},
+								"type":        "array",
+								"items":       map[string]any{"type": "string"},
 								"description": "Relevant tags extracted from the description.",
 							},
 							"flagged": map[string]any{

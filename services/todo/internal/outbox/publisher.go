@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	batchSize     = 50
-	pollInterval  = 500 * time.Millisecond
+	batchSize    = 50
+	pollInterval = 500 * time.Millisecond
 )
 
 // Publisher polls todo.outbox and produces unpublished events to Kafka.

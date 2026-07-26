@@ -55,7 +55,7 @@ func (g *GoogleProvider) Exchange(ctx context.Context, code string) (*UserInfo, 
 	}
 
 	var raw struct {
-		Sub           string `json:"sub"`             // stable user ID
+		Sub           string `json:"sub"` // stable user ID
 		Email         string `json:"email"`
 		EmailVerified bool   `json:"email_verified"`
 		Name          string `json:"name"`

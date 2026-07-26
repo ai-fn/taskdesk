@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-
 var ErrNotFound = errors.New("not found")
 var ErrEmailTaken = errors.New("email already registered")
 var ErrSubscriptionAlreadyExists = errors.New("subscription already exists")

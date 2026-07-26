@@ -60,11 +60,11 @@ func (d *DiscordProvider) Exchange(ctx context.Context, code string) (*UserInfo,
 
 	// Discord's /users/@me payload (relevant fields).
 	var raw struct {
-		ID            string `json:"id"`
-		Username      string `json:"username"`
-		GlobalName    string `json:"global_name"`
-		Email         string `json:"email"`
-		Verified      bool   `json:"verified"`
+		ID         string `json:"id"`
+		Username   string `json:"username"`
+		GlobalName string `json:"global_name"`
+		Email      string `json:"email"`
+		Verified   bool   `json:"verified"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decode userinfo: %w", err)

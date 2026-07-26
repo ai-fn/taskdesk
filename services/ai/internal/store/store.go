@@ -14,11 +14,11 @@ import (
 
 // DailyPlan is the stored representation of a Claude-generated plan.
 type DailyPlan struct {
-	PlanID      string     `db:"plan_id"`
-	UserID      string     `db:"user_id"`
-	Summary     string     `db:"summary"`
-	ItemsJSON   []byte     `db:"items_json"`
-	GeneratedAt time.Time  `db:"generated_at"`
+	PlanID      string    `db:"plan_id"`
+	UserID      string    `db:"user_id"`
+	Summary     string    `db:"summary"`
+	ItemsJSON   []byte    `db:"items_json"`
+	GeneratedAt time.Time `db:"generated_at"`
 }
 
 // PlanItem mirrors planner.PlanItem for DB serialization.

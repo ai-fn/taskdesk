@@ -35,13 +35,13 @@ type RateLimiter struct {
 	r       rate.Limit    // tokens refilled per second
 	burst   int           // bucket capacity
 	idleTTL time.Duration // evict entries idle longer than this
-	stop    chan struct{}  // closed by Stop() to end the cleanup goroutine
+	stop    chan struct{} // closed by Stop() to end the cleanup goroutine
 	once    sync.Once     // ensures stop is closed exactly once
 }
 
 type rlEntry struct {
-	limiter     *rate.Limiter
-	lastSeenNs  atomic.Int64 // time.Now().UnixNano() — written by Allow, read by cleanup
+	limiter    *rate.Limiter
+	lastSeenNs atomic.Int64 // time.Now().UnixNano() — written by Allow, read by cleanup
 }
 
 // NewRateLimiter creates a RateLimiter and starts a background cleanup goroutine.

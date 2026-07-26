@@ -4,8 +4,9 @@
 // We use voyage-4-lite (1024 dimensions) — fast, free tier (200M tokens).
 //
 // API reference: POST https://api.voyageai.com/v1/embeddings
-//   input_type: "document" when indexing, "query" when searching.
-//   The distinction lets Voyage apply asymmetric search optimisation.
+//
+//	input_type: "document" when indexing, "query" when searching.
+//	The distinction lets Voyage apply asymmetric search optimisation.
 package embedder
 
 import (

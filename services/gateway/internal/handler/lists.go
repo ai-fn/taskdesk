@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
-	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
+	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
+	"github.com/go-chi/chi/v5"
 )
 
 // ListHandler bridges HTTP ↔ todo-service list RPCs.

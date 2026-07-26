@@ -93,10 +93,10 @@ func (s *Server) GeneratePlan(ctx context.Context, req *aiv1.GeneratePlanRequest
 	// Build the proto response.
 	planID := uuid.New().String()
 	dp := &aiv1.DailyPlan{
-		PlanId:        planID,
-		UserId:        req.UserId,
-		Summary:       plan.Summary,
-		GeneratedAt:   timestamppb.New(now),
+		PlanId:      planID,
+		UserId:      req.UserId,
+		Summary:     plan.Summary,
+		GeneratedAt: timestamppb.New(now),
 	}
 	for _, item := range plan.Items {
 		dp.Items = append(dp.Items, &aiv1.PlanItem{

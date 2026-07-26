@@ -30,8 +30,8 @@ type AuthEmailEvent struct {
 	EventID     string    `json:"event_id"`
 	UserID      string    `json:"user_id"`
 	Email       string    `json:"email"`
-	Purpose     string    `json:"purpose"`      // PurposePasswordReset | PurposeEmailVerify
-	Code        string    `json:"code"`         // raw OTP — embed in email
+	Purpose     string    `json:"purpose"` // PurposePasswordReset | PurposeEmailVerify
+	Code        string    `json:"code"`    // raw OTP — embed in email
 	Language    string    `json:"language"`
 	ExpiresMins int       `json:"expires_mins"` // for display in email body
 	OccurredAt  time.Time `json:"occurred_at"`
