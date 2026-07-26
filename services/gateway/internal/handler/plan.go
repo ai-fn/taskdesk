@@ -76,10 +76,6 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Track whether we already forwarded a terminal SSE event so the EOF guard
-	// below doesn't double-send.
-	terminated := false
-
 	for {
 		chunk, err := grpcStream.Recv()
 		if err == io.EOF {
@@ -118,24 +114,20 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			}
 			fmt.Fprintf(w, "data: {\"type\":\"done\",\"plan\":%s}\n\n", planJSON)
 			flusher.Flush()
-			terminated = true
 			return
 
 		case *aiv1.PlanStreamChunk_Error:
 			writeSSEError(w, flusher, p.Error)
-			terminated = true
 			return
 		}
 	}
 
 	// Stream EOF without ever emitting a terminal chunk — synthesise an error
 	// so the frontend never silently loses the user's streamed narrative.
-	if !terminated {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			writeSSEError(w, flusher, "plan generation timed out")
-		} else {
-			writeSSEError(w, flusher, "stream ended without a plan")
-		}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		writeSSEError(w, flusher, "plan generation timed out")
+	} else {
+		writeSSEError(w, flusher, "stream ended without a plan")
 	}
 }
 

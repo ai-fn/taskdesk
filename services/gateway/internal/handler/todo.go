@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
+	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
+	"github.com/go-chi/chi/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -32,7 +32,7 @@ func (h *TodoHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	if s := q.Get("status"); s != "" {
 		var n int32
-		fmt.Sscanf(s, "%d", &n)
+		_, _ = fmt.Sscanf(s, "%d", &n) // invalid input leaves n at its zero value
 		req.Status = todov1.Status(n)
 	}
 	if q.Get("list_id") != "" {

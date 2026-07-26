@@ -20,13 +20,13 @@ const refreshCookieName = "refresh_token"
 
 // AuthHandler bridges HTTP ↔ auth-service gRPC.
 type AuthHandler struct {
-	client             authv1.AuthServiceClient
-	todoClient         todov1.TodoServiceClient
-	log                *slog.Logger
-	emailLimiter       *RateLimiter // 5 attempts / minute per email (login/signup)
-	ipLimiter          *RateLimiter // 20 attempts / minute per IP (login/signup)
-	resetEmailLimiter  *RateLimiter // 3 attempts / 10 min per email (password reset)
-	resetIPLimiter     *RateLimiter // 10 attempts / 10 min per IP (password reset)
+	client            authv1.AuthServiceClient
+	todoClient        todov1.TodoServiceClient
+	log               *slog.Logger
+	emailLimiter      *RateLimiter // 5 attempts / minute per email (login/signup)
+	ipLimiter         *RateLimiter // 20 attempts / minute per IP (login/signup)
+	resetEmailLimiter *RateLimiter // 3 attempts / 10 min per email (password reset)
+	resetIPLimiter    *RateLimiter // 10 attempts / 10 min per IP (password reset)
 }
 
 func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, log *slog.Logger) *AuthHandler {
@@ -299,7 +299,7 @@ func handleGRPCError(w http.ResponseWriter, err error) {
 
 func jsonOK(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v) // best-effort: client may have disconnected
 }
 
 // protoOK serializes a proto message using protojson so that well-known types
@@ -316,11 +316,11 @@ func protoStatus(w http.ResponseWriter, m proto.Message, code int) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	w.Write(b)
+	_, _ = w.Write(b) // best-effort: client may have disconnected
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg}) // best-effort: client may have disconnected
 }
