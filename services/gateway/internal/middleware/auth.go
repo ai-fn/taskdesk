@@ -3,25 +3,32 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
-	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"github.com/fsociety/todo/services/gateway/internal/auth"
 )
 
 type contextKey string
 
 const (
-	ctxUserID contextKey = "user_id"
-	ctxEmail  contextKey = "email"
+	ctxUserID           contextKey = "user_id"
+	ctxEmail            contextKey = "email"
+	ctxSessionID        contextKey = "session_id"
+	ctxLanguage         contextKey = "language"
+	ctxSubscriptionPlan contextKey = "subscription_plan"
 )
 
 // Authenticate validates the Bearer token from the Authorization header
 // or the ?token= query param (used by WebSocket clients which cannot set headers).
 // On success it stores user claims in the request context; on failure returns 401.
-func Authenticate(authClient authv1.AuthServiceClient) func(http.Handler) http.Handler {
+//
+// Verification is local (cached signing key) and the user profile comes from a
+// short-TTL cache — see internal/auth.Verifier. gRPC to auth-service happens
+// only on a cache miss. A miss that can't reach auth-service yields 503; an
+// invalid/expired token yields 401.
+func Authenticate(verifier *auth.Verifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := extractBearer(r)
@@ -30,20 +37,26 @@ func Authenticate(authClient authv1.AuthServiceClient) func(http.Handler) http.H
 				return
 			}
 
-			resp, err := authClient.ValidateToken(r.Context(), &authv1.ValidateTokenRequest{
-				AccessToken: token,
-			})
+			id, err := verifier.Verify(r.Context(), token)
 			if err != nil {
-				if st, ok := status.FromError(err); ok && st.Code() == codes.Unauthenticated {
-					http.Error(w, "invalid or expired token", http.StatusUnauthorized)
+				var unavail *auth.UnavailableError
+				if errors.As(err, &unavail) {
+					http.Error(w, "auth service unavailable", http.StatusServiceUnavailable)
 					return
 				}
-				http.Error(w, "auth service unavailable", http.StatusServiceUnavailable)
+				http.Error(w, "invalid or expired token", http.StatusUnauthorized)
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), ctxUserID, resp.UserId)
-			ctx = context.WithValue(ctx, ctxEmail, resp.Email)
+			plan := id.Plan
+			if plan == "" {
+				plan = "free"
+			}
+			ctx := context.WithValue(r.Context(), ctxUserID, id.UserID)
+			ctx = context.WithValue(ctx, ctxEmail, id.Email)
+			ctx = context.WithValue(ctx, ctxSessionID, id.SessionID)
+			ctx = context.WithValue(ctx, ctxLanguage, id.Language)
+			ctx = context.WithValue(ctx, ctxSubscriptionPlan, plan)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -59,6 +72,44 @@ func UserIDFromContext(ctx context.Context) string {
 func EmailFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(ctxEmail).(string)
 	return v
+}
+
+// SessionIDFromContext returns the authenticated user's current session ID.
+func SessionIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(ctxSessionID).(string)
+	return v
+}
+
+// LanguageFromContext returns the authenticated user's preferred language ("en" if absent).
+func LanguageFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(ctxLanguage).(string)
+	if v == "" {
+		return "en"
+	}
+	return v
+}
+
+// SubscriptionPlanFromContext returns the authenticated user's plan ("free" | "pro").
+func SubscriptionPlanFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(ctxSubscriptionPlan).(string)
+	if v == "" {
+		return "free"
+	}
+	return v
+}
+
+// RequirePlan returns a middleware that rejects requests from users whose plan
+// does not match the required plan. Must be used after Authenticate.
+func RequirePlan(plan string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if SubscriptionPlanFromContext(r.Context()) != plan {
+				http.Error(w, "pro subscription required", http.StatusPaymentRequired)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func extractBearer(r *http.Request) string {

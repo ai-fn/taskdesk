@@ -2,13 +2,17 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
 
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
+	gwauth "github.com/fsociety/todo/services/gateway/internal/auth"
 	"github.com/fsociety/todo/services/gateway/internal/handler"
 	"github.com/fsociety/todo/services/gateway/internal/middleware"
+	"github.com/fsociety/todo/services/gateway/internal/oauth"
+	"github.com/fsociety/todo/services/gateway/internal/ws"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
@@ -17,14 +21,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// New returns the gateway's HTTP handler with all routes mounted.
+// New returns the gateway's HTTP handler with all routes mounted, and a cleanup
+// function that stops background goroutines started by the handlers.
+// Call cleanup() after the HTTP server has stopped accepting requests.
 func New(
 	log *slog.Logger,
 	authClient authv1.AuthServiceClient,
 	todoClient todov1.TodoServiceClient,
 	aiClient aiv1.AIServiceClient,
 	rdb *redis.Client,
-) http.Handler {
+	oauthProviders oauth.Registry,
+) (http.Handler, func(context.Context)) {
 	r := chi.NewRouter()
 
 	r.Use(chimw.Recoverer)
@@ -37,17 +44,41 @@ func New(
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	auth := handler.NewAuthHandler(authClient)
+	// Local JWT verifier: validates tokens with a cached signing key and serves
+	// user profiles from a short-TTL cache, keeping auth off the per-request
+	// gRPC hot path. Shared across every authenticated mount below.
+	verifier := gwauth.NewVerifier(authClient)
+
+	// Per-pod WebSocket hub: one Redis PubSub fanned out to all connections,
+	// with dynamic per-user (un)subscribe and slow-consumer eviction.
+	hub := ws.NewHub(rdb.Subscribe(context.Background()), log)
+	hub.Run()
+
+	auth := handler.NewAuthHandler(authClient, todoClient, log)
+	cleanup := func(ctx context.Context) {
+		// Drain hijacked WebSockets first (http.Server.Shutdown does not), then
+		// stop the cache janitors.
+		hub.Shutdown(ctx)
+		auth.Stop()
+		verifier.Stop()
+	}
+	oauthH := handler.NewOAuthHandler(authClient, oauthProviders, log)
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Post("/signup",  auth.SignUp)
 		r.Post("/login",   auth.Login)
 		r.Post("/refresh", auth.Refresh)
 		r.Post("/logout",  auth.Logout)
+
+		r.Post("/password/forgot", auth.ForgotPassword)
+		r.Post("/password/reset",  auth.ResetPassword)
+
+		r.Get("/oauth/{provider}",          oauthH.Start)
+		r.Get("/oauth/{provider}/callback", oauthH.Callback)
 	})
 
 	todo := handler.NewTodoHandler(todoClient)
 	r.Route("/api/v1/tasks", func(r chi.Router) {
-		r.Use(middleware.Authenticate(authClient))
+		r.Use(middleware.Authenticate(verifier))
 
 		r.Get("/",                   todo.List)
 		r.Post("/",                  todo.Create)
@@ -55,17 +86,93 @@ func New(
 		r.Patch("/{taskID}",         todo.Update)
 		r.Delete("/{taskID}",        todo.Delete)
 		r.Post("/{taskID}/complete", todo.Complete)
+		r.Post("/{taskID}/restore",  todo.Restore)
+		r.Delete("/{taskID}/purge",  todo.Purge)
+
+		r.Get("/{taskID}/dependencies",                  todo.ListDependencies)
+		r.Get("/{taskID}/dependency-tree",               todo.GetDependencyTree)
+		r.Post("/{taskID}/dependencies",                 todo.AddDependency)
+		r.Delete("/{taskID}/dependencies/{dependsOnID}", todo.RemoveDependency)
 	})
 
-	// Daily plan (AI-generated)
+	lists := handler.NewListHandler(todoClient)
+	r.Route("/api/v1/lists", func(r chi.Router) {
+		r.Use(middleware.Authenticate(verifier))
+
+		r.Get("/",              lists.List)
+		r.Post("/",             lists.Create)
+		r.Post("/reorder",      lists.Reorder)
+		r.Patch("/{listID}",    lists.Update)
+		r.Delete("/{listID}",   lists.Delete)
+	})
+
+	groups := handler.NewGroupHandler(todoClient)
+	r.Route("/api/v1/groups", func(r chi.Router) {
+		r.Use(middleware.Authenticate(verifier))
+
+		r.Get("/",              groups.List)
+		r.Post("/",             groups.Create)
+		r.Post("/reorder",      groups.Reorder)
+		r.Patch("/{groupID}",   groups.Update)
+		r.Delete("/{groupID}",  groups.Delete)
+	})
+
+	// Daily plan (AI-generated) — pro only
 	plan := handler.NewPlanHandler(aiClient)
-	r.With(middleware.Authenticate(authClient)).Get("/api/v1/plan", plan.GetLatest)
+	r.Route("/api/v1/plan", func(r chi.Router) {
+		r.Use(middleware.Authenticate(verifier))
+		r.Use(middleware.RequirePlan("pro"))
+		r.Get("/", plan.GetLatest)
+		r.Post("/generate", plan.Generate)
+	})
+
+	// Semantic search (pgvector) — available to all; pro uses vector, free uses fulltext.
+	search := handler.NewSearchHandler(aiClient, todoClient)
+	r.With(middleware.Authenticate(verifier)).Get("/api/v1/tasks/search", search.Search)
+
+	// Natural language task parsing — pro only
+	parseH := handler.NewParseHandler(aiClient)
+	r.Route("/api/v1/tasks/parse", func(r chi.Router) {
+		r.Use(middleware.Authenticate(verifier))
+		r.Use(middleware.RequirePlan("pro"))
+		r.Post("/", parseH.Parse)
+	})
+
+	// Subscriptions
+	sub := handler.NewSubscriptionHandler(authClient)
+	r.Route("/api/v1/subscriptions", func(r chi.Router) {
+		r.Use(middleware.Authenticate(verifier))
+		r.Get("/", sub.GetSubscription)
+		r.Post("/redeem", sub.RedeemPromoCode)
+		r.Post("/checkout", sub.CreateCheckout)
+	})
+
+	// Stripe webhook — no auth middleware; Stripe signs the payload itself.
+	stripeH := handler.NewStripeWebhookHandler(authClient)
+	r.Post("/api/v1/stripe/webhook", stripeH.Handle)
+
+	sessions := handler.NewSessionsHandler(authClient)
+	r.Route("/api/v1/sessions", func(r chi.Router) {
+		r.Use(middleware.Authenticate(verifier))
+		r.Get("/", sessions.List)
+		r.Delete("/{sessionID}", sessions.Revoke)
+		r.Post("/revoke-others", sessions.RevokeOthers)
+	})
+
+	account := handler.NewAccountHandler(authClient)
+	r.Route("/api/v1/account", func(r chi.Router) {
+		r.Use(middleware.Authenticate(verifier))
+		r.Get("/me", account.Me)
+		r.Patch("/language", account.UpdateLanguage)
+		r.Post("/email/verify/request", account.RequestEmailVerification)
+		r.Post("/email/verify/confirm",  account.ConfirmEmail)
+	})
 
 	// WebSocket: authenticated users subscribe to their real-time notifications.
-	ws := handler.NewWSHandler(rdb, log)
-	r.With(middleware.Authenticate(authClient)).Get("/api/v1/ws", ws.ServeHTTP)
+	wsHandler := handler.NewWSHandler(hub, log)
+	r.With(middleware.Authenticate(verifier)).Get("/api/v1/ws", wsHandler.ServeHTTP)
 
-	return r
+	return r, cleanup
 }
 
 func accessLog(log *slog.Logger) func(http.Handler) http.Handler {
@@ -91,6 +198,12 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {

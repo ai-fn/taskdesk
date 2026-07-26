@@ -1,20 +1,44 @@
-# Single-broker Kafka via Strimzi — sized for kind, NOT production.
+# Single-broker Kafka via Strimzi in KRaft mode — sized for kind, NOT production.
 #
-# Strimzi operator must already be installed in the `data` namespace; the
-# kind-up.sh script does that before applying this manifest.
+# KRaft removes ZooKeeper entirely. Controller + broker roles run in the same
+# pod via a KafkaNodePool (dual-role). This eliminates the ZooKeeper
+# CrashLoopBackOff that plagued the single-replica ephemeral ZK setup.
 #
-# Resource sizes are aggressive on purpose: a default Strimzi cluster wants
-# multiple GiB and will starve a kind node. We trade durability (single
-# replica, ephemeral storage) for being able to run Kafka on a laptop.
+# StatefulSet name: todo-dual-role  (was: todo-kafka + todo-zookeeper)
+# Pod name:         todo-dual-role-0
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  namespace: data
+  labels:
+    strimzi.io/cluster: todo
+spec:
+  replicas: 1
+  roles:
+    - controller
+    - broker
+  storage:
+    type: ephemeral
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 100m
+    limits:
+      memory: 1Gi
+---
 apiVersion: kafka.strimzi.io/v1beta2
 kind: Kafka
 metadata:
   name: todo
   namespace: data
+  annotations:
+    strimzi.io/kraft: enabled
+    strimzi.io/node-pools: enabled
 spec:
   kafka:
     version: 3.9.0
-    replicas: 1
+    metadataVersion: 3.9-IV0
     listeners:
     - name: plain
       port: 9092
@@ -26,25 +50,6 @@ spec:
       transaction.state.log.min.isr: 1
       default.replication.factor: 1
       min.insync.replicas: 1
-      inter.broker.protocol.version: "3.9"
-    storage:
-      type: ephemeral
-    resources:
-      requests:
-        memory: 512Mi
-        cpu: 100m
-      limits:
-        memory: 1Gi
-  zookeeper:
-    replicas: 1
-    storage:
-      type: ephemeral
-    resources:
-      requests:
-        memory: 256Mi
-        cpu: 50m
-      limits:
-        memory: 512Mi
   entityOperator:
     topicOperator: {}
     userOperator: {}

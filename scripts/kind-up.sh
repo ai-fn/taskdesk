@@ -21,7 +21,7 @@ bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 IMAGES=(
   # Core infrastructure
   caddy:2.8-alpine
-  postgres:16-alpine
+  pgvector/pgvector:pg16
   redis:7-alpine
   axllent/mailpit:v1.20
   alpine:3.20                                  # base image for Tilt dev builds

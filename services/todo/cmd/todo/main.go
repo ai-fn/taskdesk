@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
@@ -66,7 +67,17 @@ func main() {
 
 	st := store.New(pool)
 	pub := outbox.New(st, producer, log)
-	go pub.Run(ctx)
+
+	// wg tracks the outbox publisher so we can wait for any in-flight flush to
+	// finish before pool.Close() and producer.Close() run via defer.
+	// Without this, a mid-flush batch (read from DB, published to Kafka, but not
+	// yet marked published) gets cut off and will be re-delivered on next startup.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pub.Run(ctx)
+	}()
 
 	svc := server.New(st, log)
 
@@ -104,8 +115,18 @@ func main() {
 	case <-ctx.Done():
 		log.Info("shutting down")
 		grpcServer.GracefulStop()
+		// Wait for the outbox publisher to finish its current flush before
+		// pool.Close() and producer.Close() run via defer.
+		// wg.Wait() returns only after pub.Run() exits, which happens because
+		// ctx is already cancelled — the publisher's select will see ctx.Done()
+		// on the next iteration.
+		wg.Wait()
 	case err := <-errCh:
 		log.Error("serve", "err", fmt.Sprintf("%v", err))
+		// Cancel ctx so the outbox publisher sees ctx.Done() and exits,
+		// then join it before os.Exit — which skips all defers.
+		stop()
+		wg.Wait()
 		os.Exit(1)
 	}
 }

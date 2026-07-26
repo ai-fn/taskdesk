@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package auth.v1;
 
+import "google/protobuf/timestamp.proto";
+
 option go_package = "github.com/fsociety/todo/proto/gen/auth/v1;authv1";
 
 // AuthService handles user registration, authentication, and token management.
@@ -21,14 +23,57 @@ service AuthService {
   rpc ListUserIDs(ListUserIDsRequest) returns (ListUserIDsResponse);
   // GetUserByID returns a single user's public profile.
   rpc GetUserByID(GetUserByIDRequest) returns (GetUserByIDResponse);
+  // OAuthSignIn finds-or-creates a user from a verified OAuth identity and
+  // returns a fresh token pair, exactly like Login/SignUp.
+  rpc OAuthSignIn(OAuthSignInRequest) returns (OAuthSignInResponse);
+  // ListSessions returns all active sessions for the authenticated user.
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  // RevokeSession revokes a single session by ID (ownership-checked).
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
+  // RevokeOtherSessions revokes all sessions except the current one.
+  rpc RevokeOtherSessions(RevokeOtherSessionsRequest) returns (RevokeOtherSessionsResponse);
+  // UpdateUserLanguage sets the user's preferred UI language.
+  rpc UpdateUserLanguage(UpdateUserLanguageRequest) returns (UpdateUserLanguageResponse);
+  // RequestPasswordReset sends a one-time code to the user's email.
+  // Always returns OK regardless of whether the email exists (no enumeration).
+  rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
+  // ResetPassword verifies the OTP code and sets a new password.
+  // On success all sessions are revoked.
+  rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);
+  // RequestEmailVerification issues an OTP code to the authenticated user's email.
+  rpc RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse);
+  // ConfirmEmail verifies the OTP code and marks the user's email as verified.
+  rpc ConfirmEmail(ConfirmEmailRequest) returns (ConfirmEmailResponse);
+
+  // RedeemPromoCode validates and redeems a promo code for the given user,
+  // activating a lifetime pro subscription.
+  rpc RedeemPromoCode(RedeemPromoCodeRequest) returns (RedeemPromoCodeResponse);
+  // GetSubscription returns the current subscription state for a user.
+  rpc GetSubscription(GetSubscriptionRequest) returns (GetSubscriptionResponse);
+  // CreateStripeCheckoutSession creates a Stripe Checkout Session and returns
+  // the redirect URL. The caller should redirect the user's browser there.
+  rpc CreateStripeCheckoutSession(CreateStripeCheckoutSessionRequest) returns (CreateStripeCheckoutSessionResponse);
+  // HandleStripeWebhook processes a verified Stripe webhook event.
+  // The gateway forwards the raw payload + Stripe-Signature header here;
+  // auth-service verifies the signature and updates subscription state.
+  rpc HandleStripeWebhook(HandleStripeWebhookRequest) returns (HandleStripeWebhookResponse);
+}
+
+// ── Client info ───────────────────────────────────────────────────────────────
+
+// ClientInfo carries HTTP-layer metadata captured by the gateway at login time.
+message ClientInfo {
+  string ip_address = 1;
+  string user_agent = 2;
 }
 
 // ── Sign up ──────────────────────────────────────────────────────────────────
 
 message SignUpRequest {
-  string email    = 1;
-  string password = 2;
-  string name     = 3;
+  string email       = 1;
+  string password    = 2;
+  string name        = 3;
+  ClientInfo client_info = 4;
 }
 
 message SignUpResponse {
@@ -41,8 +86,9 @@ message SignUpResponse {
 // ── Login ────────────────────────────────────────────────────────────────────
 
 message LoginRequest {
-  string email    = 1;
-  string password = 2;
+  string email       = 1;
+  string password    = 2;
+  ClientInfo client_info = 3;
 }
 
 message LoginResponse {
@@ -96,18 +142,29 @@ message ValidateTokenRequest {
 }
 
 message ValidateTokenResponse {
-  string user_id = 1;
-  string email   = 2;
+  string user_id            = 1;
+  string email              = 2;
+  string session_id         = 3;
+  string language           = 4;
+  bool   email_verified     = 5;
+  string subscription_plan  = 6; // "free" | "pro"
 }
 
 // ── ListUserIDs ───────────────────────────────────────────────────────────────
 
-message ListUserIDsRequest {}
-
 message UserSummary {
-  string user_id = 1;
-  string email   = 2;
-  string name    = 3;
+  string user_id        = 1;
+  string email          = 2;
+  string name           = 3;
+  string language       = 4;
+  bool   email_verified = 5;
+  string plan           = 6; // "free" | "pro"
+}
+
+message ListUserIDsRequest {
+  // plan_filter restricts results to users on the given plan.
+  // Empty string returns all users.
+  string plan_filter = 1;
 }
 
 message ListUserIDsResponse {
@@ -123,3 +180,151 @@ message GetUserByIDRequest {
 message GetUserByIDResponse {
   UserSummary user = 1;
 }
+
+// ── OAuthSignIn ───────────────────────────────────────────────────────────────
+
+message OAuthSignInRequest {
+  string provider         = 1; // "google" | "discord"
+  string provider_user_id = 2; // stable, provider-issued ID (Google's sub, Discord's id)
+  string email            = 3;
+  string name             = 4;
+  ClientInfo client_info  = 5;
+}
+
+message OAuthSignInResponse {
+  string user_id       = 1;
+  string access_token  = 2;
+  string refresh_token = 3;
+  bool   created       = 4; // true = new user record
+}
+
+// ── Sessions ──────────────────────────────────────────────────────────────────
+
+message Session {
+  string id             = 1;
+  string browser        = 2;
+  string os             = 3;
+  string device         = 4;
+  string ip_address     = 5;
+  google.protobuf.Timestamp created_at      = 6;
+  google.protobuf.Timestamp last_active_at  = 7;
+  bool   current        = 8;
+}
+
+message ListSessionsRequest {
+  string user_id            = 1;
+  string current_session_id = 2;
+}
+
+message ListSessionsResponse {
+  repeated Session sessions = 1;
+}
+
+message RevokeSessionRequest {
+  string user_id    = 1;
+  string session_id = 2;
+}
+
+message RevokeSessionResponse {}
+
+message RevokeOtherSessionsRequest {
+  string user_id            = 1;
+  string current_session_id = 2;
+}
+
+message RevokeOtherSessionsResponse {
+  int64 revoked = 1;
+}
+
+// ── UpdateUserLanguage ────────────────────────────────────────────────────────
+
+message UpdateUserLanguageRequest {
+  string user_id  = 1;
+  string language = 2;
+}
+
+message UpdateUserLanguageResponse {}
+
+// ── RequestPasswordReset ──────────────────────────────────────────────────────
+
+message RequestPasswordResetRequest {
+  string email = 1;
+}
+
+// Always OK — no email enumeration.
+message RequestPasswordResetResponse {}
+
+// ── ResetPassword ─────────────────────────────────────────────────────────────
+
+message ResetPasswordRequest {
+  string email        = 1;
+  string code         = 2;
+  string new_password = 3;
+}
+
+message ResetPasswordResponse {}
+
+// ── RequestEmailVerification ──────────────────────────────────────────────────
+
+message RequestEmailVerificationRequest {
+  string user_id = 1;
+}
+
+message RequestEmailVerificationResponse {}
+
+// ── ConfirmEmail ──────────────────────────────────────────────────────────────
+
+message ConfirmEmailRequest {
+  string user_id = 1;
+  string code    = 2;
+}
+
+message ConfirmEmailResponse {}
+
+// ── RedeemPromoCode ───────────────────────────────────────────────────────────
+
+message RedeemPromoCodeRequest {
+  string user_id = 1;
+  string email   = 2; // used to validate user-specific codes
+  string code    = 3;
+}
+
+message RedeemPromoCodeResponse {
+  string plan = 1; // resulting plan after redemption ("pro")
+}
+
+// ── GetSubscription ───────────────────────────────────────────────────────────
+
+message GetSubscriptionRequest {
+  string user_id = 1;
+}
+
+message SubscriptionInfo {
+  string plan       = 1; // "free" | "pro"
+  string source     = 2; // "promo_code" | "stripe" | ""
+  bool   is_active  = 3;
+}
+
+message GetSubscriptionResponse {
+  SubscriptionInfo subscription = 1;
+}
+
+// ── CreateStripeCheckoutSession ───────────────────────────────────────────────
+
+message CreateStripeCheckoutSessionRequest {
+  string user_id = 1;
+  string email   = 2;
+}
+
+message CreateStripeCheckoutSessionResponse {
+  string checkout_url = 1;
+}
+
+// ── HandleStripeWebhook ───────────────────────────────────────────────────────
+
+message HandleStripeWebhookRequest {
+  bytes  payload   = 1; // raw Stripe event body
+  string signature = 2; // Stripe-Signature header value
+}
+
+message HandleStripeWebhookResponse {}

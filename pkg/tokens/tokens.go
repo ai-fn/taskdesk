@@ -29,8 +29,9 @@ const (
 
 // Claims are the fields embedded in every token.
 type Claims struct {
-	UserID string `json:"sub"`
-	Email  string `json:"email"`
+	UserID    string `json:"sub"`
+	Email     string `json:"email"`
+	SessionID string `json:"sid"`
 	jwt.RegisteredClaims
 }
 
@@ -91,21 +92,22 @@ func GenerateKey() (privateKeyPEM []byte, err error) {
 	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: b}), nil
 }
 
-// CreateAccessToken mints a 15-minute access JWT for userID + email.
-func (m *Maker) CreateAccessToken(userID, email string) (string, error) {
-	return m.create(userID, email, AccessTokenTTL)
+// CreateAccessToken mints a 15-minute access JWT for userID + email + sessionID.
+func (m *Maker) CreateAccessToken(userID, email, sessionID string) (string, error) {
+	return m.create(userID, email, sessionID, AccessTokenTTL)
 }
 
-// CreateRefreshToken mints a 7-day refresh JWT for userID.
-func (m *Maker) CreateRefreshToken(userID, email string) (string, error) {
-	return m.create(userID, email, RefreshTokenTTL)
+// CreateRefreshToken mints a 7-day refresh JWT for userID + sessionID.
+func (m *Maker) CreateRefreshToken(userID, email, sessionID string) (string, error) {
+	return m.create(userID, email, sessionID, RefreshTokenTTL)
 }
 
-func (m *Maker) create(userID, email string, ttl time.Duration) (string, error) {
+func (m *Maker) create(userID, email, sessionID string, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		UserID: userID,
-		Email:  email,
+		UserID:    userID,
+		Email:     email,
+		SessionID: sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(now),

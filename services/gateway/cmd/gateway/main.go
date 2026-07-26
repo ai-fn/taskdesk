@@ -15,6 +15,7 @@ import (
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
+	"github.com/fsociety/todo/services/gateway/internal/oauth"
 	"github.com/fsociety/todo/services/gateway/internal/server"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -27,6 +28,13 @@ type Config struct {
 	TodoAddr   string `env:"TODO_ADDR,required"`
 	AIAddr     string `env:"AI_ADDR"      default:"ai.todo.svc.cluster.local:50054"`
 	RedisAddr  string `env:"REDIS_ADDR"   default:"redis.data.svc.cluster.local:6379"`
+
+	// OAuth — providers register only when both ID and secret are present.
+	OAuthBaseURL        string `env:"OAUTH_BASE_URL"        default:"http://localhost:8080"`
+	GoogleClientID      string `env:"GOOGLE_CLIENT_ID"      default:""`
+	GoogleClientSecret  string `env:"GOOGLE_CLIENT_SECRET"  default:""`
+	DiscordClientID     string `env:"DISCORD_CLIENT_ID"     default:""`
+	DiscordClientSecret string `env:"DISCORD_CLIENT_SECRET" default:""`
 }
 
 func main() {
@@ -68,9 +76,31 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	defer rdb.Close()
 
+	// OAuth providers — only register the ones whose credentials are configured.
+	providers := oauth.Registry{}
+	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
+		providers["google"] = oauth.NewGoogle(
+			cfg.GoogleClientID, cfg.GoogleClientSecret,
+			cfg.OAuthBaseURL+"/api/v1/auth/oauth/google/callback",
+		)
+		log.Info("oauth provider registered", "name", "google")
+	} else {
+		log.Warn("oauth provider skipped: missing credentials", "name", "google")
+	}
+	if cfg.DiscordClientID != "" && cfg.DiscordClientSecret != "" {
+		providers["discord"] = oauth.NewDiscord(
+			cfg.DiscordClientID, cfg.DiscordClientSecret,
+			cfg.OAuthBaseURL+"/api/v1/auth/oauth/discord/callback",
+		)
+		log.Info("oauth provider registered", "name", "discord")
+	} else {
+		log.Warn("oauth provider skipped: missing credentials", "name", "discord")
+	}
+
+	httpHandler, cleanup := server.New(log, authClient, todoClient, aiClient, rdb, providers)
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           server.New(log, authClient, todoClient, aiClient, rdb),
+		Handler:           httpHandler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -98,9 +128,14 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// Stop accepting HTTP and drain in-flight requests. Hijacked WebSocket
+	// connections are NOT covered here — cleanup drains the hub explicitly.
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error("graceful shutdown failed", "err", err)
 		os.Exit(1)
 	}
+	// cleanup drains the WebSocket hub (close frames to clients) and stops
+	// background goroutines, bounded by the remaining shutdown budget.
+	cleanup(shutdownCtx)
 	log.Info("shutdown complete")
 }

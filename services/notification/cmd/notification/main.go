@@ -23,6 +23,8 @@ type Config struct {
 	RedisAddr    string `env:"REDIS_ADDR"     default:"redis.data.svc.cluster.local:6379"`
 	SMTPAddr     string `env:"SMTP_ADDR"      default:"mailpit.data.svc.cluster.local:1025"`
 	SMTPFrom     string `env:"SMTP_FROM"      default:"noreply@todo.local"`
+	SMTPUser     string `env:"SMTP_USER"      default:""`
+	SMTPPass     string `env:"SMTP_PASS"      default:""`
 }
 
 func main() {
@@ -49,7 +51,7 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	defer rdb.Close()
 
-	m := mailer.New(cfg.SMTPAddr, cfg.SMTPFrom)
+	m := mailer.New(cfg.SMTPAddr, cfg.SMTPFrom, cfg.SMTPUser, cfg.SMTPPass)
 	h := consumer.New(m, rdb, log)
 
 	go func() {

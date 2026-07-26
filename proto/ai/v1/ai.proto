@@ -10,14 +10,21 @@ option go_package = "github.com/fsociety/todo/proto/gen/ai/v1;aiv1";
 service AIService {
   // GeneratePlan calls Claude, stores the result, and publishes it to Kafka.
   rpc GeneratePlan(GeneratePlanRequest) returns (GeneratePlanResponse);
+  // GeneratePlanStream streams text deltas as Claude writes, then sends the final plan.
+  rpc GeneratePlanStream(GeneratePlanRequest) returns (stream PlanStreamChunk);
   // GetLatestPlan retrieves the most recent daily plan for a user.
   rpc GetLatestPlan(GetLatestPlanRequest) returns (GetLatestPlanResponse);
+  // EmbedText returns a voyage-3-lite embedding for the given text.
+  rpc EmbedText(EmbedTextRequest) returns (EmbedTextResponse);
+  // ParseTask extracts structured task fields from a natural language description.
+  rpc ParseTask(ParseTaskRequest) returns (ParseTaskResponse);
 }
 
 // ── GeneratePlan ──────────────────────────────────────────────────────────────
 
 message GeneratePlanRequest {
-  string user_id = 1;
+  string user_id  = 1;
+  string language = 2;
 }
 
 message GeneratePlanResponse {
@@ -52,4 +59,55 @@ message PlanItem {
   string task_title = 2;
   int32  rank      = 3; // 1 = highest priority
   string rationale = 4; // Claude's one-line reason
+}
+
+// ── GeneratePlanStream ────────────────────────────────────────────────────────
+
+// PlanStreamChunk is one piece of a streaming plan generation response.
+// text_delta arrives word-by-word as Claude writes; plan arrives once at the end.
+message PlanStreamChunk {
+  oneof payload {
+    string    text_delta = 1; // incremental narrative text from Claude
+    DailyPlan plan       = 2; // final structured plan (last chunk)
+    string    error      = 3; // error message (terminates the stream)
+  }
+}
+
+// ── EmbedText ─────────────────────────────────────────────────────────────────
+
+message EmbedTextRequest {
+  string text       = 1;
+  // input_type: "document" for indexing, "query" for search queries.
+  string input_type = 2;
+}
+
+message EmbedTextResponse {
+  repeated float embedding = 1; // 1024 float32 values (voyage-3-lite)
+}
+
+// ── ParseTask ─────────────────────────────────────────────────────────────────
+
+message ParseTaskRequest {
+  string user_id              = 1;
+  string text                 = 2; // natural language description
+  string today                = 3; // ISO date "2026-05-19" for relative-date resolution
+  repeated string list_names  = 4; // user's available list names for context
+  string language             = 5; // preferred language for parsed output
+}
+
+// ParsedTask holds the structured fields Claude extracted from free text.
+// All fields except title are optional — omitted when not mentioned.
+message ParsedTask {
+  string title                        = 1;
+  string description                  = 2;
+  int32  priority                     = 3; // 0=unspec 1=low 2=med 3=high 4=urgent
+  google.protobuf.Timestamp due_at    = 4;
+  string list_name                    = 5; // best-match name from list_names
+  repeated string tags                = 6;
+  bool   flagged                      = 7;
+  repeated string subtasks            = 8; // optional decomposition into sub-steps
+}
+
+message ParseTaskResponse {
+  ParsedTask task = 1;
 }

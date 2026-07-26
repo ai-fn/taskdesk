@@ -32,4 +32,14 @@ type Task struct {
 	DueAt       *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	ListID            *string    // nil = no list
+	Flagged           bool
+	DeletedAt         *time.Time // nil = not soft-deleted
+	CompletionScore   *int       // nil = not yet scored; 0–100 when present
+	CompletionInsight string
+	ParentTaskID      *string    // nil = root task
+	SubtaskCount      int        // computed by store
+	SubtaskDoneCount  int        // computed by store
+	Blocked           bool       // computed by store: any unfinished dep
+	DependsOnTaskIDs  []string   // computed by store: aggregated dep IDs
 }

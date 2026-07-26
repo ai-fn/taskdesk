@@ -35,6 +35,33 @@ spec:
               value: /secrets/jwt_private.pem
             - name: MIGRATIONS_DIR
               value: "file:///migrations/auth"
+            - name: KAFKA_BROKERS
+              value: "todo-kafka-bootstrap.data.svc.cluster.local:9092"
+            - name: STRIPE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: auth-stripe-secret
+                  key: STRIPE_SECRET_KEY
+            - name: STRIPE_PRICE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: auth-stripe-secret
+                  key: STRIPE_PRICE_ID
+            - name: STRIPE_SUCCESS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-stripe-secret
+                  key: STRIPE_SUCCESS_URL
+            - name: STRIPE_CANCEL_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-stripe-secret
+                  key: STRIPE_CANCEL_URL
+            - name: STRIPE_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-stripe-secret
+                  key: STRIPE_WEBHOOK_SECRET
           volumeMounts:
             - name: jwt-key
               mountPath: /secrets

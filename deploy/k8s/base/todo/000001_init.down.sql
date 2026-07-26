@@ -1,2 +1,0 @@
-DROP TABLE IF EXISTS todo.tasks;
-DROP SCHEMA IF EXISTS todo;

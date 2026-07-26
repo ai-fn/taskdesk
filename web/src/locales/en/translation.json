@@ -1,0 +1,387 @@
+{
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "loading": "Loading…",
+    "confirm": "Confirm",
+    "error": "Error",
+    "unknown": "Unknown",
+    "add": "Add"
+  },
+  "auth": {
+    "fields": {
+      "name": "Name",
+      "email": "Email",
+      "password": "Password"
+    },
+    "password": {
+      "tooWeak": "Password is too weak — add length or a mix of letters, numbers and symbols.",
+      "strength": {
+        "label": "Password strength",
+        "weak": "Weak",
+        "fair": "Fair",
+        "good": "Good",
+        "strong": "Strong"
+      }
+    },
+    "login": {
+      "title": "Sign in",
+      "submit": "Sign in",
+      "noAccount": "No account?",
+      "signUp": "Sign up",
+      "forgotPassword": "Forgot password?",
+      "emailRequired": "Email is required",
+      "passwordRequired": "Password is required",
+      "invalidCredentials": "Email or password is incorrect.",
+      "oauthAccount": "This account uses social sign-in. Please use Google or Discord to log in.",
+      "tooManyRequests": "Too many attempts. Please wait before trying again.",
+      "failed": "Login failed. Please try again."
+    },
+    "forgotPassword": {
+      "title": "Reset password",
+      "backToLogin": "Back to sign in",
+      "step1Title": "Forgot your password?",
+      "step1Description": "Enter your email address and we'll send you a code to reset your password.",
+      "step1Submit": "Send reset code",
+      "step1Sent": "A reset code was sent to {{email}} if that address is registered.",
+      "step2Title": "Enter your reset code",
+      "step2Description": "Enter the 6-digit code we sent to {{email}} and choose a new password.",
+      "codeLabel": "Reset code",
+      "codePlaceholder": "123456",
+      "codeRequired": "Code is required",
+      "newPasswordLabel": "New password",
+      "newPasswordRequired": "New password is required",
+      "newPasswordMinLength": "Minimum 8 characters",
+      "step2Submit": "Reset password",
+      "successTitle": "Password reset",
+      "successMessage": "Your password has been reset. All sessions have been signed out. Please sign in again.",
+      "signIn": "Sign in",
+      "failed": "Reset failed. Please try again.",
+      "tooManyRequests": "Too many attempts. Please wait before trying again.",
+      "resendCode": "Resend code",
+      "resendSent": "A new code has been sent.",
+      "codeIncomplete": "Please enter the complete 6-digit code."
+    },
+    "signup": {
+      "title": "Create account",
+      "submit": "Create account",
+      "haveAccount": "Already have an account?",
+      "signIn": "Sign in",
+      "nameRequired": "Name is required",
+      "emailRequired": "Email is required",
+      "passwordRequired": "Password is required",
+      "passwordMinLength": "Minimum 8 characters",
+      "emailTaken": "An account with this email already exists.",
+      "tooManyRequests": "Too many attempts. Please wait before trying again.",
+      "failed": "Signup failed. Please try again."
+    },
+    "oauth": {
+      "or": "or",
+      "continueWithGoogle": "Continue with Google",
+      "continueWithDiscord": "Continue with Discord",
+      "errors": {
+        "state_mismatch": "Session expired or tampered request. Please try again.",
+        "provider_denied": "You cancelled the sign-in.",
+        "exchange_failed": "Could not complete sign-in with the provider.",
+        "signin_failed": "Sign-in failed on our side. Please try again.",
+        "missing_code": "Provider response was missing data.",
+        "state_gen_failed": "Internal error preparing sign-in."
+      }
+    }
+  },
+  "tasks": {
+    "form": {
+      "titleLabel": "Title",
+      "titlePlaceholder": "Task title",
+      "descriptionLabel": "Description",
+      "descriptionPlaceholder": "Optional description",
+      "priorityLabel": "Priority",
+      "statusLabel": "Status",
+      "listLabel": "List",
+      "noList": "No list",
+      "flaggedLabel": "⚑ Flagged",
+      "tagsLabel": "Tags (comma-separated)",
+      "tagsPlaceholder": "work, personal, urgent",
+      "dueDateLabel": "Due date",
+      "subtasksLabel": "Subtasks",
+      "newTask": "New task",
+      "editTask": "Edit task",
+      "saveChanges": "Save changes",
+      "createTask": "Create task",
+      "modeQuick": "Quick",
+      "modeAI": "AI Parse"
+    },
+    "card": {
+      "due": "Due {{date}}",
+      "subtasksDone_one": "{{done}}/{{count}} subtask done",
+      "subtasksDone_other": "{{done}}/{{count}} subtasks done",
+      "restore": "Restore",
+      "confirmPurge": "Permanently delete this task? This cannot be undone.",
+      "statusBlocked": "Done (blocked)",
+      "scoreProOnly": "AI Score",
+      "scoreFeatureName": "AI Completion Score"
+    },
+    "list": {
+      "failedToLoad": "Failed to load tasks",
+      "noDeletedTasks": "No recently deleted tasks.",
+      "empty": "No tasks yet. Create your first one above."
+    },
+    "subtasks": {
+      "addPlaceholder": "Add subtask…",
+      "removeTitle": "Remove subtask"
+    },
+    "parse": {
+      "couldNotParse": "Could not parse task. Try rephrasing.",
+      "describeLabel": "Describe your task",
+      "parseBtn": "Parse",
+      "hint": "Include title, due date, priority, list — Claude will extract them. ⌘↵ to parse.",
+      "loadingMessages": [
+        "Counting bits",
+        "Consulting oracle",
+        "Wrangling tokens",
+        "Summoning Claude",
+        "Decoding intent",
+        "Brewing context",
+        "Parsing quarks",
+        "Assembling task"
+      ],
+      "nlTooltip": "Create from natural language"
+    },
+    "priority": {
+      "none": "None",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "urgent": "Urgent"
+    },
+    "status": {
+      "unknown": "Unknown",
+      "todo": "To Do",
+      "inProgress": "In Progress",
+      "done": "Done"
+    },
+    "completed": "Completed: {{title}}",
+    "failedToCreate": "Failed to create task.",
+    "failedToUpdate": "Failed to update task.",
+    "notFound": "Task not found.",
+    "backToLists": "← Back to lists",
+    "back": "‹ Back",
+    "flag": "Flag",
+    "unflag": "Unflag",
+    "detail": {
+      "blockedBy": "Blocked by",
+      "blocks": "Blocks",
+      "ofComplete": "{{done}} of {{total}} complete",
+      "noDependencies": "No dependencies.",
+      "blockedByTitle": "Blocked by unfinished dependencies",
+      "blockedAriaLabel": "Blocked",
+      "blockedToo": "This task is blocked too",
+      "completeBlockedTitle": "Complete blocking tasks before marking this Done",
+      "inList": "In list: {{name}}"
+    },
+    "deps": {
+      "addPlaceholder": "Search to add dependency…",
+      "noMatching": "No matching tasks",
+      "removeTitle": "Remove dependency",
+      "failedToAdd": "Could not add dependency"
+    }
+  },
+  "search": {
+    "placeholder": "Search tasks...",
+    "filterPlaceholder": "Filter tasks...",
+    "noResults": "No results",
+    "semanticLabel": "Semantic · ranked by meaning",
+    "fulltextLabel": "Fulltext search",
+    "semanticUpgrade": "Unlock semantic ranking"
+  },
+  "editLists": {
+    "title": "Edit Lists",
+    "newGroup": "+ New Group",
+    "newList": "+ New List",
+    "noGroup": "No group",
+    "show": "Show",
+    "hide": "Hide",
+    "edit": "Edit",
+    "delete": "Delete",
+    "renameGroup": "Rename group",
+    "deleteGroup": "Delete group",
+    "dragToReorder": "Drag to reorder"
+  },
+  "lists": {
+    "system": {
+      "all": "All",
+      "today": "Today",
+      "scheduled": "Scheduled",
+      "flagged": "Flagged",
+      "completed": "Completed",
+      "deleted": "Recently Deleted"
+    },
+    "form": {
+      "editTitle": "Edit list",
+      "newTitle": "New list",
+      "nameLabel": "Name",
+      "namePlaceholder": "List name",
+      "colorLabel": "Color",
+      "iconLabel": "Icon",
+      "iconPickerPlaceholder": "Pick any emoji",
+      "iconSearch": "Search emoji...",
+      "noIcon": "No icon",
+      "groupLabel": "Group",
+      "noGroup": "No group"
+    },
+    "home": {
+      "myLists": "My Lists",
+      "newTask": "+ New task",
+      "newList": "+ New List"
+    }
+  },
+  "plan": {
+    "ready": "Your AI daily plan is ready!",
+    "title": "AI Daily Plan",
+    "generating": "Generating",
+    "generate": "✦ Generate",
+    "addTasksFirst": "Add some tasks first, then generate a plan.",
+    "failed": "Failed to generate plan. Try again.",
+    "noplan": "No plan yet for today. Hit Generate to get AI-powered prioritization.",
+    "askingClaude": "Asking Claude",
+    "showLess": "▲ Show less",
+    "showMore": "▼ Show {{count}} more",
+    "tasksRanked_one": "{{count}} task ranked",
+    "tasksRanked_other": "{{count}} tasks ranked",
+    "noPlanShort": "No plan yet",
+    "toggle": "Toggle daily plan"
+  },
+  "account": {
+    "title": "Account",
+    "password": {
+      "title": "Password",
+      "description": "Change your account password",
+      "reset": "Reset password",
+      "resetDescription": "We'll email you a code to reset your password.",
+      "resetSuccess": "Password reset. You've been signed out of all sessions.",
+      "resetFailed": "Password reset failed. Please try again.",
+      "tooManyRequests": "Too many attempts. Please wait before trying again.",
+      "noPasswordSet": "You signed in with a social account. Use 'Reset password' to set a password.",
+      "prefillDescription": "We'll send the code to {{email}}."
+    },
+    "emailVerify": {
+      "title": "Email verification",
+      "verified": "Your email is verified.",
+      "unverified": "Your email is not verified.",
+      "unverifiedDescription": "Verify your email to improve account security.",
+      "requestCode": "Send verification code",
+      "codeSent": "A code was sent to your email.",
+      "codeLabel": "Verification code",
+      "codePlaceholder": "123456",
+      "codeRequired": "Code is required",
+      "confirm": "Verify",
+      "verifySuccess": "Email verified!",
+      "verifyFailed": "Verification failed. Please try again.",
+      "requestFailed": "Could not send code. Please try again.",
+      "alreadyVerified": "Email is already verified.",
+      "tooManyRequests": "Please wait before requesting another code."
+    },
+    "language": {
+      "title": "Language",
+      "en": "English",
+      "zh": "中文",
+      "updateFailed": "Failed to update language"
+    },
+    "sessions": {
+      "title": "Active sessions",
+      "description": "Devices currently signed in to your account",
+      "revokeOthers": "Sign out all other devices",
+      "empty": "No active sessions found.",
+      "unknownBrowser": "Unknown browser",
+      "current": "Current",
+      "ip": "IP:",
+      "lastActive": "Last active:",
+      "signedIn": "Signed in:",
+      "revoke": "Sign out",
+      "revokeConfirm": "Sign out session",
+      "revokeOthersConfirm": "Sign out all other devices",
+      "revokeBody": "This session will be signed out immediately. The device will need to log in again.",
+      "revokeOthersBody": "All other sessions will be signed out immediately. Only your current session will remain active.",
+      "revokeSuccess": "Session signed out",
+      "revokeFailed": "Failed to sign out session",
+      "revokeOthersFailed": "Failed to sign out other sessions",
+      "signedOutOthers_one": "Signed out {{count}} other session",
+      "signedOutOthers_other": "Signed out {{count}} other sessions",
+      "device": {
+        "desktop": "Desktop",
+        "mobile": "Mobile",
+        "tablet": "Tablet",
+        "bot": "Bot",
+        "unknown": "Unknown"
+      }
+    }
+  },
+  "layout": {
+    "appName": "Todo",
+    "accountSettings": "Account settings",
+    "signOut": "Sign out"
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "ariaLabel": "Theme: {{theme}} — click to switch"
+  },
+  "paywall": {
+    "title": "Unlock AI Features",
+    "subtitle": "Upgrade to Pro and let AI work for you",
+    "proFeature": "Pro feature",
+    "feature1": "AI-generated daily plans",
+    "feature2": "Natural language task input",
+    "feature3": "Smart scheduling & prioritization",
+    "upgradeButton": "Upgrade to Pro",
+    "promoToggle": "I have a promo code",
+    "promoPlaceholder": "Enter promo code",
+    "promoRedeem": "Redeem",
+    "promoSuccess": "Promo applied! You're now on Pro.",
+    "promoError": "Invalid or expired promo code.",
+    "loading": "Processing…",
+    "seeAllFeatures": "See all features →",
+    "unlockFeature": "Unlock with Pro"
+  },
+  "upgrade": {
+    "title": "Upgrade to Pro",
+    "subtitle": "Supercharge your productivity with AI",
+    "currentPlan": "Current plan",
+    "plan": {
+      "free": "Free",
+      "pro": "Pro"
+    },
+    "price": "$9",
+    "perMonth": "/mo",
+    "features": {
+      "title": "Everything in Pro",
+      "ai": "AI-generated daily plans",
+      "aiDesc": "Claude AI ranks your tasks every day with a personalised narrative.",
+      "parse": "Natural language task input",
+      "parseDesc": "Type naturally — due dates, lists, and priorities are detected for you.",
+      "priority": "Smart task prioritization",
+      "priorityDesc": "Urgency, importance, and deadlines are weighed together automatically.",
+      "scheduling": "Schedule & deadline analysis",
+      "schedulingDesc": "See which tasks are overdue or coming up at a glance."
+    },
+    "upgradeButton": "Upgrade to Pro",
+    "alreadyPro": "You're on the Pro plan",
+    "alreadyProNote": "Manage your subscription through Stripe.",
+    "promoToggle": "Have a promo code?",
+    "promoPlaceholder": "Enter promo code",
+    "promoRedeem": "Redeem",
+    "promoSuccess": "Promo code applied! Welcome to Pro.",
+    "promoError": "Invalid or expired promo code.",
+    "loading": "Processing…",
+    "back": "Back",
+    "poweredBy": "Payments powered by Stripe",
+    "successTitle": "Welcome to Pro!",
+    "successMessage": "Your subscription is active. Enjoy all Pro features.",
+    "canceledTitle": "Payment not completed",
+    "canceledMessage": "No charge was made. You can upgrade any time."
+  }
+}

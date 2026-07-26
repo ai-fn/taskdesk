@@ -1,6 +1,21 @@
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
 metadata:
+  name: auth-email-v1
+  namespace: data
+  labels:
+    strimzi.io/cluster: todo
+spec:
+  topicName: auth.email.v1
+  partitions: 3
+  replicas: 1
+  config:
+    retention.ms: "86400000"    # 1 day (OTP codes expire fast)
+    segment.bytes: "104857600"
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
   name: task-events-v1
   namespace: data
   labels:

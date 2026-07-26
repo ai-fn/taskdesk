@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
+	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	pkgpgx "github.com/fsociety/todo/pkg/pgx"
@@ -28,6 +31,21 @@ type Config struct {
 	MigrationsDir string `env:"MIGRATIONS_DIR" default:"file:///migrations/auth"`
 	JWTKeyFile    string `env:"JWT_KEY_FILE,required"`
 	pkgpgx.Config        // provides DSN (DATABASE_URL), MaxConns, etc.
+
+	// Kafka (optional — omit KAFKA_BROKERS to disable email sending in tests/dev)
+	KafkaBrokers string `env:"KAFKA_BROKERS" default:""`
+
+	// OTP code settings
+	CodeTTL            time.Duration `env:"CODE_TTL"             default:"10m"`
+	CodeResendCooldown time.Duration `env:"CODE_RESEND_COOLDOWN" default:"3m"`
+	CodeMaxAttempts    int           `env:"CODE_MAX_ATTEMPTS"    default:"3"`
+
+	// Stripe (optional — omit STRIPE_SECRET_KEY to run without payments)
+	StripeSecretKey    string `env:"STRIPE_SECRET_KEY"    default:""`
+	StripeWebhookSec   string `env:"STRIPE_WEBHOOK_SECRET" default:""`
+	StripePriceID      string `env:"STRIPE_PRICE_ID"      default:""`
+	StripeSuccessURL   string `env:"STRIPE_SUCCESS_URL"   default:""`
+	StripeCancelURL    string `env:"STRIPE_CANCEL_URL"    default:""`
 }
 
 func main() {
@@ -60,7 +78,35 @@ func main() {
 		os.Exit(1)
 	}
 
-	svc := server.New(store.New(pool), maker, log)
+	// Kafka producer is optional; omit KAFKA_BROKERS to run without email.
+	var producer *pkgkafka.Producer
+	if cfg.KafkaBrokers != "" {
+		p, err := pkgkafka.NewProducer(strings.Split(cfg.KafkaBrokers, ","), log)
+		if err != nil {
+			log.Error("create kafka producer", "err", err)
+			os.Exit(1)
+		}
+		defer p.Close()
+		producer = p
+	} else {
+		log.Warn("KAFKA_BROKERS not set — email verification codes will be logged only")
+	}
+
+	codeCfg := server.CodeConfig{
+		TTL:            cfg.CodeTTL,
+		ResendCooldown: cfg.CodeResendCooldown,
+		MaxAttempts:    cfg.CodeMaxAttempts,
+	}
+
+	stripeCfg := server.StripeConfig{
+		SecretKey:     cfg.StripeSecretKey,
+		WebhookSecret: cfg.StripeWebhookSec,
+		PriceID:       cfg.StripePriceID,
+		SuccessURL:    cfg.StripeSuccessURL,
+		CancelURL:     cfg.StripeCancelURL,
+	}
+
+	svc := server.New(store.New(pool), maker, log, producer, codeCfg, stripeCfg)
 
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(pkgmetrics.UnaryServerInterceptor("auth", log)),
