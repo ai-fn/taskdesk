@@ -26,8 +26,8 @@ auth-service  todo-service  ai-service
 - **DB-per-schema** — `auth.*`, `todo.*` schemas in a single Postgres instance; no cross-schema queries.
 - **Outbox pattern** — todo-service writes Kafka events to `todo.outbox` in the same Postgres transaction as the state change; a background publisher polls and drains to Kafka every 500 ms.
 - **JWT** — access token kept in React memory only; refresh token in HttpOnly cookie. 401 interceptor with subscriber queue (prevents token double-invalidation on concurrent requests).
-- **Health probes** — every service exposes `GET /healthz` (liveness) and `GET /readyz` (readiness, checks DB + downstream gRPC). Gateway additionally checks all upstream gRPC connections. New services must implement both before wiring into k8s.
-- **Graceful shutdown** — all services catch `SIGTERM`, stop accepting new work, drain in-flight requests (5 s timeout), then close DB pools and Kafka connections. Never `os.Exit` outside `main`. Context cancellation must propagate to all goroutines.
+- **Health probes** — `pkg/lifecycle`. Liveness is shallow (gRPC `""` service, gateway `GET /healthz`, notification `:9090/healthz`) so a dependency outage never restarts pods. Readiness checks dependencies: gRPC services expose health service `readiness` (auth/todo/ai: Postgres, 2 consecutive failures to flip), gateway `GET /readyz` (auth + todo only — an ai/redis outage degrades features, it must not unroute the edge), notification `:9090/readyz` (Redis + Kafka). New services must implement both before wiring into k8s.
+- **Graceful shutdown** — all services catch `SIGTERM`, stop accepting new work, drain in-flight requests (5 s timeout; gRPC servers use `lifecycle.GracefulStop`, which force-stops after it; gateway allows 10 s, ai 25 s for in-flight streams), then close DB pools and Kafka connections. Never `os.Exit` outside `main`. Context cancellation must propagate to all goroutines.
 - **Connection pools** — pgxpool `MaxConns` is set per-service based on Postgres `max_connections` budget: auth=10, todo=20, ai=5. Kafka producers use a single shared client per service; never create per-request producers.
 
 ---

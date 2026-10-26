@@ -40,6 +40,7 @@ spec:
           readinessProbe:
             grpc:
               port: 50052
+              service: readiness
             initialDelaySeconds: 3
             periodSeconds: 5
           livenessProbe:

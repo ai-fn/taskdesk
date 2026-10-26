@@ -32,6 +32,7 @@ type client interface {
 	AllowRebalance()
 	CommitRecords(ctx context.Context, rs ...*kgo.Record) error
 	ProduceSync(ctx context.Context, rs ...*kgo.Record) kgo.ProduceResults
+	Ping(ctx context.Context) error
 	Close()
 }
 
@@ -126,6 +127,9 @@ func (c *Consumer) Run(ctx context.Context, h Handler) error {
 		}
 	}
 }
+
+// Ping checks that a broker is reachable.
+func (c *Consumer) Ping(ctx context.Context) error { return c.client.Ping(ctx) }
 
 // Close shuts down the consumer.
 func (c *Consumer) Close() {

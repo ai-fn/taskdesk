@@ -13,6 +13,7 @@ import (
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
+	"github.com/fsociety/todo/pkg/lifecycle"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	"github.com/fsociety/todo/services/notification/internal/consumer"
@@ -74,6 +75,13 @@ func main() {
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", pkgmetrics.Handler())
+		mux.Handle("/healthz", lifecycle.LiveHandler())
+		// SMTP is left out: a mail outage is retried/DLQ'd and must not restart or unroute the pod.
+		mux.Handle("/readyz", lifecycle.ReadyHandler(lifecycle.ProbeTimeout, log,
+			lifecycle.Check{Name: "redis", Fn: func(ctx context.Context) error { return rdb.Ping(ctx).Err() }},
+			lifecycle.Check{Name: "kafka-events", Fn: kafkaConsumer.Ping},
+			lifecycle.Check{Name: "kafka-auth", Fn: authConsumer.Ping},
+		))
 		if err := http.ListenAndServe(":9090", mux); err != nil {
 			log.Error("metrics server", "err", err)
 		}

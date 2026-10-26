@@ -17,6 +17,7 @@ spec:
         prometheus.io/port: "9090"
         prometheus.io/path: "/metrics"
     spec:
+      terminationGracePeriodSeconds: 45 # 25 s stream drain + teardown
       containers:
         - name: ai
           image: todo/ai
@@ -57,6 +58,7 @@ spec:
           readinessProbe:
             grpc:
               port: 50054
+              service: readiness
             initialDelaySeconds: 3
             periodSeconds: 5
           livenessProbe:

@@ -70,10 +70,11 @@ spec:
           containerPort: 8080
         readinessProbe:
           httpGet:
-            path: /healthz
+            path: /readyz
             port: http
           initialDelaySeconds: 1
           periodSeconds: 5
+          timeoutSeconds: 3
         livenessProbe:
           httpGet:
             path: /healthz

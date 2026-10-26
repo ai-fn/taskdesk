@@ -9,9 +9,11 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
+	"github.com/fsociety/todo/pkg/lifecycle"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	pkgpgx "github.com/fsociety/todo/pkg/pgx"
@@ -45,6 +47,9 @@ type Config struct {
 	pkgpgx.Config
 }
 
+// drainTimeout outlasts the default 5 s so in-flight Claude calls can finish; k8s grants 30 s.
+const drainTimeout = 25 * time.Second
+
 func main() {
 	log := pkglogger.New("ai")
 
@@ -63,9 +68,7 @@ func main() {
 		log.Error("connect postgres", "err", err)
 		os.Exit(1)
 	}
-	// pool.Close is deferred at the outermost scope. defer runs after main
-	// returns, which is after eg.Wait() below. Every goroutine has exited by
-	// then, so no goroutine can use a connection after the pool is closed.
+	// Deferred at the outermost scope so it runs after eg.Wait(), once no goroutine uses a connection.
 	defer pool.Close()
 
 	if err := pkgpgx.Migrate(cfg.DSN, cfg.MigrationsDir, log); err != nil {
@@ -136,6 +139,9 @@ func main() {
 	healthSrv := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthSrv)
 	healthSrv.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+	// Postgres only: a todo outage already surfaces as per-RPC Unavailable and must not unroute ai.
+	lifecycle.WatchGRPC(sigCtx, healthSrv, lifecycle.ProbeInterval, lifecycle.ProbeTimeout, log,
+		lifecycle.Check{Name: "postgres", Fn: pool.Ping})
 
 	lis, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
@@ -207,20 +213,16 @@ func main() {
 		return nil
 	})
 
-	// Shutdown coordinator: blocks on egCtx.Done(), then drives the teardown
-	// sequence. egCtx is cancelled on SIGTERM (via sigCtx) or on any goroutine
-	// error above — both paths flow through here, so there is one shutdown path.
-	//
-	// Ordering matters:
-	//   1. GracefulStop drains in-flight RPCs, then unblocks grpcServer.Serve.
-	//   2. metricsSrv.Shutdown stops the metrics HTTP server.
-	//   3. Both Serve goroutines return → eg.Wait() unblocks.
-	//   4. main returns → defer pool.Close(), producer.Close(), etc. run.
+	// One shutdown path for SIGTERM and goroutine errors: drain gRPC, stop metrics, then eg.Wait()
+	// returns and the defers close the pool and producer.
 	eg.Go(func() error {
 		<-egCtx.Done()
 		log.Info("shutting down", "reason", egCtx.Err())
-		grpcServer.GracefulStop()
-		if err := metricsSrv.Shutdown(context.Background()); err != nil {
+		healthSrv.Shutdown()
+		lifecycle.GracefulStop(grpcServer, drainTimeout, log)
+		metricsCtx, cancelMetrics := context.WithTimeout(context.Background(), lifecycle.ShutdownTimeout)
+		defer cancelMetrics()
+		if err := metricsSrv.Shutdown(metricsCtx); err != nil {
 			log.Error("metrics server shutdown", "err", err)
 		}
 		return nil

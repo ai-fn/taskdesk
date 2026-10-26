@@ -13,6 +13,7 @@ import (
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
+	"github.com/fsociety/todo/pkg/lifecycle"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	pkgpgx "github.com/fsociety/todo/pkg/pgx"
@@ -91,6 +92,8 @@ func main() {
 	healthSrv := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthSrv)
 	healthSrv.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+	lifecycle.WatchGRPC(ctx, healthSrv, lifecycle.ProbeInterval, lifecycle.ProbeTimeout, log,
+		lifecycle.Check{Name: "postgres", Fn: pool.Ping})
 
 	lis, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
@@ -114,7 +117,8 @@ func main() {
 	select {
 	case <-ctx.Done():
 		log.Info("shutting down")
-		grpcServer.GracefulStop()
+		healthSrv.Shutdown()
+		lifecycle.GracefulStop(grpcServer, lifecycle.ShutdownTimeout, log)
 		// Wait for the outbox publisher to finish its current flush before
 		// pool.Close() and producer.Close() run via defer.
 		// wg.Wait() returns only after pub.Run() exits, which happens because

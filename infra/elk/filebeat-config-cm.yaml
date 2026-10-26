@@ -39,12 +39,15 @@ data:
       - drop_event:
           when:
             or:
-              # Gateway liveness-probe noise: msg=http + path=/healthz + status=200
+              # Gateway probe noise: msg=http + path=/healthz|/readyz + status=200 (failing /readyz stays visible)
               - and:
                 - equals:
                     msg: "http"
-                - equals:
-                    path: "/healthz"
+                - or:
+                  - equals:
+                      path: "/healthz"
+                  - equals:
+                      path: "/readyz"
                 - equals:
                     status: 200
               # ES initContainer sets vm.max_map_count — not a real service log.

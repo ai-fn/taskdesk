@@ -11,6 +11,7 @@ import (
 	"time"
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
+	"github.com/fsociety/todo/pkg/lifecycle"
 	"github.com/fsociety/todo/pkg/logger"
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
@@ -121,7 +122,12 @@ func main() {
 		log.Warn("auth cookies are not Secure: set COOKIE_SECURE=true outside plain-HTTP dev")
 	}
 
-	httpHandler, cleanup := server.New(log, authClient, todoClient, aiClient, rdb, providers, cookieSecure)
+	// Only auth and todo gate readiness: without them nothing works, whereas an ai or redis outage
+	// degrades plans/search/live toasts and must not pull every gateway pod out of rotation.
+	httpHandler, cleanup := server.New(log, authClient, todoClient, aiClient, rdb, providers, cookieSecure,
+		lifecycle.GRPCCheck("auth-service", authConn),
+		lifecycle.GRPCCheck("todo-service", todoConn),
+	)
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           httpHandler,
@@ -157,11 +163,14 @@ func main() {
 	// Stop accepting HTTP and drain in-flight requests. Hijacked WebSocket
 	// connections are NOT covered here — cleanup drains the hub explicitly.
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Error("graceful shutdown failed", "err", err)
-		os.Exit(1)
+		// Long SSE/WebSocket streams outlast the budget: cut them, but still drain the hub and run the defers.
+		log.Warn("graceful shutdown timed out, closing connections", "err", err)
+		_ = srv.Close()
 	}
-	// cleanup drains the WebSocket hub (close frames to clients) and stops
-	// background goroutines, bounded by the remaining shutdown budget.
-	cleanup(shutdownCtx)
+	// cleanup drains the WebSocket hub (close frames to clients) and stops background goroutines,
+	// on its own budget since a timed-out Shutdown has spent shutdownCtx.
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelCleanup()
+	cleanup(cleanupCtx)
 	log.Info("shutdown complete")
 }

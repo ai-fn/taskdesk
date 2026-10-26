@@ -44,6 +44,19 @@ spec:
                 secretKeyRef:
                   name: notification-secret
                   key: SMTP_PASS
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 15
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true

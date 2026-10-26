@@ -29,6 +29,7 @@ type fakeClient struct {
 	// commitCtxErrs records ctx.Err() seen by each CommitRecords call.
 	commitCtxErrs []error
 	rebalances    int
+	pingErr       error
 }
 
 func (f *fakeClient) PollRecords(_ context.Context, n int) kgo.Fetches {
@@ -72,6 +73,8 @@ func (f *fakeClient) ProduceSync(_ context.Context, rs ...*kgo.Record) kgo.Produ
 	f.produced = append(f.produced, rs...)
 	return kgo.ProduceResults{{}}
 }
+
+func (f *fakeClient) Ping(context.Context) error { return f.pingErr }
 
 func (f *fakeClient) Close() {}
 
@@ -387,5 +390,15 @@ func TestRun_PollsConfiguredBatchSize(t *testing.T) {
 	}
 	if fc.polledMax != 3 {
 		t.Errorf("PollRecords asked for %d, want 3", fc.polledMax)
+	}
+}
+
+func TestConsumerPing(t *testing.T) {
+	if err := newConsumer(&fakeClient{}, "g", slog.Default()).Ping(context.Background()); err != nil {
+		t.Errorf("reachable broker: %v, want nil", err)
+	}
+	boom := errors.New("no brokers")
+	if err := newConsumer(&fakeClient{pingErr: boom}, "g", slog.Default()).Ping(context.Background()); !errors.Is(err, boom) {
+		t.Errorf("Ping = %v, want the client's error", err)
 	}
 }

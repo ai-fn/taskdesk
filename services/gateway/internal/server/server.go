@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fsociety/todo/pkg/lifecycle"
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
@@ -37,6 +38,7 @@ func New(
 	rdb *redis.Client,
 	oauthProviders oauth.Registry,
 	cookieSecure bool,
+	readiness ...lifecycle.Check,
 ) (http.Handler, func(context.Context)) {
 	r := chi.NewRouter()
 
@@ -53,19 +55,17 @@ func New(
 	}
 	r.Use(middleware.MaxBody(maxBodyBytes))
 	// IP buckets refill in seconds, so entries idle for 1 min are dropped to bound memory.
-	r.Use(middleware.RateLimitIP(newLimiter(100, 200, time.Minute), "/healthz")) // 100 req/s per IP, burst 200
-	authIP := middleware.RateLimitIP(newLimiter(10, 20, time.Minute))            // signup/login: 10 req/s per IP
+	r.Use(middleware.RateLimitIP(newLimiter(100, 200, time.Minute), "/healthz", "/readyz")) // 100 req/s per IP, burst 200
+	authIP := middleware.RateLimitIP(newLimiter(10, 20, time.Minute))                       // signup/login: 10 req/s per IP
 	// Paid-API endpoints are limited per user, since each call costs Claude or Voyage money.
 	parseLimit := middleware.RateLimitUser(newLimiter(rate.Every(3*time.Second), 5, 15*time.Minute))     // 20/min
 	searchLimit := middleware.RateLimitUser(newLimiter(rate.Every(time.Second), 10, 15*time.Minute))     // 60/min
 	generateLimit := middleware.RateLimitUser(newLimiter(rate.Every(10*time.Second), 3, 15*time.Minute)) // 6/min
 	confirmLimit := middleware.RateLimitUser(newLimiter(rate.Every(12*time.Second), 5, 15*time.Minute))  // 5/min: OTP guesses
 
-	// Public
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
+	// Public. /healthz is liveness only; /readyz reports the given dependency checks.
+	r.Get("/healthz", lifecycle.LiveHandler())
+	r.Get("/readyz", lifecycle.ReadyHandler(lifecycle.ProbeTimeout, log, readiness...))
 
 	// Local JWT verifier: validates tokens with a cached signing key and serves
 	// user profiles from a short-TTL cache, keeping auth off the per-request
