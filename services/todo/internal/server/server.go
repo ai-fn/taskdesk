@@ -173,23 +173,7 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 	if req.Title != "" {
 		existing.Title = req.Title
 	}
-	if req.Description != "" {
-		existing.Description = req.Description
-	}
-	if req.Priority != todov1.Priority_PRIORITY_UNSPECIFIED {
-		existing.Priority = domain.Priority(req.Priority)
-	}
-	if req.Status != todov1.Status_STATUS_UNSPECIFIED {
-		existing.Status = domain.Status(req.Status)
-	}
-	if len(req.Tags) > 0 {
-		existing.Tags = req.Tags
-	}
-	if req.DueAt != nil {
-		ts := req.DueAt.AsTime()
-		existing.DueAt = &ts
-	}
-
+	// A masked field is applied as sent, which is how it gets cleared; unmasked fields only change when non-empty.
 	inMask := func(field string) bool {
 		for _, f := range req.UpdateMask {
 			if f == field {
@@ -197,6 +181,27 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 			}
 		}
 		return false
+	}
+	if req.Priority != todov1.Priority_PRIORITY_UNSPECIFIED {
+		existing.Priority = domain.Priority(req.Priority)
+	}
+	if req.Status != todov1.Status_STATUS_UNSPECIFIED {
+		existing.Status = domain.Status(req.Status)
+	}
+	if inMask("description") || req.Description != "" {
+		existing.Description = req.Description
+	}
+	if inMask("tags") {
+		existing.Tags = append([]string{}, req.Tags...)
+	} else if len(req.Tags) > 0 {
+		existing.Tags = req.Tags
+	}
+	switch {
+	case req.DueAt != nil:
+		ts := req.DueAt.AsTime()
+		existing.DueAt = &ts
+	case inMask("due_at"):
+		existing.DueAt = nil
 	}
 	if inMask("flagged") {
 		existing.Flagged = req.Flagged

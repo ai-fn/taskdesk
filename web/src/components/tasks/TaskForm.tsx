@@ -40,7 +40,7 @@ interface Props {
     priority: number
     status?: number
     tags: string[]
-    due_at?: string
+    due_at?: string | null // null = clear (edit only)
     list_id?: string | null
     flagged?: boolean
     subtasks?: string[]
@@ -98,7 +98,7 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
       priority: Number(values.priority),
       status: task ? Number(values.status) : undefined,
       tags: values.tags ? values.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
-      due_at: values.due_at ? new Date(values.due_at).toISOString() : undefined,
+      due_at: values.due_at ? new Date(values.due_at).toISOString() : (task?.due_at ? null : undefined),
       list_id: values.list_id === '' ? (task?.list_id ? null : undefined) : values.list_id,
       flagged: values.flagged,
       subtasks: isCreate ? draftSubtasks : undefined,

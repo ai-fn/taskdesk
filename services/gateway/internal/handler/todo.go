@@ -144,15 +144,17 @@ func (h *TodoHandler) Update(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromContext(r.Context())
 	taskID := chi.URLParam(r, "taskID")
 
+	// A present key applies even when empty (""/[]/due_at:null); absent leaves the field alone.
+	// description/tags null decode as absent; only due_at distinguishes null.
 	var body struct {
-		Title       string     `json:"title"`
-		Description string     `json:"description"`
-		Priority    int32      `json:"priority"`
-		Status      int32      `json:"status"`
-		Tags        []string   `json:"tags"`
-		DueAt       *time.Time `json:"due_at"`
-		ListID      *string    `json:"list_id"` // nil = don't change; "" = remove from list
-		Flagged     *bool      `json:"flagged"` // nil = don't change
+		Title       string          `json:"title"`
+		Description *string         `json:"description"`
+		Priority    int32           `json:"priority"`
+		Status      int32           `json:"status"`
+		Tags        *[]string       `json:"tags"`
+		DueAt       json.RawMessage `json:"due_at"`  // absent = keep; null = clear
+		ListID      *string         `json:"list_id"` // "" = remove from list
+		Flagged     *bool           `json:"flagged"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
@@ -160,18 +162,32 @@ func (h *TodoHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := &todov1.UpdateTaskRequest{
-		UserId:      userID,
-		TaskId:      taskID,
-		Title:       body.Title,
-		Description: body.Description,
-		Priority:    todov1.Priority(body.Priority),
-		Status:      todov1.Status(body.Status),
-		Tags:        body.Tags,
-		Language:    mw.LanguageFromContext(r.Context()),
-		Email:       mw.NotifyEmailFromContext(r.Context()),
+		UserId:   userID,
+		TaskId:   taskID,
+		Title:    body.Title,
+		Priority: todov1.Priority(body.Priority),
+		Status:   todov1.Status(body.Status),
+		Language: mw.LanguageFromContext(r.Context()),
+		Email:    mw.NotifyEmailFromContext(r.Context()),
 	}
-	if body.DueAt != nil {
-		req.DueAt = timestamppb.New(*body.DueAt)
+	if body.Description != nil {
+		req.Description = *body.Description
+		req.UpdateMask = append(req.UpdateMask, "description")
+	}
+	if body.Tags != nil {
+		req.Tags = *body.Tags
+		req.UpdateMask = append(req.UpdateMask, "tags")
+	}
+	if body.DueAt != nil { // the key was present
+		req.UpdateMask = append(req.UpdateMask, "due_at")
+		if string(body.DueAt) != "null" {
+			var due time.Time
+			if err := json.Unmarshal(body.DueAt, &due); err != nil {
+				jsonError(w, "invalid due_at", http.StatusBadRequest)
+				return
+			}
+			req.DueAt = timestamppb.New(due)
+		}
 	}
 	if body.Flagged != nil {
 		req.Flagged = *body.Flagged

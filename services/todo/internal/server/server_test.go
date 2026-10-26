@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var testPool *pgxpool.Pool
@@ -270,5 +271,35 @@ func TestListTasks_TokenFollowsTheEffectivePageSize(t *testing.T) {
 	}
 	if seen != 250 {
 		t.Errorf("walked %d tasks, want 250", seen)
+	}
+}
+
+func TestUpdateTask_MaskedFieldsCanBeCleared(t *testing.T) {
+	svc, _ := newServer(t)
+	ctx := context.Background()
+	due := timestamppb.New(time.Now().Add(24 * time.Hour))
+	created, err := svc.CreateTask(ctx, &todov1.CreateTaskRequest{UserId: "u", Title: "t", Description: "d", Tags: []string{"a", "b"}, DueAt: due})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.Task.Id
+
+	// Without a mask the empty values mean "unchanged".
+	got, err := svc.UpdateTask(ctx, &todov1.UpdateTaskRequest{UserId: "u", TaskId: id, Title: "t2"})
+	if err != nil || got.Task.Description != "d" || len(got.Task.Tags) != 2 || got.Task.DueAt == nil {
+		t.Fatalf("unmasked update changed fields: %+v, %v", got.GetTask(), err)
+	}
+
+	got, err = svc.UpdateTask(ctx, &todov1.UpdateTaskRequest{UserId: "u", TaskId: id, UpdateMask: []string{"description", "tags", "due_at"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Task.Description != "" || len(got.Task.Tags) != 0 || got.Task.DueAt != nil {
+		t.Errorf("after clearing: description=%q tags=%v due=%v", got.Task.Description, got.Task.Tags, got.Task.DueAt)
+	}
+	// ...and it persists.
+	again, err := svc.GetTask(ctx, &todov1.GetTaskRequest{UserId: "u", TaskId: id})
+	if err != nil || again.Task.Description != "" || len(again.Task.Tags) != 0 || again.Task.DueAt != nil {
+		t.Errorf("cleared values did not persist: %+v, %v", again.GetTask(), err)
 	}
 }

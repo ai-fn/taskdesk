@@ -239,8 +239,8 @@ export function ListsHomePage() {
                     prefill={nlPrefill}
                     lists={lists}
                     onSubmit={async (values) => {
-                      const { list_id, subtasks = [], ...rest } = values
-                      const newTask = await createTask.mutateAsync({ ...rest, list_id: list_id ?? undefined })
+                      const { list_id, due_at, subtasks = [], ...rest } = values
+                      const newTask = await createTask.mutateAsync({ ...rest, due_at: due_at ?? undefined, list_id: list_id ?? undefined })
                       if (subtasks.length > 0) {
                         await Promise.all(subtasks.map((title) =>
                           createTask.mutateAsync({ title, parent_task_id: newTask.id, list_id: newTask.list_id ?? undefined })

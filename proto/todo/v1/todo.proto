@@ -187,7 +187,7 @@ message UpdateTaskRequest {
   repeated string tags = 7;
   google.protobuf.Timestamp due_at = 8;
   // update_mask lists fields that should be explicitly set even if zero-value.
-  // Supported: "flagged", "list_id"
+  // Supported: "flagged", "list_id", "description", "tags", "due_at" (nil due_at clears it)
   repeated string update_mask = 9;
   string list_id = 10;
   bool   flagged = 11;

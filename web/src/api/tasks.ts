@@ -79,7 +79,7 @@ export interface UpdateTaskInput {
   priority?: number
   status?: number
   tags?: string[]
-  due_at?: string
+  due_at?: string | null   // null = clear the due date
   list_id?: string | null  // null = remove from list
   flagged?: boolean
 }
