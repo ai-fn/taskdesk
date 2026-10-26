@@ -56,6 +56,10 @@ func main() {
 		log.Error("load config", "err", err)
 		os.Exit(1)
 	}
+	if cfg.CodeMaxAttempts < 1 || cfg.CodeMaxAttempts > 100 { // 0 would lock every OTP out
+		log.Error("CODE_MAX_ATTEMPTS must be 1-100", "value", cfg.CodeMaxAttempts)
+		os.Exit(1)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

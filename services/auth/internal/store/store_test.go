@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -678,5 +679,76 @@ func TestRedeemPromoCode_PerUserLimitEnforced(t *testing.T) {
 	err := s.RedeemPromoCode(context.Background(), pc, "plim-u1", "plim1@test.com", "sub-plim-2")
 	if !errors.Is(err, store.ErrPromoCodePerUserLimitReached) {
 		t.Errorf("want ErrPromoCodePerUserLimitReached, got %v", err)
+	}
+}
+
+func TestClaimCodeAttempt_ParallelGuessesNeverExceedTheCap(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u80", "otp@example.com"))
+
+	const maxAttempts, guessers, rounds = 3, 40, 10 // the race is probabilistic; rounds make it reliable
+	for round := range rounds {
+		if err := s.CreateVerificationCode(ctx, uuid.NewString(), "u80", "email_verify", "h", time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		var granted atomic.Int32
+		var wg sync.WaitGroup
+		for range guessers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				vc, err := s.ClaimCodeAttempt(ctx, "u80", "email_verify", maxAttempts)
+				switch {
+				case err == nil:
+					if vc.CodeHash != "h" {
+						t.Errorf("hash = %q", vc.CodeHash)
+					}
+					granted.Add(1)
+				case !errors.Is(err, store.ErrNotFound):
+					t.Errorf("unexpected error: %v", err)
+				}
+			}()
+		}
+		wg.Wait()
+		if got := granted.Load(); got != maxAttempts {
+			t.Fatalf("round %d: %d guesses were evaluated, want exactly %d", round, got, maxAttempts)
+		}
+		// Burn the exhausted code so the next round gets a fresh latest one.
+		if _, err := testPool.Exec(ctx, `UPDATE auth.verification_codes SET consumed_at = now() WHERE user_id = 'u80'`); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+func TestClaimCodeAttempt_OnlyTheLatestLiveCode(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u81", "otp2@example.com"))
+
+	if _, err := s.ClaimCodeAttempt(ctx, "u81", "email_verify", 3); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("no code: err = %v, want ErrNotFound", err)
+	}
+
+	mk := func(id, hash string, expires time.Duration) {
+		t.Helper()
+		if err := s.CreateVerificationCode(ctx, id, "u81", "email_verify", hash, time.Now().Add(expires)); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond) // distinct created_at
+	}
+	mk("00000000-0000-0000-0000-0000000000e1", "old", time.Hour)
+	mk("00000000-0000-0000-0000-0000000000e2", "expired", -time.Minute)
+
+	vc, err := s.ClaimCodeAttempt(ctx, "u81", "email_verify", 3)
+	if err != nil || vc.CodeHash != "old" || vc.Attempts != 1 {
+		t.Fatalf("claim = %+v, %v; want the old live code with attempts=1", vc, err)
+	}
+	if err := s.ConsumeCode(ctx, vc.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimCodeAttempt(ctx, "u81", "email_verify", 3); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("consumed code: err = %v, want ErrNotFound", err)
 	}
 }

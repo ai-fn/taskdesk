@@ -2,9 +2,14 @@ package server_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -921,5 +926,67 @@ func TestHandleStripeWebhook_CheckoutIdempotent(t *testing.T) {
 	}
 	if _, err := svc.HandleStripeWebhook(context.Background(), req); err != nil {
 		t.Errorf("second webhook delivery (idempotent): want nil, got %v", err)
+	}
+}
+
+// ── OTP attempt limit ─────────────────────────────────────────────────────────
+
+func seedEmailCode(t *testing.T, userID, code string) {
+	t.Helper()
+	sum := sha256.Sum256([]byte(code))
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO auth.verification_codes (id, user_id, purpose, code_hash, expires_at)
+		VALUES (gen_random_uuid(), $1, 'email_verify', $2, now() + interval '10 minutes')`,
+		userID, hex.EncodeToString(sum[:]))
+	if err != nil {
+		t.Fatalf("seed code: %v", err)
+	}
+}
+
+func TestConfirmEmail_ParallelWrongGuessesBurnTheCodeAtTheCap(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "otp@test.com", "Passw0rd1", "Otto")
+	seedEmailCode(t, su.UserId, "123456")
+
+	var exhausted, wrong atomic.Int32
+	var wg sync.WaitGroup
+	for i := range 30 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := svc.ConfirmEmail(context.Background(), &authv1.ConfirmEmailRequest{UserId: su.UserId, Code: fmt.Sprintf("00000%d", i%10)})
+			switch grpcCode(err) {
+			case codes.ResourceExhausted:
+				exhausted.Add(1)
+			case codes.Unauthenticated:
+				wrong.Add(1)
+			default:
+				t.Errorf("unexpected result: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if exhausted.Load() != 1 || wrong.Load() != 29 {
+		t.Errorf("exhausted=%d wrong=%d, want exactly 1 and 29: only MaxAttempts guesses may be evaluated", exhausted.Load(), wrong.Load())
+	}
+
+	_, err := svc.ConfirmEmail(context.Background(), &authv1.ConfirmEmailRequest{UserId: su.UserId, Code: "123456"})
+	if grpcCode(err) != codes.Unauthenticated {
+		t.Errorf("correct code after the cap: want Unauthenticated, got %v", err)
+	}
+}
+
+func TestConfirmEmail_CorrectCodeWithinCapSucceeds(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "otp2@test.com", "Passw0rd1", "Olga")
+	seedEmailCode(t, su.UserId, "123456")
+
+	for range 2 {
+		if _, err := svc.ConfirmEmail(context.Background(), &authv1.ConfirmEmailRequest{UserId: su.UserId, Code: "000000"}); grpcCode(err) != codes.Unauthenticated {
+			t.Fatalf("wrong guess: got %v", err)
+		}
+	}
+	if _, err := svc.ConfirmEmail(context.Background(), &authv1.ConfirmEmailRequest{UserId: su.UserId, Code: "123456"}); err != nil {
+		t.Fatalf("third attempt with the right code: %v", err)
 	}
 }

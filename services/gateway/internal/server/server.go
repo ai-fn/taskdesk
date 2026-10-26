@@ -58,6 +58,7 @@ func New(
 	parseLimit := middleware.RateLimitUser(newLimiter(rate.Every(3*time.Second), 5, 15*time.Minute))     // 20/min
 	searchLimit := middleware.RateLimitUser(newLimiter(rate.Every(time.Second), 10, 15*time.Minute))     // 60/min
 	generateLimit := middleware.RateLimitUser(newLimiter(rate.Every(10*time.Second), 3, 15*time.Minute)) // 6/min
+	confirmLimit := middleware.RateLimitUser(newLimiter(rate.Every(12*time.Second), 5, 15*time.Minute))  // 5/min: OTP guesses
 
 	// Public
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +191,7 @@ func New(
 		r.Get("/me", account.Me)
 		r.Patch("/language", account.UpdateLanguage)
 		r.Post("/email/verify/request", account.RequestEmailVerification)
-		r.Post("/email/verify/confirm", account.ConfirmEmail)
+		r.With(confirmLimit).Post("/email/verify/confirm", account.ConfirmEmail)
 	})
 
 	// WebSocket: authenticated users subscribe to their real-time notifications.

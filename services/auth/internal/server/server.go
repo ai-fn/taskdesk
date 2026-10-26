@@ -1007,25 +1007,21 @@ func (s *Server) issueCode(ctx context.Context, user *domain.User, purpose strin
 	return nil
 }
 
-// verifyAndConsumeCode checks the submitted code against the latest active code.
-// Wrong code: increments attempts; if maxAttempts reached, consumes (invalidates) the code.
-// Returns Unauthenticated on wrong/expired code, ResourceExhausted after max attempts.
+// verifyAndConsumeCode spends an attempt on the latest live code, then compares the hash,
+// so concurrent guesses cannot exceed MaxAttempts. A wrong final guess burns the code.
+// Returns Unauthenticated on wrong/expired code, ResourceExhausted on the last wrong attempt.
 func (s *Server) verifyAndConsumeCode(ctx context.Context, userID, purpose, submitted string) error {
-	vc, err := s.store.GetActiveVerificationCode(ctx, userID, purpose)
+	vc, err := s.store.ClaimCodeAttempt(ctx, userID, purpose, s.codeCfg.MaxAttempts)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return status.Error(codes.Unauthenticated, "invalid or expired code")
 		}
-		s.log.Error("get active code", "err", err)
+		s.log.Error("claim code attempt", "err", err)
 		return status.Error(codes.Internal, "verification failed")
 	}
 
 	if hashToken(submitted) != vc.CodeHash {
-		attempts, err := s.store.IncrementCodeAttempts(ctx, vc.ID)
-		if err != nil {
-			s.log.Error("increment code attempts", "err", err)
-		}
-		if int(attempts) >= s.codeCfg.MaxAttempts {
+		if int(vc.Attempts) >= s.codeCfg.MaxAttempts {
 			_ = s.store.ConsumeCode(ctx, vc.ID)
 			return status.Error(codes.ResourceExhausted, "too many incorrect attempts — request a new code")
 		}

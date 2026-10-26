@@ -379,22 +379,30 @@ func (s *Store) GetActiveVerificationCode(ctx context.Context, userID, purpose s
 	return &c, nil
 }
 
-// IncrementCodeAttempts atomically increments attempts and returns the new count.
-// Returns ErrNotFound if the code row is gone.
-func (s *Store) IncrementCodeAttempts(ctx context.Context, codeID string) (int16, error) {
-	var attempts int16
+// ClaimCodeAttempt spends one attempt on the latest live code for user+purpose and returns it
+// with the new count. The attempts cap sits in the UPDATE's own WHERE so concurrent guesses
+// re-check it after the row lock: at most maxAttempts callers ever get the hash.
+// Returns ErrNotFound if there is no live code or its attempts are used up.
+func (s *Store) ClaimCodeAttempt(ctx context.Context, userID, purpose string, maxAttempts int) (*domain.VerificationCode, error) {
+	var c domain.VerificationCode
 	err := s.db.QueryRow(ctx, `
 		UPDATE auth.verification_codes SET attempts = attempts + 1
-		WHERE id = $1 RETURNING attempts`,
-		codeID,
-	).Scan(&attempts)
+		WHERE id = (
+			SELECT id FROM auth.verification_codes
+			WHERE user_id = $1 AND purpose = $2 AND consumed_at IS NULL AND expires_at > now()
+			ORDER BY created_at DESC
+			LIMIT 1)
+		  AND consumed_at IS NULL AND attempts < $3
+		RETURNING id, user_id, purpose, code_hash, attempts, expires_at, consumed_at, created_at`,
+		userID, purpose, maxAttempts,
+	).Scan(&c.ID, &c.UserID, &c.Purpose, &c.CodeHash, &c.Attempts, &c.ExpiresAt, &c.ConsumedAt, &c.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ErrNotFound
+			return nil, ErrNotFound
 		}
-		return 0, fmt.Errorf("increment code attempts: %w", err)
+		return nil, fmt.Errorf("claim code attempt: %w", err)
 	}
-	return attempts, nil
+	return &c, nil
 }
 
 // ConsumeCode atomically marks a verification code as used.
