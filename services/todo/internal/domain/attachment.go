@@ -18,7 +18,7 @@ type Attachment struct {
 	ContentType string
 	SizeBytes   int64
 	ObjectKey   string
-	UploadID    string    // empty for single-PUT uploads
+	UploadID    string // empty for single-PUT uploads
 	ScanStatus  string
 	Status      string
 	CreatedAt   time.Time
