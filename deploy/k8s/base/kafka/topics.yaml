@@ -21,6 +21,7 @@ metadata:
   labels:
     strimzi.io/cluster: todo
 spec:
+  topicName: task.events.v1
   partitions: 3
   replicas: 1
   config:
@@ -35,6 +36,7 @@ metadata:
   labels:
     strimzi.io/cluster: todo
 spec:
+  topicName: daily-plan.generated.v1
   partitions: 3
   replicas: 1
   config:

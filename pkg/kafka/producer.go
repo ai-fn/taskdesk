@@ -23,7 +23,6 @@ type Producer struct {
 func NewProducer(brokers []string, log *slog.Logger) (*Producer, error) {
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(brokers...),
-		kgo.AllowAutoTopicCreation(),     // topics are pre-created via KafkaTopic CRD; this is a safety net
 		kgo.ProducerBatchMaxBytes(1<<20), // 1 MiB
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordDeliveryTimeout(10*time.Second), // fail instead of blocking while Kafka is down

@@ -50,6 +50,7 @@ spec:
       transaction.state.log.min.isr: 1
       default.replication.factor: 1
       min.insync.replicas: 1
+      auto.create.topics.enable: false # topics come from topics.yaml; a typo must fail, not create a stray topic
   entityOperator:
     topicOperator: {}
     userOperator: {}
