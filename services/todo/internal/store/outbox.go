@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/fsociety/todo/pkg/events"
@@ -13,11 +14,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// OutboxEntry is a row from todo.outbox that has not yet been published.
+// OutboxEntry is a row claimed from todo.outbox for publishing.
 type OutboxEntry struct {
 	ID        string
 	EventType string
 	Payload   json.RawMessage
+	CreatedAt time.Time
 }
 
 // CreateTaskWithEvent inserts the task and an outbox event in one transaction.
@@ -107,29 +109,39 @@ func (s *Store) DeleteTaskWithEvent(ctx context.Context, userID, taskID string) 
 	})
 }
 
-// UnpublishedBatch returns up to n outbox rows that haven't been published yet.
-func (s *Store) UnpublishedBatch(ctx context.Context, n int) ([]OutboxEntry, error) {
+// ClaimOutbox leases up to n pending rows for lease, oldest first. Claiming is one atomic
+// UPDATE, so concurrent publishers never get the same row; an unpublished row becomes
+// claimable again once its lease expires.
+func (s *Store) ClaimOutbox(ctx context.Context, n int, lease time.Duration) ([]OutboxEntry, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, event_type, payload
-		FROM todo.outbox
-		WHERE published_at IS NULL
-		ORDER BY created_at
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED`, n)
+		UPDATE todo.outbox
+		SET claimed_until = now() + make_interval(secs => $2)
+		WHERE id IN (
+			SELECT id FROM todo.outbox
+			WHERE published_at IS NULL AND failed_at IS NULL
+			  AND (claimed_until IS NULL OR claimed_until < now())
+			ORDER BY created_at
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED)
+		RETURNING id, event_type, payload, created_at`, n, lease.Seconds())
 	if err != nil {
-		return nil, fmt.Errorf("outbox fetch: %w", err)
+		return nil, fmt.Errorf("outbox claim: %w", err)
 	}
 	defer rows.Close()
 
 	var entries []OutboxEntry
 	for rows.Next() {
 		var e OutboxEntry
-		if err := rows.Scan(&e.ID, &e.EventType, &e.Payload); err != nil {
+		if err := rows.Scan(&e.ID, &e.EventType, &e.Payload, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		entries = append(entries, e)
 	}
-	return entries, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].CreatedAt.Before(entries[j].CreatedAt) }) // RETURNING is unordered
+	return entries, nil
 }
 
 // MarkPublished stamps published_at on the given outbox IDs.
@@ -138,10 +150,42 @@ func (s *Store) MarkPublished(ctx context.Context, ids []string) error {
 		return nil
 	}
 	_, err := s.db.Exec(ctx,
-		`UPDATE todo.outbox SET published_at=$1 WHERE id = ANY($2::uuid[])`,
+		`UPDATE todo.outbox SET published_at=$1, claimed_until=NULL WHERE id = ANY($2::uuid[])`,
 		time.Now().UTC(), ids,
 	)
 	return err
+}
+
+// ReleaseOutbox ends the lease on rows that were claimed but not sent, so another publisher can take them.
+func (s *Store) ReleaseOutbox(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := s.db.Exec(ctx, `UPDATE todo.outbox SET claimed_until=NULL WHERE id = ANY($1::uuid[]) AND published_at IS NULL`, ids)
+	return err
+}
+
+// MarkOutboxFailed parks a row that can never be published so it stops being claimed.
+func (s *Store) MarkOutboxFailed(ctx context.Context, id, reason string) error {
+	_, err := s.db.Exec(ctx,
+		`UPDATE todo.outbox SET failed_at=now(), last_error=$2, claimed_until=NULL WHERE id=$1::uuid`,
+		id, reason,
+	)
+	return err
+}
+
+// PruneOutbox deletes up to limit rows published before now-retention and returns how many went.
+func (s *Store) PruneOutbox(ctx context.Context, retention time.Duration, limit int) (int64, error) {
+	tag, err := s.db.Exec(ctx, `
+		DELETE FROM todo.outbox WHERE id IN (
+			SELECT id FROM todo.outbox
+			WHERE published_at IS NOT NULL AND published_at < now() - make_interval(secs => $1)
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED)`, retention.Seconds(), limit)
+	if err != nil {
+		return 0, fmt.Errorf("outbox prune: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

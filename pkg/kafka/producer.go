@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -24,6 +25,8 @@ func NewProducer(brokers []string, log *slog.Logger) (*Producer, error) {
 		kgo.SeedBrokers(brokers...),
 		kgo.AllowAutoTopicCreation(),     // topics are pre-created via KafkaTopic CRD; this is a safety net
 		kgo.ProducerBatchMaxBytes(1<<20), // 1 MiB
+		kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.RecordDeliveryTimeout(10*time.Second), // fail instead of blocking while Kafka is down
 	)
 	if err != nil {
 		return nil, fmt.Errorf("kafka producer: %w", err)
@@ -48,6 +51,41 @@ func (p *Producer) Publish(ctx context.Context, topic, key string, v any) error 
 		return fmt.Errorf("produce to %s: %w", topic, err)
 	}
 	return nil
+}
+
+// Message is one record for PublishBatch.
+type Message struct {
+	Key   string
+	Value []byte
+}
+
+// PublishBatch produces msgs to topic in order and waits for all acks. The returned
+// errors are index-aligned with msgs; nil means that record was acknowledged.
+func (p *Producer) PublishBatch(ctx context.Context, topic string, msgs []Message) []error {
+	recs := make([]*kgo.Record, len(msgs))
+	for i, m := range msgs {
+		recs[i] = &kgo.Record{Topic: topic, Key: []byte(m.Key), Value: m.Value}
+	}
+	return alignErrors(recs, p.client.ProduceSync(ctx, recs...), topic)
+}
+
+// alignErrors maps results (which arrive in completion order) back onto recs.
+func alignErrors(recs []*kgo.Record, results kgo.ProduceResults, topic string) []error {
+	byRec := make(map[*kgo.Record]error, len(results))
+	for _, r := range results {
+		byRec[r.Record] = r.Err
+	}
+	errs := make([]error, len(recs))
+	for i, r := range recs {
+		err, ok := byRec[r]
+		switch {
+		case !ok:
+			errs[i] = fmt.Errorf("produce to %s: no result", topic)
+		case err != nil:
+			errs[i] = fmt.Errorf("produce to %s: %w", topic, err)
+		}
+	}
+	return errs
 }
 
 // Close flushes and shuts down the underlying client.
