@@ -34,11 +34,16 @@ type published struct {
 	payload string
 }
 
-type fakePublisher struct{ got []published }
+type fakePublisher struct {
+	got []published
+	err error
+}
 
 func (f *fakePublisher) Publish(ctx context.Context, channel string, message any) *redis.IntCmd {
 	f.got = append(f.got, published{channel, string(message.([]byte))})
-	return redis.NewIntCmd(ctx)
+	cmd := redis.NewIntCmd(ctx)
+	cmd.SetErr(f.err)
+	return cmd
 }
 
 func newHandler() (*Handler, *fakeSender, *fakePublisher) {

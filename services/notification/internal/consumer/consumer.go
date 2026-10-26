@@ -27,6 +27,7 @@ const DailyPlanTopic = "daily-plan.generated.v1"
 type Handler struct {
 	mailer sender
 	redis  publisher
+	done   doneStore // nil = no dedupe
 	log    *slog.Logger
 	now    func() time.Time // nil = time.Now
 }
@@ -40,8 +41,42 @@ type publisher interface {
 	Publish(ctx context.Context, channel string, message any) *redis.IntCmd
 }
 
+// doneStore remembers which events were fully handled; the *redis.Client satisfies it.
+type doneStore interface {
+	Exists(ctx context.Context, keys ...string) *redis.IntCmd
+	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
+}
+
+// doneTTL outlasts any realistic redelivery (rebalance, retry, short replay) and bounds key growth.
+const doneTTL = 48 * time.Hour
+
 func New(m *mailer.Mailer, rdb *redis.Client, log *slog.Logger) *Handler {
-	return &Handler{mailer: m, redis: rdb, log: log}
+	return &Handler{mailer: m, redis: rdb, done: rdb, log: log}
+}
+
+// alreadyDone reports whether event id was handled before. Delivery is at-least-once, so a redelivered
+// event must not re-mail. A Redis failure fails open: a duplicate email beats a stuck consumer.
+func (h *Handler) alreadyDone(ctx context.Context, kind, id string) bool {
+	if h.done == nil || id == "" {
+		return false
+	}
+	n, err := h.done.Exists(ctx, "notif:done:"+kind+":"+id).Result()
+	if err != nil {
+		h.log.Warn("dedupe lookup failed, handling anyway", "err", err)
+		return false
+	}
+	return n > 0
+}
+
+// markDone records a fully handled event. Marking after the side effects means a crash in between
+// re-sends once; marking before would lose the email.
+func (h *Handler) markDone(ctx context.Context, kind, id string) {
+	if h.done == nil || id == "" {
+		return
+	}
+	if err := h.done.Set(ctx, "notif:done:"+kind+":"+id, 1, doneTTL).Err(); err != nil {
+		h.log.Warn("dedupe mark failed", "err", err)
+	}
 }
 
 func (h *Handler) clock() time.Time {
@@ -135,6 +170,9 @@ func (h *Handler) handleTaskEvent(ctx context.Context, r *kgo.Record) error {
 	if ev.EventType != events.TypeTaskCompleted {
 		return nil
 	}
+	if h.alreadyDone(ctx, "task", ev.EventID) {
+		return nil
+	}
 
 	tmpl := pickTaskCompletedTmpl(ev.Language)
 	data := map[string]string{
@@ -150,15 +188,23 @@ func (h *Handler) handleTaskEvent(ctx context.Context, r *kgo.Record) error {
 	if err := h.sendTo(ctx, ev.Email, ev.UserID, subjectBuf.String(), bodyBuf.String()); err != nil {
 		return err
 	}
+	sentMail := ev.Email != ""
 
 	// Push to Redis pub/sub so gateway WebSocket picks it up.
 	ev.Email = "" // the browser doesn't need it
 	payload, _ := json.Marshal(ev)
 	channel := fmt.Sprintf("user:%s", ev.UserID)
 	if err := h.redis.Publish(ctx, channel, payload).Err(); err != nil {
-		return fmt.Errorf("redis publish: %w", err)
+		if sentMail {
+			// The toast is ephemeral; retrying would re-send the mail each time.
+			h.log.Warn("redis publish failed after mailing, not retrying", "user_id", ev.UserID, "err", err)
+		} else {
+			return fmt.Errorf("redis publish: %w", err)
+		}
 	}
-
+	if sentMail { // nothing but an ephemeral toast to protect otherwise
+		h.markDone(ctx, "task", ev.EventID)
+	}
 	h.log.Info("task notification dispatched", "user_id", ev.UserID, "task_id", ev.TaskID)
 	return nil
 }
@@ -220,10 +266,14 @@ func (h *Handler) handleDailyPlan(ctx context.Context, r *kgo.Record) error {
 		return nil
 	}
 
+	if h.alreadyDone(ctx, "plan", ev.EventID) {
+		return nil
+	}
 	subject, body := buildPlanEmail(ev)
 	if err := h.sendTo(ctx, ev.Email, ev.UserID, subject, body); err != nil {
 		return err
 	}
+	sentMail := ev.Email != ""
 
 	// Push to Redis pub/sub so the SPA shows an in-app notification.
 	type wsNotification struct {
@@ -238,9 +288,15 @@ func (h *Handler) handleDailyPlan(ctx context.Context, r *kgo.Record) error {
 	})
 	channel := fmt.Sprintf("user:%s", ev.UserID)
 	if err := h.redis.Publish(ctx, channel, payload).Err(); err != nil {
-		return fmt.Errorf("redis publish daily plan: %w", err)
+		if sentMail {
+			h.log.Warn("redis publish failed after mailing, not retrying", "user_id", ev.UserID, "err", err)
+		} else {
+			return fmt.Errorf("redis publish daily plan: %w", err)
+		}
 	}
-
+	if sentMail {
+		h.markDone(ctx, "plan", ev.EventID)
+	}
 	h.log.Info("daily plan notification dispatched", "user_id", ev.UserID, "plan_id", ev.PlanID)
 	return nil
 }
@@ -331,6 +387,9 @@ func (h *Handler) handleAuthEmail(ctx context.Context, r *kgo.Record) error {
 		return nil
 	}
 
+	if h.alreadyDone(ctx, "auth", ev.EventID) {
+		return nil
+	}
 	tmpl := pickAuthEmailTmpl(ev.Purpose, ev.Language)
 	data := map[string]any{
 		"Code":        ev.Code,
@@ -345,6 +404,7 @@ func (h *Handler) handleAuthEmail(ctx context.Context, r *kgo.Record) error {
 		return err
 	}
 
+	h.markDone(ctx, "auth", ev.EventID)
 	h.log.Info("auth email dispatched", "user_id", ev.UserID, "purpose", ev.Purpose)
 	return nil
 }
