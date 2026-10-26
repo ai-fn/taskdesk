@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"mime"
 	"net"
+	"net/mail"
 	"strings"
 	"sync"
 	"testing"
@@ -211,5 +213,60 @@ func TestSend_AuthenticatesWhenCredentialsSet(t *testing.T) {
 	case got := <-stub.auth:
 		t.Errorf("authenticated without credentials: %q", got)
 	default:
+	}
+}
+
+func TestSend_EncodesNonASCIISubject(t *testing.T) {
+	stub := startStub(t, "250 ok")
+	m := New(stub.addr, "noreply@todo.local", "", "")
+	subject := "[todo] 任务已完成：写周报 ✓"
+	if err := m.Send(context.Background(), "a@example.com", subject, "b"); err != nil {
+		t.Fatal(err)
+	}
+	got := <-stub.data
+	header, _, _ := strings.Cut(got, "\r\n\r\n")
+	if !strings.Contains(header, "=?utf-8?q?") {
+		t.Fatalf("subject not RFC 2047 encoded: %q", header)
+	}
+	for _, l := range strings.Split(header, "\r\n") {
+		for _, r := range l {
+			if r > 127 {
+				t.Fatalf("raw non-ASCII in header line %q", l)
+			}
+		}
+	}
+	msg, err := mail.ReadMessage(strings.NewReader(got))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, err := new(mime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
+	if err != nil || dec != subject {
+		t.Errorf("decoded subject = %q, %v; want %q", dec, err, subject)
+	}
+}
+
+func TestSend_FoldsLongEncodedSubject(t *testing.T) {
+	stub := startStub(t, "250 ok")
+	m := New(stub.addr, "noreply@todo.local", "", "")
+	subject := strings.Repeat("任务已完成", 20)
+	if err := m.Send(context.Background(), "a@example.com", subject, "b"); err != nil {
+		t.Fatal(err)
+	}
+	got := <-stub.data
+	header, _, _ := strings.Cut(got, "\r\n\r\n")
+	if !strings.Contains(header, "?=\r\n =?") {
+		t.Errorf("long subject was not folded: %q", header)
+	}
+	for _, l := range strings.Split(header, "\r\n") {
+		if len(l) > 998 { // RFC 5322 hard limit
+			t.Errorf("header line of %d bytes: %q", len(l), l)
+		}
+	}
+	msg, err := mail.ReadMessage(strings.NewReader(got))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec, err := new(mime.WordDecoder).DecodeHeader(msg.Header.Get("Subject")); err != nil || dec != subject {
+		t.Errorf("decoded subject = %q, %v", dec, err)
 	}
 }

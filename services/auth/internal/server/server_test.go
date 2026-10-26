@@ -735,6 +735,7 @@ func TestSignUp_WeakPassword(t *testing.T) {
 	}{
 		{"too short", "Ab1!"},
 		{"lowercase only", "abcdefgh"}, // score 1
+		{"over bcrypt's 72 bytes", "Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

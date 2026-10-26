@@ -324,3 +324,42 @@ func TestUpdateTask_MaskedFieldsCanBeCleared(t *testing.T) {
 		t.Errorf("cleared values did not persist: %+v, %v", again.GetTask(), err)
 	}
 }
+
+func TestUpdateList_OnlyMaskedFieldsChange(t *testing.T) {
+	svc, _ := newServer(t)
+	ctx := context.Background()
+	g, err := svc.CreateGroup(ctx, &todov1.CreateGroupRequest{UserId: "u", Name: "g"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := svc.CreateList(ctx, &todov1.CreateListRequest{UserId: "u", Name: "old", GroupId: g.Group.Id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.List.Id
+	if _, err := svc.UpdateList(ctx, &todov1.UpdateListRequest{UserId: "u", ListId: id, IsHidden: true, UpdateMask: []string{"is_hidden"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A rename without a mask must not un-hide the list or drop it from its group.
+	got, err := svc.UpdateList(ctx, &todov1.UpdateListRequest{UserId: "u", ListId: id, Name: "new"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.List.Name != "new" || !got.List.IsHidden || got.List.GroupId != g.Group.Id {
+		t.Errorf("rename changed other fields: %+v", got.List)
+	}
+
+	// Masked fields can still be cleared.
+	got, err = svc.UpdateList(ctx, &todov1.UpdateListRequest{UserId: "u", ListId: id, UpdateMask: []string{"group_id", "icon"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.List.GroupId != "" || got.List.Icon != "" || got.List.Name != "new" {
+		t.Errorf("masked clear: %+v", got.List)
+	}
+
+	if _, err := svc.UpdateList(ctx, &todov1.UpdateListRequest{UserId: "u", ListId: id}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("empty update = %v, want InvalidArgument", err)
+	}
+}

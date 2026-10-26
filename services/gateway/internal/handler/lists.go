@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
@@ -72,26 +73,34 @@ func (h *ListHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Color    string  `json:"color"`
 		IsHidden *bool   `json:"is_hidden"`
 		GroupID  *string `json:"group_id"`
-		Icon     string  `json:"icon"`
+		Icon     *string `json:"icon"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil || json.Unmarshal(raw, &body) != nil {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// The SPA ungroups with an explicit group_id:null, which *string can't tell from absent.
+	var keys map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &keys)
+	_, hasGroup := keys["group_id"]
 
 	req := &todov1.UpdateListRequest{
 		UserId: userID,
 		ListId: listID,
 		Name:   body.Name,
 		Color:  body.Color,
-		Icon:   body.Icon,
+	}
+	if body.Icon != nil {
+		req.Icon = *body.Icon
+		req.UpdateMask = append(req.UpdateMask, "icon")
 	}
 	if body.IsHidden != nil {
 		req.IsHidden = *body.IsHidden
 		req.UpdateMask = append(req.UpdateMask, "is_hidden")
 	}
-	if body.GroupID != nil {
-		if *body.GroupID != "" {
+	if hasGroup {
+		if body.GroupID != nil {
 			req.GroupId = *body.GroupID
 		}
 		req.UpdateMask = append(req.UpdateMask, "group_id")

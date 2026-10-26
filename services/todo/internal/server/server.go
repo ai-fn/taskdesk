@@ -410,6 +410,10 @@ func (s *Server) UpdateList(ctx context.Context, req *todov1.UpdateListRequest) 
 	if req.UserId == "" || req.ListId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id and list_id are required")
 	}
+	// An empty mask must not mean "all": a bare rename would un-hide the list and drop its group.
+	if len(req.UpdateMask) == 0 && req.Name == "" && req.Color == "" && req.Icon == "" {
+		return nil, status.Error(codes.InvalidArgument, "nothing to update")
+	}
 
 	lists, err := s.store.ListLists(ctx, req.UserId)
 	if err != nil {
@@ -432,7 +436,7 @@ func (s *Server) UpdateList(ctx context.Context, req *todov1.UpdateListRequest) 
 				return true
 			}
 		}
-		return len(req.UpdateMask) == 0 // no mask = update all non-zero
+		return false
 	}
 	if req.Name != "" {
 		existing.Name = req.Name

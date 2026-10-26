@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"net/textproto"
@@ -43,10 +44,12 @@ func (m *Mailer) Send(ctx context.Context, to, subject, body string) error {
 	if strings.ContainsAny(to, "\r\n") {
 		return fmt.Errorf("%w: control characters in address", ErrRecipientRejected)
 	}
+	// Titles are user input. RFC 2047 for non-ASCII; fold between encoded-words to stay under the line limit.
+	encSubject := strings.ReplaceAll(mime.QEncoding.Encode("utf-8", headerSanitizer.Replace(subject)), "?= =?", "?=\r\n =?")
 	msg := strings.Join([]string{
 		"From: " + m.from,
 		"To: " + to,
-		"Subject: " + headerSanitizer.Replace(subject), // titles are user input
+		"Subject: " + encSubject,
 		"MIME-Version: 1.0",
 		"Content-Type: text/plain; charset=utf-8",
 		"",
