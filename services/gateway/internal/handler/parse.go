@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
@@ -16,6 +17,31 @@ type ParseHandler struct {
 
 func NewParseHandler(ai aiv1.AIServiceClient) *ParseHandler {
 	return &ParseHandler{aiClient: ai}
+}
+
+// Caps on what reaches Claude, which bills per token.
+const (
+	maxParseTextRunes = 2000
+	maxParseLists     = 100
+	maxParseListRunes = 100
+)
+
+// parseRequestError returns why a parse request is unacceptable, or "".
+func parseRequestError(b parseTaskRequest) string {
+	switch {
+	case b.Text == "":
+		return "text is required"
+	case utf8.RuneCountInString(b.Text) > maxParseTextRunes:
+		return "text too long"
+	case len(b.ListNames) > maxParseLists:
+		return "too many list names"
+	}
+	for _, n := range b.ListNames {
+		if utf8.RuneCountInString(n) > maxParseListRunes {
+			return "list name too long"
+		}
+	}
+	return ""
 }
 
 type parseTaskRequest struct {
@@ -43,8 +69,8 @@ func (h *ParseHandler) Parse(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if body.Text == "" {
-		jsonError(w, "text is required", http.StatusBadRequest)
+	if msg := parseRequestError(body); msg != "" {
+		jsonError(w, msg, http.StatusBadRequest)
 		return
 	}
 

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
@@ -19,7 +20,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/time/rate"
 )
+
+// maxBodyBytes caps every request body; the biggest legitimate payload is a Stripe webhook.
+const maxBodyBytes = 64 << 10
 
 // New returns the gateway's HTTP handler with all routes mounted, and a cleanup
 // function that stops background goroutines started by the handlers.
@@ -37,6 +42,22 @@ func New(
 	r.Use(chimw.Recoverer)
 	r.Use(accessLog(log))
 	r.Use(pkgmetrics.HTTPMiddleware)
+
+	// Per-pod limiters (not shared across replicas); stopped by cleanup.
+	var limiters []*handler.RateLimiter
+	newLimiter := func(limit rate.Limit, burst int, idle time.Duration) *handler.RateLimiter {
+		l := handler.NewRateLimiter(limit, burst, idle, min(idle, 15*time.Second)) // sweep often so spoofed-key floods stay small
+		limiters = append(limiters, l)
+		return l
+	}
+	r.Use(middleware.MaxBody(maxBodyBytes))
+	// IP buckets refill in seconds, so entries idle for 1 min are dropped to bound memory.
+	r.Use(middleware.RateLimitIP(newLimiter(100, 200, time.Minute), "/healthz")) // 100 req/s per IP, burst 200
+	authIP := middleware.RateLimitIP(newLimiter(10, 20, time.Minute))            // signup/login: 10 req/s per IP
+	// Paid-API endpoints are limited per user, since each call costs Claude or Voyage money.
+	parseLimit := middleware.RateLimitUser(newLimiter(rate.Every(3*time.Second), 5, 15*time.Minute))     // 20/min
+	searchLimit := middleware.RateLimitUser(newLimiter(rate.Every(time.Second), 10, 15*time.Minute))     // 60/min
+	generateLimit := middleware.RateLimitUser(newLimiter(rate.Every(10*time.Second), 3, 15*time.Minute)) // 6/min
 
 	// Public
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -61,11 +82,14 @@ func New(
 		hub.Shutdown(ctx)
 		auth.Stop()
 		verifier.Stop()
+		for _, l := range limiters {
+			l.Stop()
+		}
 	}
 	oauthH := handler.NewOAuthHandler(authClient, oauthProviders, log)
 	r.Route("/api/v1/auth", func(r chi.Router) {
-		r.Post("/signup", auth.SignUp)
-		r.Post("/login", auth.Login)
+		r.With(authIP).Post("/signup", auth.SignUp)
+		r.With(authIP).Post("/login", auth.Login)
 		r.Post("/refresh", auth.Refresh)
 		r.Post("/logout", auth.Logout)
 
@@ -123,18 +147,19 @@ func New(
 		r.Use(middleware.Authenticate(verifier))
 		r.Use(middleware.RequirePlan("pro"))
 		r.Get("/", plan.GetLatest)
-		r.Post("/generate", plan.Generate)
+		r.With(middleware.OnePerUser(), generateLimit).Post("/generate", plan.Generate)
 	})
 
 	// Semantic search (pgvector) — available to all; pro uses vector, free uses fulltext.
 	search := handler.NewSearchHandler(aiClient, todoClient)
-	r.With(middleware.Authenticate(verifier)).Get("/api/v1/tasks/search", search.Search)
+	r.With(middleware.Authenticate(verifier), searchLimit).Get("/api/v1/tasks/search", search.Search)
 
 	// Natural language task parsing — pro only
 	parseH := handler.NewParseHandler(aiClient)
 	r.Route("/api/v1/tasks/parse", func(r chi.Router) {
 		r.Use(middleware.Authenticate(verifier))
 		r.Use(middleware.RequirePlan("pro"))
+		r.Use(parseLimit)
 		r.Post("/", parseH.Parse)
 	})
 

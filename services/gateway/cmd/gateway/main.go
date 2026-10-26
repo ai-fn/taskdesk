@@ -118,6 +118,8 @@ func main() {
 		Addr:              cfg.ListenAddr,
 		Handler:           httpHandler,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,  // no WriteTimeout: SSE streams and WebSockets outlive any fixed one
+		IdleTimeout:       180 * time.Second, // must exceed Caddy's 2 min upstream keep-alive, or it reuses closing conns (502)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
