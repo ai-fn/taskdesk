@@ -4,7 +4,7 @@
 //   - auth-service holds the RSA private key → signs access + refresh tokens
 //   - gateway fetches public key via gRPC GetJWKS → verifies access tokens
 //   - Access tokens: short-lived (15m), stored in-memory by the SPA
-//   - Refresh tokens: long-lived (7d), stored in HttpOnly cookie + Redis
+//   - Refresh tokens: long-lived (7d), stored in an HttpOnly cookie; only their hash is kept, in auth.sessions
 package tokens
 
 import (

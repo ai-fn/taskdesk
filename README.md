@@ -27,7 +27,7 @@ in [`CLAUDE.md`](./CLAUDE.md) (see [Documentation](#documentation)).
 
 ## Features
 
-- **Auth** — email/password (Argon2id) + Google/Discord OAuth, RS256 JWTs (access token in
+- **Auth** — email/password (bcrypt) + Google/Discord OAuth, RS256 JWTs (access token in
   memory, refresh in an HttpOnly cookie), session listing/revocation with device + IP tracking,
   password reset and email verification.
 - **Tasks, lists & groups** — full CRUD with soft delete/restore/purge, drag-to-reorder lists and

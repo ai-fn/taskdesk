@@ -11,7 +11,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// Producer wraps a franz-go client configured for fire-and-forget publishing.
+// Producer wraps a franz-go client configured for acknowledged (acks=all, idempotent) publishing.
 // The caller is responsible for providing messages with the correct topic.
 type Producer struct {
 	client *kgo.Client
@@ -23,8 +23,9 @@ type Producer struct {
 func NewProducer(brokers []string, log *slog.Logger) (*Producer, error) {
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(brokers...),
-		kgo.ProducerBatchMaxBytes(1<<20), // 1 MiB
-		kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.ProducerBatchMaxBytes(1<<20),   // 1 MiB
+		kgo.RequiredAcks(kgo.AllISRAcks()), // idempotent writes (franz-go's default) need acks=all
+		kgo.RecordRetries(5),
 		kgo.RecordDeliveryTimeout(10*time.Second), // fail instead of blocking while Kafka is down
 	)
 	if err != nil {

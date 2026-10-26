@@ -113,6 +113,8 @@ func main() {
 
 	svc := server.New(store.New(pool), maker, log, producer, codeCfg, stripeCfg)
 
+	go svc.CleanupExpiredSessions(ctx, time.Hour)
+
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(pkgmetrics.UnaryServerInterceptor("auth", log)),
 		grpc.ChainStreamInterceptor(pkgmetrics.StreamServerInterceptor("auth", log)),

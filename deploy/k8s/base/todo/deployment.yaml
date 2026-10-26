@@ -31,6 +31,8 @@ spec:
                 secretKeyRef:
                   name: todo-secret
                   key: DATABASE_URL
+            - name: DB_MAX_CONNS
+              value: "20"
             - name: MIGRATIONS_DIR
               value: "file:///migrations/todo"
           volumeMounts:

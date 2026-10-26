@@ -968,3 +968,40 @@ func TestCreateSession_EmptyIPStoresNull(t *testing.T) {
 		t.Errorf("sessions with NULL ip = %d (err %v), want 2", nulls, err)
 	}
 }
+
+func TestRotateSession_ExpiredSessionIsNotRevived(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u-exp", "exp@example.com"))
+	mustCreateSession(t, s, uuidS1, "u-exp", "expHash", -time.Minute)
+
+	if _, _, err := s.RotateSession(ctx, "expHash", "newExp", time.Now().Add(time.Hour)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("rotating an expired session: want ErrNotFound, got %v", err)
+	}
+	var hash string
+	if err := testPool.QueryRow(ctx, `SELECT token_hash FROM auth.sessions WHERE id = $1`, uuidS1).Scan(&hash); err != nil || hash != "expHash" {
+		t.Errorf("expired session was modified: hash %q, err %v", hash, err)
+	}
+}
+
+func TestDeleteExpiredSessions_BatchedAndOnlyExpired(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u-gc", "gc@example.com"))
+	mustCreateSession(t, s, uuidS1, "u-gc", "live", time.Hour)
+	mustCreateSession(t, s, uuidS2, "u-gc", "dead1", -time.Hour)
+	mustCreateSession(t, s, uuidS3, "u-gc", "dead2", -2*time.Hour)
+
+	n, err := s.DeleteExpiredSessions(ctx, 1)
+	if err != nil || n != 1 {
+		t.Fatalf("first batch = %d, %v; want 1 (limit respected)", n, err)
+	}
+	n, err = s.DeleteExpiredSessions(ctx, 10)
+	if err != nil || n != 1 {
+		t.Fatalf("second batch = %d, %v; want the remaining 1", n, err)
+	}
+	var live int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM auth.sessions WHERE user_id = 'u-gc'`).Scan(&live); err != nil || live != 1 {
+		t.Errorf("sessions left = %d (err %v), want the 1 live one", live, err)
+	}
+}

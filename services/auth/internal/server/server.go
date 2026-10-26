@@ -172,6 +172,36 @@ func (s *Server) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.L
 	}, nil
 }
 
+// CleanupExpiredSessions periodically deletes expired sessions until ctx ends. Replicas may race;
+// that only costs a redundant DELETE.
+func (s *Server) CleanupExpiredSessions(ctx context.Context, every time.Duration) {
+	const batch = 1000
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		for { // drain in batches
+			n, err := s.store.DeleteExpiredSessions(ctx, batch)
+			if err != nil {
+				if ctx.Err() == nil {
+					s.log.Warn("cleanup expired sessions", "err", err)
+				}
+				break
+			}
+			if n > 0 {
+				s.log.Info("expired sessions removed", "count", n)
+			}
+			if n < batch {
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
 // ── RefreshToken ──────────────────────────────────────────────────────────────
 
 func (s *Server) RefreshToken(ctx context.Context, req *authv1.RefreshTokenRequest) (*authv1.RefreshTokenResponse, error) {

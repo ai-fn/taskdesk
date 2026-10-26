@@ -6,7 +6,7 @@
 
 ## Stack at a glance
 
-Full-stack task management SaaS. kind cluster + Tilt in dev; production target is multi-replica k8s. Services: auth, todo, ai, notification, scheduler + React SPA. ELK + Prometheus/Grafana observability. Full i18n (EN + ZH). Argon2id passwords, RS256 JWTs, transactional Kafka outbox, SSE AI plan streaming.
+Full-stack task management SaaS. kind cluster + Tilt in dev; production target is multi-replica k8s. Services: auth, todo, ai, notification, scheduler + React SPA. ELK + Prometheus/Grafana observability. Full i18n (EN + ZH). bcrypt passwords, RS256 JWTs, transactional Kafka outbox, SSE AI plan streaming.
 
 ---
 
@@ -28,7 +28,7 @@ auth-service  todo-service  ai-service
 - **JWT** — access token kept in React memory only; refresh token in HttpOnly cookie. 401 interceptor with subscriber queue (prevents token double-invalidation on concurrent requests).
 - **Health probes** — `pkg/lifecycle`. Liveness is shallow (gRPC `""` service, gateway `GET /healthz`, notification `:9090/healthz`) so a dependency outage never restarts pods. Readiness checks dependencies: gRPC services expose health service `readiness` (auth/todo/ai: Postgres, 2 consecutive failures to flip), gateway `GET /readyz` (auth + todo only — an ai/redis outage degrades features, it must not unroute the edge), notification `:9090/readyz` (Redis + Kafka). New services must implement both before wiring into k8s.
 - **Graceful shutdown** — all services catch `SIGTERM`, stop accepting new work, drain in-flight requests (5 s timeout; gRPC servers use `lifecycle.GracefulStop`, which force-stops after it; gateway allows 10 s, ai 25 s for in-flight streams), then close DB pools and Kafka connections. Never `os.Exit` outside `main`. Context cancellation must propagate to all goroutines.
-- **Connection pools** — pgxpool `MaxConns` is set per-service based on Postgres `max_connections` budget: auth=10, todo=20, ai=5. Kafka producers use a single shared client per service; never create per-request producers.
+- **Connection pools** — pgxpool `MaxConns` is set per-service via `DB_MAX_CONNS` in the deployment, from the Postgres `max_connections` budget: auth=10, todo=20, ai=5 (multiply by replicas). Kafka producers use a single shared client per service; never create per-request producers.
 
 ---
 
@@ -42,8 +42,8 @@ Auth, users, JWTs. Owns `auth.*` schema.
 **Password policy:** `services/auth/internal/password` — `Validate(pw)` called in `SignUp` before bcrypt. Scoring rules intentionally mirror `web/src/lib/passwordStrength.ts` so the strength bar the user sees matches server enforcement.
 
 **DB tables:**
-- `auth.users` — id, email, name, password_hash (argon2id), language, time_zone (IANA, default `UTC`; drives "today" and plan timing), created_at, updated_at
-- `auth.refresh_tokens` — token_hash, user_id, expires_at, created_at
+- `auth.users` — id, email, name, password_hash (bcrypt), language, time_zone (IANA, default `UTC`; drives "today" and plan timing), created_at, updated_at
+- `auth.sessions` — id, user_id, token_hash (refresh token hash), ip_address, user_agent, created_at, last_active_at, expires_at
 
 ---
 
@@ -220,8 +220,8 @@ Event type field in `task.events.v1`: `task.created`, `task.updated`, `task.comp
 - WebSocket connections per gateway pod: target <10 k. Above that, add gateway replicas and a sticky-session load balancer.
 
 ### Rate limiting
-- Gateway enforces per-IP rate limits via middleware: 100 req/s sustained, burst 200. Auth endpoints (signup, login) are stricter: 10 req/s per IP.
-- AI plan generation is limited to 1 concurrent SSE stream per user (enforced in-process via a per-user semaphore in the gateway handler).
+- Gateway enforces per-IP rate limits via middleware: 100 req/s sustained, burst 200 (keyed on the client's /64 for IPv6). Auth endpoints (signup, login) are stricter: 10 req/s per IP. Limiters are in-process, so the effective limit is per pod.
+- AI plan generation is limited to 1 concurrent SSE stream per user (`OnePerUser` middleware, per gateway pod) plus a per-user rate limit.
 
 ### Pod resources (production targets)
 | Service | CPU request | CPU limit | Mem request | Mem limit |
@@ -242,7 +242,7 @@ Migrations must be **backward-compatible** — old binary runs against new schem
 2. Run `scripts/sync-migrations.sh`: it copies them to `deploy/k8s/base/{service}/` and rewrites the `configMapGenerator` list (Tilt runs it on load; CI runs `--check`).
 3. Column additions: nullable or with a default only — never `NOT NULL` without a default on an existing table.
 4. Column removals: two-step — first deploy removes all code references, second deploy drops the column.
-5. Never run migrations manually in prod; the k8s init container runs them on pod start.
+5. Never run migrations manually in prod; each service applies its own at startup (golang-migrate, from the mounted `<svc>-migrations` ConfigMap), so the first new pod migrates.
 
 ### Incident grep patterns
 ```bash

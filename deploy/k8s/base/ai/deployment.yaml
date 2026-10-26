@@ -45,6 +45,8 @@ spec:
                   optional: true
             - name: MOCK_PARSE
               value: "false"
+            - name: DB_MAX_CONNS
+              value: "5"
             - name: MIGRATIONS_DIR
               value: "file:///migrations/ai"
             - name: TODO_SERVICE_ADDR

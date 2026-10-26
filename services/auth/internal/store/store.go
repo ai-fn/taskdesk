@@ -132,24 +132,35 @@ func (s *Store) CreateLoginSession(ctx context.Context, id, userID, tokenHash, i
 // The session id stays stable; last_active_at is bumped. Returns the session id
 // and user id from the matched row, or ErrNotFound if no live row matched.
 func (s *Store) RotateSession(ctx context.Context, oldHash, newHash string, newExpiry time.Time) (sessionID, userID string, err error) {
-	var expiresAt time.Time
+	// The expiry is checked against the OLD value; an expired session must not be revived by rotating it.
 	err = s.db.QueryRow(ctx, `
 		UPDATE auth.sessions
 		SET token_hash = $2, last_active_at = now(), expires_at = $3
-		WHERE token_hash = $1
-		RETURNING id, user_id, expires_at`,
+		WHERE token_hash = $1 AND expires_at > now()
+		RETURNING id, user_id`,
 		oldHash, newHash, newExpiry,
-	).Scan(&sessionID, &userID, &expiresAt)
+	).Scan(&sessionID, &userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", "", ErrNotFound
 		}
 		return "", "", fmt.Errorf("rotate session: %w", err)
 	}
-	if time.Now().After(expiresAt) {
-		return "", "", ErrNotFound
-	}
 	return sessionID, userID, nil
+}
+
+// DeleteExpiredSessions removes up to limit sessions that are past their expiry and returns how many
+// it deleted; batching keeps each statement short. Served by idx_sessions_expires_at.
+func (s *Store) DeleteExpiredSessions(ctx context.Context, limit int) (int64, error) {
+	tag, err := s.db.Exec(ctx, `
+		DELETE FROM auth.sessions
+		WHERE id IN (SELECT id FROM auth.sessions WHERE expires_at < now() ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED)`,
+		limit,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete expired sessions: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 // DeleteSessionByTokenHash deletes a session by its current token hash (logout).

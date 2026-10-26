@@ -33,6 +33,8 @@ spec:
                   key: DATABASE_URL
             - name: JWT_KEY_FILE
               value: /secrets/jwt_private.pem
+            - name: DB_MAX_CONNS
+              value: "10"
             - name: MIGRATIONS_DIR
               value: "file:///migrations/auth"
             - name: KAFKA_BROKERS
