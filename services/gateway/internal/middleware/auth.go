@@ -21,8 +21,7 @@ const (
 	ctxSubscriptionPlan contextKey = "subscription_plan"
 )
 
-// Authenticate validates the Bearer token from the Authorization header
-// or the ?token= query param (used by WebSocket clients which cannot set headers).
+// Authenticate validates the Bearer token from the Authorization header.
 // On success it stores user claims in the request context; on failure returns 401.
 //
 // Verification is local (cached signing key) and the user profile comes from a
@@ -30,9 +29,19 @@ const (
 // only on a cache miss. A miss that can't reach auth-service yields 503; an
 // invalid/expired token yields 401.
 func Authenticate(verifier *auth.Verifier) func(http.Handler) http.Handler {
+	return authenticate(verifier, false)
+}
+
+// AuthenticateWS is Authenticate for the WebSocket upgrade, whose browser API cannot set
+// headers: it also takes ?token=. Keep it to that route, as query strings end up in access logs.
+func AuthenticateWS(verifier *auth.Verifier) func(http.Handler) http.Handler {
+	return authenticate(verifier, true)
+}
+
+func authenticate(verifier *auth.Verifier, allowQueryToken bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := extractBearer(r)
+			token := extractBearer(r, allowQueryToken)
 			if token == "" {
 				http.Error(w, "missing Authorization header", http.StatusUnauthorized)
 				return
@@ -123,11 +132,12 @@ func RequirePlan(plan string) func(http.Handler) http.Handler {
 	}
 }
 
-func extractBearer(r *http.Request) string {
-	// Prefer Authorization header; fall back to ?token= for WebSocket upgrades.
-	h := r.Header.Get("Authorization")
-	if strings.HasPrefix(h, "Bearer ") {
+func extractBearer(r *http.Request, allowQuery bool) string {
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimPrefix(h, "Bearer ")
 	}
-	return r.URL.Query().Get("token")
+	if allowQuery {
+		return r.URL.Query().Get("token")
+	}
+	return ""
 }

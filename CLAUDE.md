@@ -385,7 +385,7 @@ container, runs migrations 001–003, returns `(*pgxpool.Pool, teardown)`.
 
 ```bash
 go test ./services/gateway/internal/handler/    # sessions routes via real chi router
-go test ./services/gateway/internal/middleware/ # Authenticate: 401/503, context keys, ?token=
+go test ./services/gateway/internal/middleware/ # Authenticate: 401/503, context keys; AuthenticateWS: ?token= (ws route only)
 ```
 
 `fakeAuthClient` in `handler/fake_test.go` implements `authv1.AuthServiceClient` with per-test

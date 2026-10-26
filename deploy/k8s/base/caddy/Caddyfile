@@ -8,7 +8,24 @@
 # Phase 1: add /api/v1/* path → gateway, /ws → gateway WebSocket.
 # Phase 5: add `tls internal` (Caddy's built-in CA) and switch to :443.
 
+# The WebSocket URL carries the access token in ?token=; keep it out of every log.
+(redact_token) {
+	format filter {
+		wrap json
+		fields {
+			request>uri query {
+				replace token REDACTED
+			}
+		}
+	}
+}
+
 {
+	# Error lines (e.g. a 502 while the gateway restarts) come from the default logger, not the site's.
+	log {
+		import redact_token
+	}
+
 	# Disable automatic HTTPS in dev — kind doesn't expose 443 to a public IP
 	# and we don't want Caddy trying to fetch real certs.
 	auto_https off
@@ -25,7 +42,7 @@
 :80 {
 	log {
 		output stdout
-		format json
+		import redact_token
 	}
 
 	# Health probe target so kubelet probes go through Caddy too.

@@ -107,6 +107,13 @@ func newMiddleware(t *testing.T, f *fakeAuth) func(http.Handler) http.Handler {
 	return middleware.Authenticate(v)
 }
 
+func newWSMiddleware(t *testing.T, f *fakeAuth) func(http.Handler) http.Handler {
+	t.Helper()
+	v := auth.NewVerifier(f)
+	t.Cleanup(v.Stop)
+	return middleware.AuthenticateWS(v)
+}
+
 // probe is a simple next handler that captures the context values set by Authenticate.
 type probeResult struct {
 	userID, email, sessionID, language string
@@ -224,18 +231,23 @@ func TestAuthenticate_InvalidToken_Returns401(t *testing.T) {
 func TestAuthenticate_RefreshToken_Returns401(t *testing.T) {
 	key, kid := newKey(t)
 	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
+	wsMW := newWSMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
 
 	tok := mintTyped(t, key, kid, "u", "u@x.com", "s", tokens.TypeRefresh, time.Now().Add(time.Hour))
-	for name, req := range map[string]*http.Request{
-		"header": func() *http.Request {
+	for name, c := range map[string]struct {
+		mw  func(http.Handler) http.Handler
+		req *http.Request
+	}{
+		"header": {mw, func() *http.Request {
 			r := httptest.NewRequest("GET", "/", nil)
 			r.Header.Set("Authorization", "Bearer "+tok)
 			return r
-		}(),
-		"query": httptest.NewRequest("GET", "/?token="+tok, nil),
+		}()},
+		"query": {wsMW, httptest.NewRequest("GET", "/?token="+tok, nil)},
 	} {
+		req := c.req
 		w := httptest.NewRecorder()
-		mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		c.mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		})).ServeHTTP(w, req)
 		if w.Code != http.StatusUnauthorized {
@@ -282,10 +294,22 @@ func TestAuthenticate_ServiceError_Returns503(t *testing.T) {
 	}
 }
 
-func TestAuthenticate_QueryParamFallback(t *testing.T) {
+func TestAuthenticate_QueryTokenOnlyOnTheWebSocketRoute(t *testing.T) {
+	key, kid := newKey(t)
+	tok := mint(t, key, kid, "u", "u@x.com", "s", time.Now().Add(time.Hour))
+	w := httptest.NewRecorder()
+	probe := &probeResult{}
+	newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})(probeHandler(probe)).
+		ServeHTTP(w, httptest.NewRequest("GET", "/?token="+tok, nil))
+	if w.Code != http.StatusUnauthorized || probe.called {
+		t.Errorf("?token= on a regular route: status=%d called=%v, want 401 and not called (tokens in URLs get logged)", w.Code, probe.called)
+	}
+}
+
+func TestAuthenticateWS_QueryParamFallback(t *testing.T) {
 	// WebSocket clients can't set headers — they use ?token= instead.
 	key, kid := newKey(t)
-	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
+	mw := newWSMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
 	probe := &probeResult{}
 
 	tok := mint(t, key, kid, "wsuser", "ws@x.com", "wssid", time.Now().Add(time.Hour))

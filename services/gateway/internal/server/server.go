@@ -197,7 +197,7 @@ func New(
 
 	// WebSocket: authenticated users subscribe to their real-time notifications.
 	wsHandler := handler.NewWSHandler(hub, log)
-	r.With(middleware.Authenticate(verifier)).Get("/api/v1/ws", wsHandler.ServeHTTP)
+	r.With(middleware.AuthenticateWS(verifier)).Get("/api/v1/ws", wsHandler.ServeHTTP)
 
 	return r, cleanup
 }
