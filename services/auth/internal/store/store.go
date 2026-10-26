@@ -89,6 +89,25 @@ func (s *Store) CreateSession(ctx context.Context, id, userID, tokenHash, ipAddr
 	return err
 }
 
+// CreateLoginSession is CreateSession guarded on the password hash the caller verified.
+// FOR SHARE makes it wait for a concurrent ClaimUnverifiedAccount, so no session outlives the claim.
+func (s *Store) CreateLoginSession(ctx context.Context, id, userID, tokenHash, ipAddress, userAgent string, expiresAt time.Time, passwordHash string) error {
+	tag, err := s.db.Exec(ctx, `
+		INSERT INTO auth.sessions (id, user_id, token_hash, ip_address, user_agent, expires_at)
+		SELECT $1::uuid, id, $3::text, $4::inet, $5::text, $6::timestamptz
+		FROM auth.users WHERE id = $2 AND password_hash = $7
+		FOR SHARE`,
+		id, userID, tokenHash, ipAddress, userAgent, expiresAt, passwordHash,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // RotateSession atomically rotates a session's token hash in-place (on refresh).
 // The session id stays stable; last_active_at is bumped. Returns the session id
 // and user id from the matched row, or ErrNotFound if no live row matched.
@@ -253,8 +272,8 @@ func (s *Store) UpdateUserLanguage(ctx context.Context, userID, lang string) err
 // CreateUserNoPassword inserts an OAuth-only user (password_hash NULL).
 func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error {
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO auth.users (id, email, name, password_hash, language, created_at, updated_at)
-		VALUES ($1, $2, $3, NULL, $4, $5, $6)`,
+		INSERT INTO auth.users (id, email, name, password_hash, language, email_verified, created_at, updated_at)
+		VALUES ($1, $2, $3, NULL, $4, true, $5, $6)`,
 		u.ID, u.Email, u.Name, u.Language, u.CreatedAt, u.UpdatedAt,
 	)
 	// plan defaults to 'free' via column default
@@ -405,6 +424,49 @@ func (s *Store) SetEmailVerified(ctx context.Context, userID string) error {
 		userID,
 	)
 	return err
+}
+
+// ClaimUnverifiedAccount hands an account with an unverified email to the OAuth provider
+// that proved ownership: drops the password, its sessions and pending codes, marks it verified.
+// It reports false if the email was verified meanwhile.
+func (s *Store) ClaimUnverifiedAccount(ctx context.Context, userID string) (bool, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("claim account: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+
+	var hadPassword bool
+	err = tx.QueryRow(ctx, `
+		SELECT password_hash IS NOT NULL FROM auth.users WHERE id = $1 AND NOT email_verified FOR UPDATE`,
+		userID,
+	).Scan(&hadPassword)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("claim account: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.users SET password_hash = NULL, email_verified = true, updated_at = now() WHERE id = $1`,
+		userID,
+	); err != nil {
+		return false, fmt.Errorf("claim account: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM auth.verification_codes WHERE user_id = $1`, userID); err != nil {
+		return false, fmt.Errorf("claim account: clear codes: %w", err)
+	}
+	// An OAuth-only account has no password for an attacker to know; keep its sessions.
+	if hadPassword {
+		if _, err := tx.Exec(ctx, `DELETE FROM auth.sessions WHERE user_id = $1`, userID); err != nil {
+			return false, fmt.Errorf("claim account: revoke sessions: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("claim account: %w", err)
+	}
+	return true, nil
 }
 
 // UpdatePassword sets a new bcrypt password hash for the user.

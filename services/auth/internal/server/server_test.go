@@ -551,6 +551,133 @@ func TestOAuthSignIn_EmailMatch(t *testing.T) {
 	}
 }
 
+func TestOAuthSignIn_ClaimsUnverifiedAccount(t *testing.T) {
+	svc, _ := newServer(t)
+	// Attacker pre-registers the victim's email with a password they know.
+	attacker := signUp(t, svc, "victim@test.com", "Passw0rd1", "Attacker")
+
+	resp, err := svc.OAuthSignIn(context.Background(), &authv1.OAuthSignInRequest{
+		Provider: "google", ProviderUserId: "g-victim",
+		Email: "victim@test.com", Name: "Victim",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "4.4.4.4"},
+	})
+	if err != nil {
+		t.Fatalf("OAuthSignIn: %v", err)
+	}
+	if resp.UserId != attacker.UserId {
+		t.Fatalf("expected the existing account to be linked, got %q want %q", resp.UserId, attacker.UserId)
+	}
+
+	_, err = svc.Login(context.Background(), &authv1.LoginRequest{
+		Email: "victim@test.com", Password: "Passw0rd1",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "6.6.6.6"},
+	})
+	if grpcCode(err) != codes.Unauthenticated {
+		t.Errorf("attacker password login after claim: want Unauthenticated, got %v", err)
+	}
+	if _, err := svc.RefreshToken(context.Background(), &authv1.RefreshTokenRequest{RefreshToken: attacker.RefreshToken}); grpcCode(err) != codes.Unauthenticated {
+		t.Errorf("attacker's old session after claim: want Unauthenticated, got %v", err)
+	}
+	got, err := svc.GetUserByID(context.Background(), &authv1.GetUserByIDRequest{UserId: attacker.UserId})
+	if err != nil || !got.User.EmailVerified {
+		t.Errorf("claimed account should be email-verified: %+v, %v", got, err)
+	}
+}
+
+func TestOAuthSignIn_ExistingLinkClaimsUnverifiedAccount(t *testing.T) {
+	svc, _ := newServer(t)
+	// State left by the old bug: attacker's password account already linked to the victim's identity.
+	attacker := signUp(t, svc, "linked@test.com", "Passw0rd1", "Attacker")
+	if err := store.New(testPool).LinkOAuth(context.Background(), attacker.UserId, "google", "g-linked", "linked@test.com"); err != nil {
+		t.Fatalf("LinkOAuth: %v", err)
+	}
+
+	if _, err := svc.OAuthSignIn(context.Background(), &authv1.OAuthSignInRequest{
+		Provider: "google", ProviderUserId: "g-linked",
+		Email: "linked@test.com", Name: "Victim",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "4.4.4.4"},
+	}); err != nil {
+		t.Fatalf("OAuthSignIn: %v", err)
+	}
+	_, err := svc.Login(context.Background(), &authv1.LoginRequest{
+		Email: "linked@test.com", Password: "Passw0rd1",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "6.6.6.6"},
+	})
+	if grpcCode(err) != codes.Unauthenticated {
+		t.Errorf("attacker password login after claim: want Unauthenticated, got %v", err)
+	}
+}
+
+func TestOAuthSignIn_LegacyUnverifiedOAuthUserKeepsSession(t *testing.T) {
+	svc, maker := newServer(t)
+	req := &authv1.OAuthSignInRequest{
+		Provider: "google", ProviderUserId: "g-legacy",
+		Email: "legacy@test.com", Name: "Legacy",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "4.4.4.4"},
+	}
+	first, err := svc.OAuthSignIn(context.Background(), req)
+	if err != nil {
+		t.Fatalf("OAuthSignIn: %v", err)
+	}
+	// Created before OAuth users were marked verified.
+	if _, err := testPool.Exec(context.Background(), `UPDATE auth.users SET email_verified = false WHERE id = $1`, first.UserId); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.OAuthSignIn(context.Background(), req); err != nil {
+		t.Fatalf("second OAuthSignIn: %v", err)
+	}
+	got, err := svc.GetUserByID(context.Background(), &authv1.GetUserByIDRequest{UserId: first.UserId})
+	if err != nil || !got.User.EmailVerified {
+		t.Errorf("legacy user should be verified after sign-in: %+v, %v", got, err)
+	}
+	if !sessionActive(t, svc, sessionID(t, maker, first.AccessToken)) {
+		t.Error("OAuth-only user's earlier session was revoked")
+	}
+}
+
+func TestOAuthSignIn_VerifiedAccountKeepsPassword(t *testing.T) {
+	svc, maker := newServer(t)
+	su := signUp(t, svc, "real@test.com", "Passw0rd1", "Real")
+	// Mark the email verified the way ConfirmEmail does.
+	if err := store.New(testPool).SetEmailVerified(context.Background(), su.UserId); err != nil {
+		t.Fatalf("SetEmailVerified: %v", err)
+	}
+
+	if _, err := svc.OAuthSignIn(context.Background(), &authv1.OAuthSignInRequest{
+		Provider: "google", ProviderUserId: "g-real",
+		Email: "real@test.com", Name: "Real",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "4.4.4.4"},
+	}); err != nil {
+		t.Fatalf("OAuthSignIn: %v", err)
+	}
+	if _, err := svc.Login(context.Background(), &authv1.LoginRequest{
+		Email: "real@test.com", Password: "Passw0rd1",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "5.5.5.5"},
+	}); err != nil {
+		t.Errorf("password login on a verified account should still work: %v", err)
+	}
+	if !sessionActive(t, svc, sessionID(t, maker, su.AccessToken)) {
+		t.Error("verified account's session was revoked")
+	}
+}
+
+func TestOAuthSignIn_FreshUserIsVerified(t *testing.T) {
+	svc, _ := newServer(t)
+	resp, err := svc.OAuthSignIn(context.Background(), &authv1.OAuthSignInRequest{
+		Provider: "google", ProviderUserId: "g-fresh",
+		Email: "fresh@test.com", Name: "Fresh",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "4.4.4.4"},
+	})
+	if err != nil {
+		t.Fatalf("OAuthSignIn: %v", err)
+	}
+	got, err := svc.GetUserByID(context.Background(), &authv1.GetUserByIDRequest{UserId: resp.UserId})
+	if err != nil || !got.User.EmailVerified {
+		t.Errorf("OAuth-created user should be verified: %+v, %v", got, err)
+	}
+}
+
 // ── Password policy ─────────────────────────────────────────────────────────
 
 func TestSignUp_WeakPassword(t *testing.T) {

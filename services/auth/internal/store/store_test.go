@@ -3,13 +3,16 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/fsociety/todo/services/auth/internal/domain"
 	"github.com/fsociety/todo/services/auth/internal/store"
 	"github.com/fsociety/todo/services/auth/internal/testutil"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -343,6 +346,133 @@ func TestLinkOAuth_Idempotent(t *testing.T) {
 	// Second call with the same provider+id must be a no-op, not an error.
 	if err := s.LinkOAuth(context.Background(), "u61", "discord", "did1", "oa2@example.com"); err != nil {
 		t.Errorf("idempotent LinkOAuth: %v", err)
+	}
+}
+
+func TestClaimUnverifiedAccount(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	pw := "bcrypt-hash"
+	u := makeUser("u70", "claim@example.com")
+	u.PasswordHash = &pw
+	mustCreateUser(t, s, u)
+	mustCreateSession(t, s, uuidS1, "u70", "hashClaim", time.Hour)
+	if err := s.CreateVerificationCode(ctx, "00000000-0000-0000-0000-0000000000c1", "u70", "email_verify", "codehash", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, err := s.ClaimUnverifiedAccount(ctx, "u70")
+	if err != nil || !claimed {
+		t.Fatalf("ClaimUnverifiedAccount = %v, %v; want true, nil", claimed, err)
+	}
+	got, err := s.GetUserByID(ctx, "u70")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PasswordHash != nil || !got.EmailVerified {
+		t.Errorf("after claim: password=%v verified=%v, want nil/true", got.PasswordHash, got.EmailVerified)
+	}
+	if sessions, _ := s.ListSessions(ctx, "u70"); len(sessions) != 0 {
+		t.Errorf("sessions after claim = %d, want 0", len(sessions))
+	}
+	if _, err := s.GetActiveVerificationCode(ctx, "u70", "email_verify"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("pending code survived the claim: err = %v", err)
+	}
+
+	// Already verified now: a second claim must not touch the account.
+	if claimed, err := s.ClaimUnverifiedAccount(ctx, "u70"); err != nil || claimed {
+		t.Errorf("second claim = %v, %v; want false, nil", claimed, err)
+	}
+}
+
+func TestClaimUnverifiedAccount_OAuthOnlyKeepsSessions(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u72", "legacy@example.com")) // no password, unverified
+	mustCreateSession(t, s, uuidS1, "u72", "hashLegacy", time.Hour)
+
+	if claimed, err := s.ClaimUnverifiedAccount(ctx, "u72"); err != nil || !claimed {
+		t.Fatalf("claim = %v, %v; want true, nil", claimed, err)
+	}
+	if sessions, _ := s.ListSessions(ctx, "u72"); len(sessions) != 1 {
+		t.Errorf("OAuth-only account lost its sessions: %d", len(sessions))
+	}
+}
+
+func TestCreateLoginSession_GuardedByPasswordHash(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	pw := "hash-1"
+	u := makeUser("u73", "guard@example.com")
+	u.PasswordHash = &pw
+	mustCreateUser(t, s, u)
+	exp := time.Now().Add(time.Hour)
+
+	if err := s.CreateLoginSession(ctx, uuidS1, "u73", "tok1", "1.2.3.4", "UA", exp, "hash-1"); err != nil {
+		t.Fatalf("matching hash: %v", err)
+	}
+	if err := s.CreateLoginSession(ctx, uuidS2, "u73", "tok2", "1.2.3.4", "UA", exp, "stale-hash"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("stale hash: err = %v, want ErrNotFound", err)
+	}
+	if _, err := s.ClaimUnverifiedAccount(ctx, "u73"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateLoginSession(ctx, uuidS2, "u73", "tok2", "1.2.3.4", "UA", exp, "hash-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("after claim: err = %v, want ErrNotFound", err)
+	}
+}
+
+// A login racing a claim must never leave a session behind: it either lands before
+// the claim (and is deleted by it) or after (and is refused).
+func TestClaimUnverifiedAccount_NoSessionSurvivesRacingLogin(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("race%d", i)
+		pw := "hash"
+		u := makeUser(id, id+"@example.com")
+		u.PasswordHash = &pw
+		mustCreateUser(t, s, u)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = s.CreateLoginSession(ctx, uuid.NewString(), id, "tok-"+id, "1.2.3.4", "UA", time.Now().Add(time.Hour), "hash")
+		}()
+		go func() {
+			defer wg.Done()
+			if _, err := s.ClaimUnverifiedAccount(ctx, id); err != nil {
+				t.Errorf("claim: %v", err)
+			}
+		}()
+		wg.Wait()
+
+		if sessions, _ := s.ListSessions(ctx, id); len(sessions) != 0 {
+			t.Fatalf("iteration %d: %d session(s) survived the claim", i, len(sessions))
+		}
+	}
+}
+
+func TestClaimUnverifiedAccount_VerifiedUntouched(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	pw := "bcrypt-hash"
+	u := makeUser("u71", "verified@example.com")
+	u.PasswordHash = &pw
+	u.EmailVerified = true
+	mustCreateUser(t, s, u)
+	mustCreateSession(t, s, uuidS1, "u71", "hashV", time.Hour)
+
+	if claimed, err := s.ClaimUnverifiedAccount(ctx, "u71"); err != nil || claimed {
+		t.Fatalf("claim of verified account = %v, %v; want false, nil", claimed, err)
+	}
+	got, _ := s.GetUserByID(ctx, "u71")
+	if got.PasswordHash == nil {
+		t.Error("verified account lost its password")
+	}
+	if sessions, _ := s.ListSessions(ctx, "u71"); len(sessions) != 1 {
+		t.Errorf("verified account sessions = %d, want 1", len(sessions))
 	}
 }
 

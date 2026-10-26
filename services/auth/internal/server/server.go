@@ -111,7 +111,7 @@ func (s *Server) SignUp(ctx context.Context, req *authv1.SignUpRequest) (*authv1
 		return nil, err
 	}
 
-	if err := s.createSession(ctx, sessionID, user.ID, refresh, req.ClientInfo); err != nil {
+	if err := s.createLoginSession(ctx, sessionID, user.ID, refresh, req.ClientInfo, hashStr); err != nil {
 		return nil, err
 	}
 
@@ -152,7 +152,7 @@ func (s *Server) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.L
 		return nil, err
 	}
 
-	if err := s.createSession(ctx, sessionID, user.ID, refresh, req.ClientInfo); err != nil {
+	if err := s.createLoginSession(ctx, sessionID, user.ID, refresh, req.ClientInfo, *user.PasswordHash); err != nil {
 		return nil, err
 	}
 
@@ -258,6 +258,30 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 	}, nil
 }
 
+// linkExisting links the OAuth identity to an existing account, claiming it first if unverified.
+func (s *Server) linkExisting(ctx context.Context, existing *domain.User, req *authv1.OAuthSignInRequest) error {
+	if err := s.claimIfUnverified(ctx, existing, req.Provider); err != nil {
+		return err
+	}
+	return s.store.LinkOAuth(ctx, existing.ID, req.Provider, req.ProviderUserId, req.Email)
+}
+
+// claimIfUnverified: the provider proved email ownership, so an unverified (possibly
+// attacker pre-registered) account is taken over instead of shared.
+func (s *Server) claimIfUnverified(ctx context.Context, u *domain.User, provider string) error {
+	if u.EmailVerified {
+		return nil
+	}
+	claimed, err := s.store.ClaimUnverifiedAccount(ctx, u.ID)
+	if err != nil {
+		return err
+	}
+	if claimed {
+		s.log.Warn("oauth claimed unverified account", "user_id", u.ID, "provider", provider)
+	}
+	return nil
+}
+
 // ── ValidateSession ───────────────────────────────────────────────────────────
 
 func (s *Server) ValidateSession(ctx context.Context, req *authv1.ValidateSessionRequest) (*authv1.ValidateSessionResponse, error) {
@@ -330,7 +354,8 @@ func (s *Server) GetUserByID(ctx context.Context, req *authv1.GetUserByIDRequest
 // OAuthSignIn handles a verified OAuth identity from the gateway.
 // Decision tree:
 //  1. Identity already linked → return existing user, created=false.
-//  2. Email matches existing user → link identity, created=false.
+//  2. Email matches existing user → link identity, created=false. An account with an
+//     unverified email is claimed first (see linkExisting).
 //  3. Otherwise → create user (no password) + link identity, created=true.
 func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest) (*authv1.OAuthSignInResponse, error) {
 	if req.Provider == "" || req.ProviderUserId == "" || req.Email == "" {
@@ -343,6 +368,11 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 	// 1. Existing OAuth link?
 	u, err := s.store.FindByOAuth(ctx, req.Provider, req.ProviderUserId)
 	if err == nil {
+		// Also heals accounts linked before unverified ones were claimed.
+		if err := s.claimIfUnverified(ctx, u, req.Provider); err != nil {
+			s.log.Error("claim unverified (oauth link)", "err", err)
+			return nil, status.Error(codes.Internal, "oauth signin failed")
+		}
 		user = u
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.log.Error("find by oauth", "err", err)
@@ -353,7 +383,7 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 	if user == nil {
 		existing, err := s.store.GetUserByEmail(ctx, req.Email)
 		if err == nil {
-			if err := s.store.LinkOAuth(ctx, existing.ID, req.Provider, req.ProviderUserId, req.Email); err != nil {
+			if err := s.linkExisting(ctx, existing, req); err != nil {
 				s.log.Error("link oauth (existing user)", "err", err)
 				return nil, status.Error(codes.Internal, "oauth link failed")
 			}
@@ -383,7 +413,7 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 					s.log.Error("get user after race", "err", gerr)
 					return nil, status.Error(codes.Internal, "oauth signin failed")
 				}
-				if err := s.store.LinkOAuth(ctx, existing.ID, req.Provider, req.ProviderUserId, req.Email); err != nil {
+				if err := s.linkExisting(ctx, existing, req); err != nil {
 					s.log.Error("link oauth (race resolution)", "err", err)
 					return nil, status.Error(codes.Internal, "oauth link failed")
 				}
@@ -523,17 +553,34 @@ func (s *Server) mintTokens(userID, email, sessionID string) (access, refresh st
 }
 
 func (s *Server) createSession(ctx context.Context, sessionID, userID, refreshToken string, info *authv1.ClientInfo) error {
-	expiresAt := time.Now().UTC().Add(tokens.RefreshTokenTTL)
-	ip, agent := "", ""
-	if info != nil {
-		ip = info.IpAddress
-		agent = info.UserAgent
-	}
+	ip, agent, expiresAt := sessionMeta(info)
 	if err := s.store.CreateSession(ctx, sessionID, userID, hashToken(refreshToken), ip, agent, expiresAt); err != nil {
 		s.log.Error("create session", "err", err)
 		return status.Error(codes.Internal, "save session failed")
 	}
 	return nil
+}
+
+// createLoginSession is createSession for password logins: it fails Unauthenticated if the
+// password changed or was cleared (e.g. by an OAuth account claim) since it was verified.
+func (s *Server) createLoginSession(ctx context.Context, sessionID, userID, refreshToken string, info *authv1.ClientInfo, passwordHash string) error {
+	ip, agent, expiresAt := sessionMeta(info)
+	err := s.store.CreateLoginSession(ctx, sessionID, userID, hashToken(refreshToken), ip, agent, expiresAt, passwordHash)
+	if errors.Is(err, store.ErrNotFound) {
+		return status.Error(codes.Unauthenticated, "invalid credentials")
+	}
+	if err != nil {
+		s.log.Error("create session", "err", err)
+		return status.Error(codes.Internal, "save session failed")
+	}
+	return nil
+}
+
+func sessionMeta(info *authv1.ClientInfo) (ip, agent string, expiresAt time.Time) {
+	if info != nil {
+		ip, agent = info.IpAddress, info.UserAgent
+	}
+	return ip, agent, time.Now().UTC().Add(tokens.RefreshTokenTTL)
 }
 
 // deviceLabel returns a short human-readable label for the UA's device type.
