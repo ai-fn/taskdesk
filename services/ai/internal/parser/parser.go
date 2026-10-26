@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/fsociety/todo/services/ai/internal/llm"
 )
 
 const systemPrompt = `You are a task parser. Extract structured fields from natural language task descriptions.
@@ -88,16 +90,17 @@ func (p *ParsedTask) DueAtTime(loc *time.Location) *time.Time {
 type Parser struct {
 	client *anthropic.Client
 	model  anthropic.Model
+	log    *slog.Logger
 }
 
 // New creates a Parser. Uses ANTHROPIC_API_KEY env var if apiKey is empty.
-func New(apiKey, model string) *Parser {
+func New(apiKey, model string, log *slog.Logger) *Parser {
 	opts := []option.RequestOption{}
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}
 	c := anthropic.NewClient(opts...)
-	return &Parser{client: &c, model: anthropic.Model(model)}
+	return &Parser{client: &c, model: anthropic.Model(model), log: log}
 }
 
 // languageDirectives steers Claude's output language via the user message.
@@ -186,6 +189,7 @@ func (p *Parser) Parse(ctx context.Context, text, today, zone, lang string, list
 	if err != nil {
 		return nil, fmt.Errorf("claude api: %w", err)
 	}
+	llm.LogUsage(p.log, "parse", p.model, resp.Usage)
 
 	for _, block := range resp.Content {
 		tu := block.AsToolUse()

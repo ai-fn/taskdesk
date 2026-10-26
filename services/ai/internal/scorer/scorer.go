@@ -146,7 +146,7 @@ func (sc *Scorer) Score(ctx context.Context, today string, task ScoreInput, hist
 	if err != nil {
 		return nil, fmt.Errorf("claude api: %w", err)
 	}
-	llm.LogUsage(sc.log, "score", resp.Usage)
+	llm.LogUsage(sc.log, "score", sc.model, resp.Usage)
 
 	for _, block := range resp.Content {
 		tu := block.AsToolUse()

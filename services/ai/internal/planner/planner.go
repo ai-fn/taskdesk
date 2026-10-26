@@ -176,7 +176,7 @@ func (p *Planner) Generate(ctx context.Context, uc UserContext, lang string) (*S
 	if err != nil {
 		return nil, fmt.Errorf("claude api: %w", err)
 	}
-	llm.LogUsage(p.log, "plan", resp.Usage)
+	llm.LogUsage(p.log, "plan", p.model, resp.Usage)
 
 	// Extract the tool use block.
 	for _, block := range resp.Content {
@@ -273,10 +273,10 @@ func (p *Planner) GenerateStream(ctx context.Context, uc UserContext, lang strin
 			return nil, fmt.Errorf("accumulate stream event: %w", err)
 		}
 	}
+	llm.LogUsage(p.log, "plan_stream", p.model, acc.Usage) // before the error check: a cut stream is still billed
 	if err := stream.Err(); err != nil {
 		return nil, fmt.Errorf("claude stream: %w", err)
 	}
-	llm.LogUsage(p.log, "plan_stream", acc.Usage)
 
 	// Extract submit_daily_plan tool use from accumulated message.
 	for _, block := range acc.Content {

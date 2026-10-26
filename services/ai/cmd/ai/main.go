@@ -109,9 +109,10 @@ func main() {
 	}()
 	authClient := authv1.NewAuthServiceClient(authConn)
 
+	log.Info("claude model", "model", cfg.ClaudeModel)
 	emb := embedder.New(cfg.VoyageAPIKey)
 	p := planner.New(cfg.AnthropicAPIKey, cfg.ClaudeModel, log)
-	pa := parser.New(cfg.AnthropicAPIKey, cfg.ClaudeModel)
+	pa := parser.New(cfg.AnthropicAPIKey, cfg.ClaudeModel, log)
 	sc := scorer.New(cfg.AnthropicAPIKey, cfg.ClaudeModel, log)
 	st := store.New(pool)
 	svc := server.New(p, pa, emb, st, todoClient, producer, log)
