@@ -229,6 +229,39 @@ func TestDeleteSessionByTokenHash(t *testing.T) {
 	}
 }
 
+func TestSessionActive(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u31", "act@example.com"))
+	mustCreateSession(t, s, uuidSLive, "u31", "hashAct", time.Hour)
+	if err := s.CreateSession(ctx, uuidSDead, "u31", "hashExp", "1.2.3.4", "TestAgent/1.0", time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("CreateSession (expired): %v", err)
+	}
+
+	cases := []struct {
+		name string
+		id   string
+		want bool
+	}{
+		{"live", uuidSLive, true},
+		{"expired", uuidSDead, false},
+		{"unknown", "00000000-0000-0000-0000-000000000000", false},
+	}
+	for _, tc := range cases {
+		got, err := s.SessionActive(ctx, tc.id)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: SessionActive = %v, %v; want %v", tc.name, got, err, tc.want)
+		}
+	}
+
+	if err := s.DeleteSessionByTokenHash(ctx, "hashAct"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.SessionActive(ctx, uuidSLive); got {
+		t.Error("deleted session still active")
+	}
+}
+
 func TestRevokeSession_OwnershipScoped(t *testing.T) {
 	s := newStore(t)
 	mustCreateUser(t, s, makeUser("u40", "owner@example.com"))

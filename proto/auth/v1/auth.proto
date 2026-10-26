@@ -18,6 +18,9 @@ service AuthService {
   // ValidateToken verifies an access token and returns the embedded claims.
   // Gateway calls this on every authenticated request.
   rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  // ValidateSession reports whether a session is still live (not revoked or expired).
+  // The gateway's local verifier calls it, cached, so revocation reaches access tokens.
+  rpc ValidateSession(ValidateSessionRequest) returns (ValidateSessionResponse);
   // ListUserIDs returns all registered user IDs and emails.
   // Used by the scheduler to fan out daily-plan generation.
   rpc ListUserIDs(ListUserIDsRequest) returns (ListUserIDsResponse);
@@ -218,6 +221,14 @@ message ListSessionsRequest {
 
 message ListSessionsResponse {
   repeated Session sessions = 1;
+}
+
+message ValidateSessionRequest {
+  string session_id = 1;
+}
+
+message ValidateSessionResponse {
+  bool active = 1;
 }
 
 message RevokeSessionRequest {

@@ -129,6 +129,12 @@ func (f *fakeAuthClient) GetJWKS(ctx context.Context, in *authv1.GetJWKSRequest,
 func (f *fakeAuthClient) ListUserIDs(ctx context.Context, in *authv1.ListUserIDsRequest, opts ...grpc.CallOption) (*authv1.ListUserIDsResponse, error) {
 	panic("not used in handler tests")
 }
+
+// ValidateSession reports every session as live so tests exercise the handler, not revocation.
+func (f *fakeAuthClient) ValidateSession(context.Context, *authv1.ValidateSessionRequest, ...grpc.CallOption) (*authv1.ValidateSessionResponse, error) {
+	return &authv1.ValidateSessionResponse{Active: true}, nil
+}
+
 func (f *fakeAuthClient) GetUserByID(ctx context.Context, in *authv1.GetUserByIDRequest, opts ...grpc.CallOption) (*authv1.GetUserByIDResponse, error) {
 	if f.getUserByID != nil {
 		return f.getUserByID(ctx, in, opts...)

@@ -258,6 +258,25 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 	}, nil
 }
 
+// ── ValidateSession ───────────────────────────────────────────────────────────
+
+func (s *Server) ValidateSession(ctx context.Context, req *authv1.ValidateSessionRequest) (*authv1.ValidateSessionResponse, error) {
+	if req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	// A non-UUID id can't match a row; querying it would fail the uuid cast instead.
+	sid, err := uuid.Parse(req.SessionId)
+	if err != nil {
+		return &authv1.ValidateSessionResponse{Active: false}, nil
+	}
+	active, err := s.store.SessionActive(ctx, sid.String())
+	if err != nil {
+		s.log.Error("validate session", "err", err)
+		return nil, status.Error(codes.Internal, "validate session failed")
+	}
+	return &authv1.ValidateSessionResponse{Active: active}, nil
+}
+
 // ── ListUserIDs ───────────────────────────────────────────────────────────────
 
 func (s *Server) ListUserIDs(ctx context.Context, req *authv1.ListUserIDsRequest) (*authv1.ListUserIDsResponse, error) {

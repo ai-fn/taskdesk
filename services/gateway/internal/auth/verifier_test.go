@@ -75,10 +75,21 @@ func jwkFor(key *rsa.PrivateKey, kid string) *authv1.JWK {
 // accidental use.
 type fakeAuth struct {
 	authv1.AuthServiceClient
-	jwks      func() (*authv1.GetJWKSResponse, error)
-	user      func(id string) (*authv1.GetUserByIDResponse, error)
-	jwksCalls atomic.Int64
-	userCalls atomic.Int64
+	jwks func() (*authv1.GetJWKSResponse, error)
+	user func(id string) (*authv1.GetUserByIDResponse, error)
+	// session, when nil, reports every session as live.
+	session      func(sid string) (*authv1.ValidateSessionResponse, error)
+	jwksCalls    atomic.Int64
+	userCalls    atomic.Int64
+	sessionCalls atomic.Int64
+}
+
+func (f *fakeAuth) ValidateSession(_ context.Context, in *authv1.ValidateSessionRequest, _ ...grpc.CallOption) (*authv1.ValidateSessionResponse, error) {
+	f.sessionCalls.Add(1)
+	if f.session == nil {
+		return &authv1.ValidateSessionResponse{Active: true}, nil
+	}
+	return f.session(in.SessionId)
 }
 
 func (f *fakeAuth) GetJWKS(_ context.Context, _ *authv1.GetJWKSRequest, _ ...grpc.CallOption) (*authv1.GetJWKSResponse, error) {
@@ -210,6 +221,105 @@ func TestVerify_NonAccessTokens_Invalid(t *testing.T) {
 	}
 	if got := fake.userCalls.Load(); got != 0 {
 		t.Errorf("GetUserByID called %d times for non-access tokens, want 0", got)
+	}
+}
+
+func TestVerify_RevokedSession_Invalid(t *testing.T) {
+	key, kid := newSigningKey(t)
+	fake := &fakeAuth{
+		jwks: func() (*authv1.GetJWKSResponse, error) {
+			return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{jwkFor(key, kid)}}, nil
+		},
+		user: okProfile("free", "en"),
+		session: func(string) (*authv1.ValidateSessionResponse, error) {
+			return &authv1.ValidateSessionResponse{Active: false}, nil
+		},
+	}
+	v := auth.NewVerifier(fake)
+	defer v.Stop()
+
+	tok := mint(t, key, kid, "u1", time.Now().Add(time.Hour))
+	for i := 0; i < 3; i++ {
+		if _, err := v.Verify(context.Background(), tok); !errors.Is(err, auth.ErrInvalidToken) {
+			t.Fatalf("verify %d: err = %v, want ErrInvalidToken", i, err)
+		}
+	}
+	if got := fake.userCalls.Load(); got != 0 {
+		t.Errorf("GetUserByID called %d times for a revoked session, want 0", got)
+	}
+	if got := fake.sessionCalls.Load(); got != 1 {
+		t.Errorf("ValidateSession called %d times, want 1 (cached)", got)
+	}
+}
+
+func TestVerify_EmptySessionID_Invalid(t *testing.T) {
+	key, kid := newSigningKey(t)
+	fake := &fakeAuth{
+		jwks: func() (*authv1.GetJWKSResponse, error) {
+			return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{jwkFor(key, kid)}}, nil
+		},
+		user: okProfile("free", "en"),
+	}
+	v := auth.NewVerifier(fake)
+	defer v.Stop()
+
+	claims := tokens.Claims{
+		UserID: "u1", Type: tokens.TypeAccess,
+		RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour))},
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = kid
+	signed, err := tok.SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Verify(context.Background(), signed); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Fatalf("err = %v, want ErrInvalidToken", err)
+	}
+	if got := fake.sessionCalls.Load(); got != 0 {
+		t.Errorf("ValidateSession called %d times for an empty sid, want 0", got)
+	}
+}
+
+func TestVerify_SessionCheckedOncePerSession(t *testing.T) {
+	key, kid := newSigningKey(t)
+	fake := &fakeAuth{
+		jwks: func() (*authv1.GetJWKSResponse, error) {
+			return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{jwkFor(key, kid)}}, nil
+		},
+		user: okProfile("free", "en"),
+	}
+	v := auth.NewVerifier(fake)
+	defer v.Stop()
+
+	tok := mint(t, key, kid, "u1", time.Now().Add(time.Hour))
+	for i := 0; i < 5; i++ {
+		if _, err := v.Verify(context.Background(), tok); err != nil {
+			t.Fatalf("verify %d: %v", i, err)
+		}
+	}
+	if got := fake.sessionCalls.Load(); got != 1 {
+		t.Errorf("ValidateSession called %d times, want 1", got)
+	}
+}
+
+func TestVerify_SessionCheckDown_Unavailable(t *testing.T) {
+	key, kid := newSigningKey(t)
+	fake := &fakeAuth{
+		jwks: func() (*authv1.GetJWKSResponse, error) {
+			return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{jwkFor(key, kid)}}, nil
+		},
+		user:    okProfile("free", "en"),
+		session: func(string) (*authv1.ValidateSessionResponse, error) { return nil, errors.New("auth down") },
+	}
+	v := auth.NewVerifier(fake)
+	defer v.Stop()
+
+	tok := mint(t, key, kid, "u1", time.Now().Add(time.Hour))
+	_, err := v.Verify(context.Background(), tok)
+	var ue *auth.UnavailableError
+	if !errors.As(err, &ue) {
+		t.Fatalf("err = %v, want *UnavailableError", err)
 	}
 }
 

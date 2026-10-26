@@ -288,6 +288,78 @@ func TestValidateToken_BadToken(t *testing.T) {
 	}
 }
 
+// ── ValidateSession ───────────────────────────────────────────────────────────
+
+func sessionActive(t *testing.T, svc *server.Server, sid string) bool {
+	t.Helper()
+	resp, err := svc.ValidateSession(context.Background(), &authv1.ValidateSessionRequest{SessionId: sid})
+	if err != nil {
+		t.Fatalf("ValidateSession(%q): %v", sid, err)
+	}
+	return resp.Active
+}
+
+func TestValidateSession_LiveThenRevoked(t *testing.T) {
+	svc, maker := newServer(t)
+	su := signUp(t, svc, "s1@test.com", "Passw0rd1", "Sam")
+	sid := sessionID(t, maker, su.AccessToken)
+
+	if !sessionActive(t, svc, sid) {
+		t.Fatal("fresh session reported inactive")
+	}
+	if _, err := svc.RevokeSession(context.Background(), &authv1.RevokeSessionRequest{UserId: su.UserId, SessionId: sid}); err != nil {
+		t.Fatalf("RevokeSession: %v", err)
+	}
+	if sessionActive(t, svc, sid) {
+		t.Error("revoked session still active")
+	}
+}
+
+func TestValidateSession_InactiveAfterLogout(t *testing.T) {
+	svc, maker := newServer(t)
+	su := signUp(t, svc, "s2@test.com", "Passw0rd1", "Sue")
+	sid := sessionID(t, maker, su.AccessToken)
+
+	if _, err := svc.Logout(context.Background(), &authv1.LogoutRequest{RefreshToken: su.RefreshToken}); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	if sessionActive(t, svc, sid) {
+		t.Error("session still active after logout")
+	}
+}
+
+func TestValidateSession_OtherSessionsRevoked(t *testing.T) {
+	svc, maker := newServer(t)
+	su := signUp(t, svc, "s3@test.com", "Passw0rd1", "Sid")
+	keep := sessionID(t, maker, su.AccessToken)
+	login, err := svc.Login(context.Background(), &authv1.LoginRequest{
+		Email: "s3@test.com", Password: "Passw0rd1",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "9.9.9.9"},
+	})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	other := sessionID(t, maker, login.AccessToken)
+
+	if _, err := svc.RevokeOtherSessions(context.Background(), &authv1.RevokeOtherSessionsRequest{UserId: su.UserId, CurrentSessionId: keep}); err != nil {
+		t.Fatalf("RevokeOtherSessions: %v", err)
+	}
+	if !sessionActive(t, svc, keep) || sessionActive(t, svc, other) {
+		t.Errorf("keep active=%v other active=%v, want true/false", sessionActive(t, svc, keep), sessionActive(t, svc, other))
+	}
+}
+
+func TestValidateSession_BadInput(t *testing.T) {
+	svc, _ := newServer(t)
+	if sessionActive(t, svc, "not-a-uuid") {
+		t.Error("non-UUID session reported active")
+	}
+	_, err := svc.ValidateSession(context.Background(), &authv1.ValidateSessionRequest{})
+	if grpcCode(err) != codes.InvalidArgument {
+		t.Errorf("empty id: want InvalidArgument, got %v", err)
+	}
+}
+
 // ── Logout ────────────────────────────────────────────────────────────────────
 
 func TestLogout_RemovesSession(t *testing.T) {

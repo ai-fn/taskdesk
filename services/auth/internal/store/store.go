@@ -119,6 +119,19 @@ func (s *Store) DeleteSessionByTokenHash(ctx context.Context, tokenHash string) 
 	return err
 }
 
+// SessionActive reports whether a non-expired session with this id exists.
+func (s *Store) SessionActive(ctx context.Context, sessionID string) (bool, error) {
+	var active bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM auth.sessions WHERE id = $1 AND expires_at > now())`,
+		sessionID,
+	).Scan(&active)
+	if err != nil {
+		return false, fmt.Errorf("session active: %w", err)
+	}
+	return active, nil
+}
+
 // ListSessions returns all non-expired sessions for a user, newest-active first.
 func (s *Store) ListSessions(ctx context.Context, userID string) ([]*domain.Session, error) {
 	rows, err := s.db.Query(ctx, `

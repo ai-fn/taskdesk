@@ -71,6 +71,12 @@ type fakeAuth struct {
 	lang string
 	// userErr, when set, makes GetUserByID fail (simulates auth-service down).
 	userErr error
+	// revoked makes ValidateSession report the session as gone.
+	revoked bool
+}
+
+func (f *fakeAuth) ValidateSession(context.Context, *authv1.ValidateSessionRequest, ...grpc.CallOption) (*authv1.ValidateSessionResponse, error) {
+	return &authv1.ValidateSessionResponse{Active: !f.revoked}, nil
 }
 
 func (f *fakeAuth) GetJWKS(_ context.Context, _ *authv1.GetJWKSRequest, _ ...grpc.CallOption) (*authv1.GetJWKSResponse, error) {
@@ -233,6 +239,23 @@ func TestAuthenticate_RefreshToken_Returns401(t *testing.T) {
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("%s: status = %d, want 401", name, w.Code)
 		}
+	}
+}
+
+func TestAuthenticate_RevokedSession_Returns401(t *testing.T) {
+	key, kid := newKey(t)
+	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free", revoked: true})
+
+	tok := mint(t, key, kid, "u", "u@x.com", "s", time.Now().Add(time.Hour))
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Bearer "+tok)
+	mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
 	}
 }
 

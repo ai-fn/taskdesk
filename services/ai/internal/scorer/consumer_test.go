@@ -26,6 +26,10 @@ func (f *fakeAuthClient) GetUserByID(ctx context.Context, req *authv1.GetUserByI
 	}
 	return f.getUserByID(ctx, req, opts...)
 }
+func (f *fakeAuthClient) ValidateSession(context.Context, *authv1.ValidateSessionRequest, ...grpc.CallOption) (*authv1.ValidateSessionResponse, error) {
+	panic("fakeAuthClient.ValidateSession not configured")
+}
+
 func (f *fakeAuthClient) ListUserIDs(ctx context.Context, req *authv1.ListUserIDsRequest, opts ...grpc.CallOption) (*authv1.ListUserIDsResponse, error) {
 	if f.listUserIDs == nil {
 		panic("fakeAuthClient.ListUserIDs not configured")
