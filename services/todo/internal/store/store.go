@@ -106,37 +106,40 @@ type ListFilter struct {
 	CursorID        *string
 }
 
-func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, error) {
-	if f.PageSize <= 0 || f.PageSize > 200 {
-		f.PageSize = 50
-	}
-
-	rows, err := s.db.Query(ctx, `
-		SELECT t.id, t.user_id, t.title, t.description, t.priority, t.status, t.tags,
+// Shared SELECT list and FROM clause for task listings. The laterals probe per row by index;
+// a GROUP BY subquery here would aggregate every user's rows.
+const taskListCols = `t.id, t.user_id, t.title, t.description, t.priority, t.status, t.tags,
 		       t.due_at, t.created_at, t.updated_at, t.list_id, t.flagged, t.deleted_at,
 		       t.completion_score, COALESCE(t.completion_insight, ''),
 		       t.parent_task_id,
 		       COALESCE(sc.subtask_count, 0)::int,
 		       COALESCE(sc.subtask_done_count, 0)::int,
 		       COALESCE(dep.blocked, false) AS blocked,
-		       COALESCE(dep.dep_ids, ARRAY[]::text[]) AS depends_on_task_ids
-		FROM todo.tasks t
-		LEFT JOIN (
-		  SELECT parent_task_id,
-		    COUNT(*) FILTER (WHERE deleted_at IS NULL) AS subtask_count,
-		    COUNT(*) FILTER (WHERE status = 3 AND deleted_at IS NULL) AS subtask_done_count
-		  FROM todo.tasks
-		  WHERE parent_task_id IS NOT NULL
-		  GROUP BY parent_task_id
-		) sc ON sc.parent_task_id = t.id
-		LEFT JOIN (
-		  SELECT d.task_id,
-		         ARRAY_AGG(d.depends_on_id) AS dep_ids,
+		       COALESCE(dep.dep_ids, ARRAY[]::text[]) AS depends_on_task_ids`
+
+const taskListJoins = `FROM todo.tasks t
+		LEFT JOIN LATERAL (
+		  SELECT COUNT(*) FILTER (WHERE c.deleted_at IS NULL) AS subtask_count,
+		         COUNT(*) FILTER (WHERE c.status = 3 AND c.deleted_at IS NULL) AS subtask_done_count
+		  FROM todo.tasks c
+		  WHERE c.parent_task_id = t.id
+		) sc ON TRUE
+		LEFT JOIN LATERAL (
+		  SELECT ARRAY_AGG(d.depends_on_id ORDER BY d.depends_on_id) AS dep_ids,
 		         BOOL_OR(t2.status <> 3 AND t2.deleted_at IS NULL) AS blocked
 		  FROM todo.task_dependencies d
 		  JOIN todo.tasks t2 ON t2.id = d.depends_on_id
-		  GROUP BY d.task_id
-		) dep ON dep.task_id = t.id
+		  WHERE d.task_id = t.id
+		) dep ON TRUE`
+
+func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, error) {
+	if f.PageSize <= 0 || f.PageSize > 200 {
+		f.PageSize = 50
+	}
+
+	rows, err := s.db.Query(ctx, `
+		SELECT `+taskListCols+`
+		`+taskListJoins+`
 		WHERE t.user_id = $1
 		  AND ($2::int IS NULL OR t.status   = $2)
 		  AND ($3::int IS NULL OR t.priority = $3)

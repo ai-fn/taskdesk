@@ -120,29 +120,8 @@ func (s *Store) ListDependencies(ctx context.Context, userID, taskID string) (de
 // task-id column.
 func (s *Store) queryTasksByDep(ctx context.Context, userID, idSubquery, paramTaskID string) ([]*domain.Task, error) {
 	q := `
-		SELECT t.id, t.user_id, t.title, t.description, t.priority, t.status, t.tags,
-		       t.due_at, t.created_at, t.updated_at, t.list_id, t.flagged, t.deleted_at,
-		       t.completion_score, COALESCE(t.completion_insight, ''),
-		       t.parent_task_id,
-		       COALESCE(sc.subtask_count, 0)::int,
-		       COALESCE(sc.subtask_done_count, 0)::int,
-		       COALESCE(dep.blocked, false),
-		       COALESCE(dep.dep_ids, ARRAY[]::text[])
-		FROM todo.tasks t
-		LEFT JOIN (
-		  SELECT parent_task_id,
-		    COUNT(*) FILTER (WHERE deleted_at IS NULL) AS subtask_count,
-		    COUNT(*) FILTER (WHERE status = 3 AND deleted_at IS NULL) AS subtask_done_count
-		  FROM todo.tasks WHERE parent_task_id IS NOT NULL GROUP BY parent_task_id
-		) sc ON sc.parent_task_id = t.id
-		LEFT JOIN (
-		  SELECT d.task_id,
-		         ARRAY_AGG(d.depends_on_id) AS dep_ids,
-		         BOOL_OR(t2.status <> 3 AND t2.deleted_at IS NULL) AS blocked
-		  FROM todo.task_dependencies d
-		  JOIN todo.tasks t2 ON t2.id = d.depends_on_id
-		  GROUP BY d.task_id
-		) dep ON dep.task_id = t.id
+		SELECT ` + taskListCols + `
+		` + taskListJoins + `
 		WHERE t.id IN (` + idSubquery + `)
 		  AND t.user_id = $2
 		  AND t.deleted_at IS NULL
