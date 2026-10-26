@@ -30,6 +30,9 @@ func New(st *store.Store, log *slog.Logger) *Server {
 	return &Server{store: st, log: log}
 }
 
+// errRefNotFound is the same for foreign and missing ids, so it is no existence oracle.
+const errRefNotFound = "referenced list, group or parent task not found"
+
 // ── CreateTask ────────────────────────────────────────────────────────────────
 
 func (s *Server) CreateTask(ctx context.Context, req *todov1.CreateTaskRequest) (*todov1.CreateTaskResponse, error) {
@@ -62,6 +65,9 @@ func (s *Server) CreateTask(ctx context.Context, req *todov1.CreateTaskRequest) 
 	}
 
 	if err := s.store.CreateTaskWithEvent(ctx, t); err != nil {
+		if errors.Is(err, store.ErrRefNotFound) {
+			return nil, status.Error(codes.NotFound, errRefNotFound)
+		}
 		s.log.Error("create task", "err", err)
 		return nil, status.Error(codes.Internal, "create task failed")
 	}
@@ -231,6 +237,9 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 
 	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, evType, notify)
 	if err != nil {
+		if errors.Is(err, store.ErrRefNotFound) {
+			return nil, status.Error(codes.NotFound, errRefNotFound)
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "task not found")
 		}
@@ -290,6 +299,9 @@ func (s *Server) CompleteTask(ctx context.Context, req *todov1.CompleteTaskReque
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "task not found")
+		}
+		if errors.Is(err, store.ErrRefNotFound) {
+			return nil, status.Error(codes.NotFound, errRefNotFound)
 		}
 		s.log.Error("complete task", "err", err)
 		return nil, status.Error(codes.Internal, "complete task failed")
@@ -362,6 +374,9 @@ func (s *Server) CreateList(ctx context.Context, req *todov1.CreateListRequest) 
 		l.GroupID = &req.GroupId
 	}
 	if err := s.store.CreateList(ctx, l); err != nil {
+		if errors.Is(err, store.ErrRefNotFound) {
+			return nil, status.Error(codes.NotFound, errRefNotFound)
+		}
 		s.log.Error("create list", "err", err)
 		return nil, status.Error(codes.Internal, "create list failed")
 	}
@@ -440,6 +455,9 @@ func (s *Server) UpdateList(ctx context.Context, req *todov1.UpdateListRequest) 
 
 	updated, err := s.store.UpdateList(ctx, existing, updateGroupID)
 	if err != nil {
+		if errors.Is(err, store.ErrRefNotFound) {
+			return nil, status.Error(codes.NotFound, errRefNotFound)
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "list not found")
 		}

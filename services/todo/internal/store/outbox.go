@@ -29,6 +29,9 @@ func (s *Store) CreateTaskWithEvent(ctx context.Context, t *domain.Task) error {
 		tags = []string{}
 	}
 	return withTx(ctx, s.db, func(tx pgx.Tx) error {
+		if err := requireTaskRefs(ctx, tx, t.UserID, t.ListID, t.ParentTaskID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO todo.tasks
 				(id, user_id, title, description, priority, status, tags,
@@ -39,7 +42,7 @@ func (s *Store) CreateTaskWithEvent(ctx context.Context, t *domain.Task) error {
 			t.DueAt, t.CreatedAt, t.UpdatedAt,
 			t.ListID, t.Flagged, t.ParentTaskID,
 		); err != nil {
-			return err
+			return mapRefErr(err)
 		}
 		// Adding a subtask to a completed parent reopens it.
 		if t.ParentTaskID != nil {
@@ -66,6 +69,9 @@ type Notify struct {
 func (s *Store) UpdateTaskWithEvent(ctx context.Context, t *domain.Task, eventType string, n Notify) (*domain.Task, error) {
 	var updated domain.Task
 	err := withTx(ctx, s.db, func(tx pgx.Tx) error {
+		if err := requireListOrUnchanged(ctx, tx, t.UserID, t.ID, t.ListID); err != nil {
+			return err
+		}
 		err := scanTask(tx.QueryRow(ctx, `
 			UPDATE todo.tasks
 			SET title=$3, description=$4, priority=$5, status=$6,
@@ -80,7 +86,7 @@ func (s *Store) UpdateTaskWithEvent(ctx context.Context, t *domain.Task, eventTy
 			if err == pgx.ErrNoRows {
 				return ErrNotFound
 			}
-			return err
+			return mapRefErr(err)
 		}
 		return insertOutbox(ctx, tx, eventType, updated.UserID, updated.ID, updated.Title, n)
 	})

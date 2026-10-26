@@ -224,3 +224,26 @@ func TestCompleteTask_AlreadyDoneEmitsNothing(t *testing.T) {
 		t.Errorf("task.completed events=%d after completing twice, want 1", n)
 	}
 }
+
+func TestCreateTask_ForeignOrMissingReferencesAreNotFound(t *testing.T) {
+	svc, st := newServer(t)
+	ctx := context.Background()
+	victimList, err := svc.CreateList(ctx, &todov1.CreateListRequest{UserId: "victim", Name: "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTasks(t, st, "victim", 1)
+
+	for name, req := range map[string]*todov1.CreateTaskRequest{
+		"foreign list":   {UserId: "attacker", Title: "x", ListId: victimList.List.Id},
+		"missing list":   {UserId: "attacker", Title: "x", ListId: "nope"},
+		"foreign parent": {UserId: "attacker", Title: "x", ParentTaskId: "victim-000"},
+	} {
+		if _, err := svc.CreateTask(ctx, req); status.Code(err) != codes.NotFound {
+			t.Errorf("%s: code = %v, want NotFound (not Internal)", name, status.Code(err))
+		}
+	}
+	if _, err := svc.CreateList(ctx, &todov1.CreateListRequest{UserId: "attacker", Name: "l", GroupId: "nope"}); status.Code(err) != codes.NotFound {
+		t.Errorf("list with a missing group: code = %v, want NotFound", status.Code(err))
+	}
+}

@@ -16,6 +16,67 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+// ErrRefNotFound means a referenced list, group or parent task is missing or someone else's.
+// FKs only check existence, so ownership is verified explicitly.
+var ErrRefNotFound = errors.New("referenced list, group or parent task not found")
+
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// requireOwned returns ErrRefNotFound unless id (when set) names a row of table owned by userID.
+// table is a trusted constant.
+func requireOwned(ctx context.Context, q rowQuerier, table, userID string, id *string) error {
+	if id == nil || *id == "" {
+		return nil
+	}
+	var one int
+	err := q.QueryRow(ctx, `SELECT 1 FROM todo.`+table+` WHERE id = $1 AND user_id = $2`, *id, userID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrRefNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("check %s ownership: %w", table, err)
+	}
+	return nil
+}
+
+// mapRefErr turns a foreign-key violation (a referenced row deleted mid-request) into ErrRefNotFound.
+func mapRefErr(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		return ErrRefNotFound
+	}
+	return err
+}
+
+// requireListOrUnchanged accepts a list the user owns, or the task's current one, so rows that
+// predate the ownership checks stay editable until the bad reference is changed.
+func requireListOrUnchanged(ctx context.Context, q rowQuerier, userID, taskID string, listID *string) error {
+	if listID == nil || *listID == "" {
+		return nil
+	}
+	var ok bool
+	err := q.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM todo.lists WHERE id = $1 AND user_id = $2)
+		    OR EXISTS (SELECT 1 FROM todo.tasks WHERE id = $3 AND user_id = $2 AND list_id = $1)`,
+		*listID, userID, taskID).Scan(&ok)
+	if err != nil {
+		return fmt.Errorf("check list ownership: %w", err)
+	}
+	if !ok {
+		return ErrRefNotFound
+	}
+	return nil
+}
+
+func requireTaskRefs(ctx context.Context, q rowQuerier, userID string, listID, parentID *string) error {
+	if err := requireOwned(ctx, q, "lists", userID, listID); err != nil {
+		return err
+	}
+	return requireOwned(ctx, q, "tasks", userID, parentID)
+}
+
 type Store struct {
 	db *pgxpool.Pool
 }
@@ -55,6 +116,9 @@ func (s *Store) CreateTask(ctx context.Context, t *domain.Task) error {
 	if tags == nil {
 		tags = []string{}
 	}
+	if err := requireTaskRefs(ctx, s.db, t.UserID, t.ListID, t.ParentTaskID); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO todo.tasks
 			(id, user_id, title, description, priority, status, tags,
@@ -65,7 +129,7 @@ func (s *Store) CreateTask(ctx context.Context, t *domain.Task) error {
 		t.DueAt, t.CreatedAt, t.UpdatedAt,
 		t.ListID, t.Flagged, t.ParentTaskID,
 	)
-	return err
+	return mapRefErr(err)
 }
 
 // ── GetTask ───────────────────────────────────────────────────────────────────
@@ -122,14 +186,14 @@ const taskListJoins = `FROM todo.tasks t
 		  SELECT COUNT(*) FILTER (WHERE c.deleted_at IS NULL) AS subtask_count,
 		         COUNT(*) FILTER (WHERE c.status = 3 AND c.deleted_at IS NULL) AS subtask_done_count
 		  FROM todo.tasks c
-		  WHERE c.parent_task_id = t.id
+		  WHERE c.parent_task_id = t.id AND c.user_id = t.user_id
 		) sc ON TRUE
 		LEFT JOIN LATERAL (
 		  SELECT ARRAY_AGG(d.depends_on_id ORDER BY d.depends_on_id) AS dep_ids,
 		         BOOL_OR(t2.status <> 3 AND t2.deleted_at IS NULL) AS blocked
 		  FROM todo.task_dependencies d
 		  JOIN todo.tasks t2 ON t2.id = d.depends_on_id
-		  WHERE d.task_id = t.id
+		  WHERE d.task_id = t.id AND d.user_id = t.user_id AND t2.user_id = t.user_id
 		) dep ON TRUE`
 
 func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, error) {
@@ -185,6 +249,9 @@ func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, er
 // ── UpdateTask ────────────────────────────────────────────────────────────────
 
 func (s *Store) UpdateTask(ctx context.Context, t *domain.Task) (*domain.Task, error) {
+	if err := requireListOrUnchanged(ctx, s.db, t.UserID, t.ID, t.ListID); err != nil {
+		return nil, err
+	}
 	var updated domain.Task
 	err := scanTask(s.db.QueryRow(ctx, `
 		UPDATE todo.tasks
@@ -200,7 +267,7 @@ func (s *Store) UpdateTask(ctx context.Context, t *domain.Task) (*domain.Task, e
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
-		return nil, fmt.Errorf("update task: %w", err)
+		return nil, fmt.Errorf("update task: %w", mapRefErr(err))
 	}
 	return &updated, nil
 }
@@ -255,6 +322,9 @@ func (s *Store) PurgeTask(ctx context.Context, userID, taskID string) error {
 // ── List CRUD ─────────────────────────────────────────────────────────────────
 
 func (s *Store) CreateList(ctx context.Context, l *domain.List) error {
+	if err := requireOwned(ctx, s.db, "list_groups", l.UserID, l.GroupID); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO todo.lists (id, user_id, name, color, icon, position, group_id, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5,
@@ -262,7 +332,7 @@ func (s *Store) CreateList(ctx context.Context, l *domain.List) error {
 		  $6, $7, $7)`,
 		l.ID, l.UserID, l.Name, l.Color, l.Icon, l.GroupID, l.CreatedAt,
 	)
-	return err
+	return mapRefErr(err)
 }
 
 func (s *Store) ListLists(ctx context.Context, userID string) ([]*domain.List, error) {
@@ -295,6 +365,11 @@ func (s *Store) ListLists(ctx context.Context, userID string) ([]*domain.List, e
 }
 
 func (s *Store) UpdateList(ctx context.Context, l *domain.List, updateGroupID bool) (*domain.List, error) {
+	if updateGroupID {
+		if err := requireOwned(ctx, s.db, "list_groups", l.UserID, l.GroupID); err != nil {
+			return nil, err
+		}
+	}
 	var updated domain.List
 	err := s.db.QueryRow(ctx, `
 		UPDATE todo.lists
@@ -314,7 +389,7 @@ func (s *Store) UpdateList(ctx context.Context, l *domain.List, updateGroupID bo
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
-		return nil, fmt.Errorf("update list: %w", err)
+		return nil, fmt.Errorf("update list: %w", mapRefErr(err))
 	}
 	return &updated, nil
 }
@@ -464,7 +539,7 @@ func (s *Store) AutoCompleteParent(ctx context.Context, userID, parentTaskID str
 		WHERE id=$1 AND user_id=$2 AND status != 3
 		  AND NOT EXISTS (
 		    SELECT 1 FROM todo.tasks
-		    WHERE parent_task_id=$1 AND deleted_at IS NULL AND status != 3
+		    WHERE parent_task_id=$1 AND user_id=$2 AND deleted_at IS NULL AND status != 3
 		  )
 		RETURNING `+taskCols, parentTaskID, userID), &t)
 	if err != nil {
