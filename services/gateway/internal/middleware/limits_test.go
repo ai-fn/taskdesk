@@ -171,6 +171,7 @@ func TestClientKey(t *testing.T) {
 		{"same /64, other host", "2001:db8:1:2:1111:2222:3333:4444", "", "10.0.0.1:1", "2001:db8:1:2::/64"},
 		{"garbage header falls through", "not-an-ip", "also-bad", "10.0.0.1:1234", "10.0.0.1"},
 		{"ipv6 zone id does not mint buckets", "fe80::1%eth0", "", "10.0.0.1:1", "fe80::/64"},
+		{"unparsable peer keeps host without port", "", "", "weird-host:1234", "weird-host"},
 		{"v4-mapped v6 is unmapped", "::ffff:9.9.9.9", "", "10.0.0.1:1234", "9.9.9.9"},
 	}
 	for _, tc := range cases {

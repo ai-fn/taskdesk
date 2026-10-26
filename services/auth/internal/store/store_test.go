@@ -947,3 +947,24 @@ func TestCreateUser_EmptyEmailAfterNormalizationIsRejected(t *testing.T) {
 		t.Errorf("err = %v, want ErrInvalidEmail", err)
 	}
 }
+
+// A request whose IP could not be determined must still get a session (ip_address is nullable).
+func TestCreateSession_EmptyIPStoresNull(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	h := "pw-hash"
+	u := makeUser("u-noip", "noip@example.com")
+	u.PasswordHash = &h
+	mustCreateUser(t, s, u)
+
+	if err := s.CreateSession(ctx, uuidS1, "u-noip", "h1", "", "UA", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession with empty ip: %v", err)
+	}
+	if err := s.CreateLoginSession(ctx, uuidS2, "u-noip", "h2", "", "UA", time.Now().Add(time.Hour), h); err != nil {
+		t.Fatalf("CreateLoginSession with empty ip: %v", err)
+	}
+	var nulls int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM auth.sessions WHERE user_id = 'u-noip' AND ip_address IS NULL`).Scan(&nulls); err != nil || nulls != 2 {
+		t.Errorf("sessions with NULL ip = %d (err %v), want 2", nulls, err)
+	}
+}

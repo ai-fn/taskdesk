@@ -10,6 +10,7 @@ import (
 
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
+	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -80,8 +81,8 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 	// Rate-limit before touching the database. clientInfoFromRequest is called
 	// once and reused for both the limiter check and the gRPC request.
 	info := clientInfoFromRequest(r)
-	if !h.ipLimiter.Allow(info.IpAddress) {
-		h.log.Warn("signup rate limited by IP", "ip", info.IpAddress)
+	if !h.ipLimiter.Allow(mw.ClientKey(r)) {
+		h.log.Warn("signup rate limited by IP", "ip", mw.ClientKey(r))
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -132,8 +133,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Both checks happen before bcrypt — which is intentionally slow — so a
 	// blocked attacker never reaches the expensive path.
 	info := clientInfoFromRequest(r)
-	if !h.ipLimiter.Allow(info.IpAddress) {
-		h.log.Warn("login rate limited by IP", "ip", info.IpAddress)
+	if !h.ipLimiter.Allow(mw.ClientKey(r)) {
+		h.log.Warn("login rate limited by IP", "ip", mw.ClientKey(r))
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -217,9 +218,9 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info := clientInfoFromRequest(r)
-	if !h.resetIPLimiter.Allow(info.IpAddress) {
-		h.log.Warn("forgot password rate limited by IP", "ip", info.IpAddress)
+	ip := mw.ClientKey(r)
+	if !h.resetIPLimiter.Allow(ip) {
+		h.log.Warn("forgot password rate limited by IP", "ip", ip)
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -252,9 +253,9 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info := clientInfoFromRequest(r)
-	if !h.resetIPLimiter.Allow(info.IpAddress) {
-		h.log.Warn("reset password rate limited by IP", "ip", info.IpAddress)
+	ip := mw.ClientKey(r)
+	if !h.resetIPLimiter.Allow(ip) {
+		h.log.Warn("reset password rate limited by IP", "ip", ip)
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}

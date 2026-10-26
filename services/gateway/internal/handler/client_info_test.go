@@ -57,3 +57,31 @@ func TestClientInfoFromRequest_Precedence(t *testing.T) {
 		t.Errorf("IP = %q, want X-Real-IP %q", info.IpAddress, "11.22.33.44")
 	}
 }
+
+func TestClientInfoFromRequest_IPv6AndGarbage(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = "[2001:db8::1]:4321"
+	if got := clientInfoFromRequest(r).IpAddress; got != "2001:db8::1" {
+		t.Errorf("IPv6 RemoteAddr = %q, want 2001:db8::1", got)
+	}
+
+	r.Header.Set("X-Real-IP", "not-an-ip")
+	r.Header.Set("X-Forwarded-For", "::ffff:5.6.7.8, 10.0.0.1")
+	if got := clientInfoFromRequest(r).IpAddress; got != "5.6.7.8" {
+		t.Errorf("bad X-Real-IP should fall through to XFF (unmapped), got %q", got)
+	}
+
+	r2 := httptest.NewRequest("GET", "/", nil)
+	r2.RemoteAddr = "garbage"
+	if got := clientInfoFromRequest(r2).IpAddress; got != "" {
+		t.Errorf("unparseable peer = %q, want empty", got)
+	}
+}
+
+func TestClientInfoFromRequest_ZoneIsStripped(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-Real-IP", "fe80::1%eth0")
+	if got := clientInfoFromRequest(r).IpAddress; got != "fe80::1" {
+		t.Errorf("IP = %q, want the zone dropped (INET rejects it)", got)
+	}
+}

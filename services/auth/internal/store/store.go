@@ -103,7 +103,7 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*domain.User, error
 func (s *Store) CreateSession(ctx context.Context, id, userID, tokenHash, ipAddress, userAgent string, expiresAt time.Time) error {
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO auth.sessions (id, user_id, token_hash, ip_address, user_agent, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
+		VALUES ($1, $2, $3, NULLIF($4::text, '')::inet, $5, $6)`,
 		id, userID, tokenHash, ipAddress, userAgent, expiresAt,
 	)
 	return err
@@ -114,7 +114,7 @@ func (s *Store) CreateSession(ctx context.Context, id, userID, tokenHash, ipAddr
 func (s *Store) CreateLoginSession(ctx context.Context, id, userID, tokenHash, ipAddress, userAgent string, expiresAt time.Time, passwordHash string) error {
 	tag, err := s.db.Exec(ctx, `
 		INSERT INTO auth.sessions (id, user_id, token_hash, ip_address, user_agent, expires_at)
-		SELECT $1::uuid, id, $3::text, $4::inet, $5::text, $6::timestamptz
+		SELECT $1::uuid, id, $3::text, NULLIF($4::text, '')::inet, $5::text, $6::timestamptz
 		FROM auth.users WHERE id = $2 AND password_hash = $7
 		FOR SHARE`,
 		id, userID, tokenHash, ipAddress, userAgent, expiresAt, passwordHash,

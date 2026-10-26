@@ -86,30 +86,40 @@ func OnePerUser() func(http.Handler) http.Handler {
 	}
 }
 
-// ClientKey is the rate-limit key for the caller: X-Real-IP (Caddy), else the first
-// X-Forwarded-For hop, else the socket peer. Headers must parse as IPs and IPv6 is
-// masked to its /64, so a client can't mint unlimited buckets by varying the value.
-func ClientKey(r *http.Request) string {
+// ClientIP is the caller's address: X-Real-IP (Caddy), else the first X-Forwarded-For hop,
+// else the socket peer. Header values must parse as IPs; ok is false if nothing does.
+func ClientIP(r *http.Request) (ip netip.Addr, ok bool) {
 	if ip, ok := parseIP(r.Header.Get("X-Real-IP")); ok {
-		return limiterKey(ip)
+		return ip, true
 	}
 	first, _, _ := strings.Cut(r.Header.Get("X-Forwarded-For"), ",")
 	if ip, ok := parseIP(first); ok {
+		return ip, true
+	}
+	return parseIP(peerHost(r.RemoteAddr))
+}
+
+// ClientKey is the rate-limit key for the caller. IPv6 is masked to its /64, so a client
+// can't mint unlimited buckets by varying the low bits.
+func ClientKey(r *http.Request) string {
+	if ip, ok := ClientIP(r); ok {
 		return limiterKey(ip)
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	if ip, ok := parseIP(host); ok {
-		return limiterKey(ip)
-	}
-	return host
+	return peerHost(r.RemoteAddr)
 }
 
 func parseIP(s string) (netip.Addr, bool) {
 	ip, err := netip.ParseAddr(strings.TrimSpace(s))
-	return ip.Unmap(), err == nil
+	// A zone is meaningless for a remote peer, and INET rejects it.
+	return ip.Unmap().WithZone(""), err == nil
+}
+
+// peerHost is the socket peer without its port.
+func peerHost(remoteAddr string) string {
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return host
+	}
+	return remoteAddr
 }
 
 func limiterKey(ip netip.Addr) string {

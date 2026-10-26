@@ -81,3 +81,31 @@ func TestLogin_EmailCaseVariantsShareOneLimiter(t *testing.T) {
 		t.Errorf("6th guess: status=%d, backend calls=%d; want 429 and 5 (case variants must not dodge the 5/min cap)", last, calls)
 	}
 }
+
+// One /64 is one budget: varying the low bits of an IPv6 address must not mint fresh buckets.
+func TestResetPassword_IPv6LimiterIsPerSlash64(t *testing.T) {
+	fake := &fakeAuthClient{resetPassword: func(context.Context, *authv1.ResetPasswordRequest, ...grpc.CallOption) (*authv1.ResetPasswordResponse, error) {
+		return &authv1.ResetPasswordResponse{}, nil
+	}}
+	h := handler.NewAuthHandler(fake, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), false)
+	defer h.Stop()
+	r := chi.NewRouter()
+	r.Post("/api/v1/auth/password/reset", h.ResetPassword)
+
+	post := func(n int) int {
+		body := fmt.Sprintf(`{"email":"user%d@example.com","code":"000000","new_password":"Passw0rd1"}`, n)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password/reset", strings.NewReader(body))
+		req.Header.Set("X-Real-IP", fmt.Sprintf("2001:db8:1:2::%x", n+1))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+	for i := range 10 {
+		if code := post(i); code != http.StatusNoContent {
+			t.Fatalf("request %d: status %d, want 204", i+1, code)
+		}
+	}
+	if code := post(10); code != http.StatusTooManyRequests {
+		t.Errorf("11th request from the same /64: status %d, want 429", code)
+	}
+}
