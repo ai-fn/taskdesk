@@ -5,7 +5,6 @@ services/*/build/
 *.test
 *.out
 vendor/
-go.work.sum
 
 # Proto generated code
 proto/gen/

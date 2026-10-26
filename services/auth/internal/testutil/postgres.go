@@ -60,7 +60,7 @@ func StartPostgres() (pool *pgxpool.Pool, teardown func()) {
 		),
 	)
 	if err != nil {
-		if isDockerUnavailable(err) {
+		if isDockerUnavailable(err) && os.Getenv("REQUIRE_DOCKER") != "1" {
 			fmt.Println("SKIP: Docker unavailable, skipping DB integration tests:", err)
 			os.Exit(0)
 		}

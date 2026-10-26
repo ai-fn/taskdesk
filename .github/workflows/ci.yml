@@ -83,7 +83,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.work
-          cache-dependency-path: go.work.sum
+          cache-dependency-path: |
+            go.work.sum
+            **/go.sum
 
       - name: gofmt
         working-directory: ${{ matrix.module }}
@@ -128,11 +130,19 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.work
-          cache-dependency-path: go.work.sum
+          cache-dependency-path: |
+            go.work.sum
+            **/go.sum
 
       - name: go build
         working-directory: ${{ matrix.module }}
         run: go build ./...
+
+      # Advisory until the toolchain moves to Go 1.26 (the fixed x/net and x/text need it); then drop continue-on-error.
+      - name: govulncheck
+        continue-on-error: true
+        working-directory: ${{ matrix.module }}
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
   test-go:
     needs: generate-proto
@@ -159,26 +169,43 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.work
-          cache-dependency-path: go.work.sum
+          cache-dependency-path: |
+            go.work.sum
+            **/go.sum
 
-      - name: Pre-pull Postgres test image
-        if: matrix.module == 'services/todo'
-        run: docker pull pgvector/pgvector:pg16
+      - name: Pre-pull Postgres test images
+        if: matrix.module == 'services/todo' || matrix.module == 'services/auth'
+        run: |
+          docker pull postgres:16-alpine
+          docker pull pgvector/pgvector:pg16
 
       - name: go test
         working-directory: ${{ matrix.module }}
-        # Docker-free layer (see CLAUDE.md "Testing"). auth's internal/server and
-        # internal/store start Postgres via testcontainers and are excluded; todo's
-        # DB tests do run here, with Docker required so they can't silently skip.
+        # Auth and todo run their testcontainers suites here; Docker is required so they
+        # can't silently skip.
         run: |
-          if [ "${{ matrix.module }}" = "services/auth" ]; then
-            pkgs=$(go list ./... | grep -v '/internal/server$' | grep -v '/internal/store$')
-            go test -timeout 60s $pkgs
-          elif [ "${{ matrix.module }}" = "services/todo" ]; then
-            REQUIRE_DOCKER=1 go test -timeout 180s ./...
-          else
-            go test -timeout 60s ./...
-          fi
+          case "${{ matrix.module }}" in
+            services/auth|services/todo) REQUIRE_DOCKER=1 go test -race -timeout 300s ./... ;;
+            *) go test -race -timeout 120s ./... ;;
+          esac
+
+  docker-build:
+    needs: generate-proto
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [ai, auth, gateway, notification, scheduler, todo]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: proto-gen
+          path: proto/gen
+
+      - name: docker build
+        run: docker build -f services/${{ matrix.service }}/Dockerfile -t todo/${{ matrix.service }}:ci .
 
   migrations-sync:
     runs-on: ubuntu-latest
@@ -203,6 +230,7 @@ jobs:
 
       - run: npm ci
       - run: npm run lint
+      - run: npm audit --omit=dev --audit-level=high
 
   build-web:
     runs-on: ubuntu-latest
