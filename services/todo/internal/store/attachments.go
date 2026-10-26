@@ -37,6 +37,7 @@ func scanAttachment(row interface {
 var (
 	ErrQuotaExceeded       = errors.New("storage quota exceeded")
 	ErrTaskAttachmentFull  = errors.New("task attachment limit reached")
+	ErrTooManyPending      = errors.New("too many unfinished uploads")
 	ErrSizeExceedsDeclared = errors.New("stored object is larger than the declared size")
 	ErrInvalidCursor       = errors.New("invalid cursor")
 )
@@ -45,6 +46,7 @@ var (
 type ReserveLimits struct {
 	MaxFilesPerTask int
 	QuotaBytes      int64
+	MaxPending      int // unfinished uploads per user; bounds row growth for plans without a quota
 }
 
 // lockUserStorage takes the per-user row lock that serialises quota-affecting writes (reserve,
@@ -95,15 +97,19 @@ func (s *Store) ReserveAttachment(ctx context.Context, a *domain.Attachment, upl
 				return ErrTaskAttachmentFull
 			}
 		}
-		if lim.QuotaBytes > 0 {
+		if lim.QuotaBytes > 0 || lim.MaxPending > 0 {
+			var pending int
 			var pendingBytes int64
 			if err := tx.QueryRow(ctx,
-				`SELECT COALESCE(sum(size_bytes), 0) FROM todo.attachments WHERE user_id = $1 AND status = 'pending'`,
+				`SELECT count(*), COALESCE(sum(size_bytes), 0) FROM todo.attachments WHERE user_id = $1 AND status = 'pending'`,
 				a.UserID,
-			).Scan(&pendingBytes); err != nil {
-				return fmt.Errorf("sum pending bytes: %w", err)
+			).Scan(&pending, &pendingBytes); err != nil {
+				return fmt.Errorf("sum pending uploads: %w", err)
 			}
-			if used+pendingBytes+a.SizeBytes > lim.QuotaBytes {
+			if lim.MaxPending > 0 && pending >= lim.MaxPending {
+				return ErrTooManyPending
+			}
+			if lim.QuotaBytes > 0 && used+pendingBytes+a.SizeBytes > lim.QuotaBytes {
 				return ErrQuotaExceeded
 			}
 		}

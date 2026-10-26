@@ -132,6 +132,8 @@ export interface CompletedPart {
   etag: string
 }
 
+export const MISSING_ETAG = '__missingEtag__'
+
 // putPart uploads a single part directly to the presigned URL and returns
 // the ETag from the response headers (required for CompleteMultipart).
 export async function putPart(
@@ -146,7 +148,9 @@ export async function putPart(
         }
       : undefined,
   })
-  const etag: string = resp.headers['etag'] ?? resp.headers['ETag'] ?? ''
+  // Absent when the bucket's CORS rules do not expose ETag; completing without it would corrupt the upload.
+  const etag: string = resp.headers['etag'] ?? ''
+  if (!etag) throw new Error(MISSING_ETAG)
   return etag
 }
 

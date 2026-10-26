@@ -3,6 +3,7 @@ package scanner_test
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -101,3 +102,50 @@ func TestScan_ConnectRefused(t *testing.T) {
 		t.Fatal("want error on unreachable addr, got nil")
 	}
 }
+
+func TestScan_ClamdSizeLimit(t *testing.T) {
+	addr := mockClamd(t, "INSTREAM size limit exceeded. ERROR")
+	_, _, err := scanner.New(addr).Scan(context.Background(), strings.NewReader("data"))
+	if !errors.Is(err, scanner.ErrTooLarge) {
+		t.Fatalf("err = %v, want ErrTooLarge", err)
+	}
+}
+
+func TestFromConfig_FailsClosedWithoutAddr(t *testing.T) {
+	if _, err := scanner.FromConfig("", false); err == nil {
+		t.Error("empty CLAMAV_ADDR without SCAN_DISABLED must be an error")
+	}
+	if s, err := scanner.FromConfig("", true); err != nil || s != nil {
+		t.Errorf("explicitly disabled: got (%v, %v), want (nil, nil)", s, err)
+	}
+	if s, err := scanner.FromConfig("clamav:3310", false); err != nil || s == nil {
+		t.Errorf("configured: got (%v, %v)", s, err)
+	}
+}
+
+// clamd replies "size limit exceeded" and closes while the client is still sending.
+func TestScan_ClamdClosesMidStream_IsTooLarge(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		buf := make([]byte, 64)
+		_, _ = conn.Read(buf) // nINSTREAM + first frame start
+		fmt.Fprint(conn, "INSTREAM size limit exceeded. ERROR\n")
+		conn.Close()
+	}()
+	_, _, err = scanner.New(ln.Addr().String()).Scan(context.Background(), io.LimitReader(zeroReader{}, 64<<20))
+	if !errors.Is(err, scanner.ErrTooLarge) {
+		t.Fatalf("err = %v, want ErrTooLarge", err)
+	}
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) { clear(p); return len(p), nil }

@@ -398,6 +398,7 @@
     "empty": "No attachments yet",
     "errorTooLargeFree": "File exceeds the {{max}} free-plan limit",
     "errorNeedsPro": "Files over 100 MB require a Pro plan",
+    "errorStorage": "Upload failed: storage did not return a part checksum. Please try again or contact support.",
     "count_one": "{{count}} attachment",
     "count_other": "{{count}} attachments",
     "attachFiles": "Attach files",

@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clamav
+  namespace: data
+  labels:
+    app: clamav
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clamav
+  template:
+    metadata:
+      labels:
+        app: clamav
+    spec:
+      containers:
+      - name: clamav
+        image: clamav/clamav:1.4
+        ports:
+        - name: clamd
+          containerPort: 3310
+        env:
+        # Stream limits must stay above the notification service's SCAN_MAX_BYTES (2 GiB).
+        - name: CLAMD_CONF_StreamMaxLength
+          value: 3000M
+        - name: CLAMD_CONF_MaxFileSize
+          value: 3000M
+        - name: CLAMD_CONF_MaxScanSize
+          value: 3000M
+        # Report archives that exceed the scan limits instead of answering OK (fail closed).
+        - name: CLAMD_CONF_AlertExceedsMax
+          value: "yes"
+        # Loading the signature database takes minutes on a cold start.
+        startupProbe:
+          tcpSocket:
+            port: clamd
+          periodSeconds: 10
+          failureThreshold: 60
+        readinessProbe:
+          tcpSocket:
+            port: clamd
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 1Gi
+          limits:
+            memory: 3Gi
+        volumeMounts:
+        - name: db
+          mountPath: /var/lib/clamav
+      volumes:
+      - name: db
+        emptyDir: {}

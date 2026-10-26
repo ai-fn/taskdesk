@@ -30,5 +30,5 @@ echo
 echo "  Mailpit:       http://localhost:8025"
 echo "  Postgres:      psql -h localhost -U postgres -d todo"
 echo "  Redis:         redis-cli -h localhost"
-echo "  MinIO API:     http://localhost:9000  (minioadmin / minioadmin)"
+echo "  MinIO API:     http://localhost:9000  (todo-dev / todo-dev-secret-key)"
 echo "  MinIO Console: http://localhost:9001"

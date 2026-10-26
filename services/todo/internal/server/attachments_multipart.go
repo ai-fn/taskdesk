@@ -25,6 +25,9 @@ func (s *Server) InitiateMultipartUpload(ctx context.Context, req *todov1.Initia
 	if req.UserId == "" || req.TaskId == "" || req.Filename == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id, task_id, and filename are required")
 	}
+	if err := validateUpload(req.Filename, req.ContentType); err != nil {
+		return nil, err
+	}
 	if req.Plan != planPro {
 		return nil, status.Error(codes.PermissionDenied, "multipart upload is available on pro plan only")
 	}

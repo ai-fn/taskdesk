@@ -31,12 +31,17 @@ type Config struct {
 	SMTPUser     string `env:"SMTP_USER"      default:""`
 	SMTPPass     string `env:"SMTP_PASS"      default:""`
 
-	// todo-service gRPC (for the UpdateScanStatus callback). Matches todo-service's
-	// default LISTEN_ADDR (:50052).
-	TodoAddr string `env:"TODO_ADDR" default:"todo-service.default.svc.cluster.local:50052"`
+	// Own group for file.uploaded so a long malware scan never delays emails.
+	KafkaScanGroup string `env:"KAFKA_SCAN_GROUP" default:"notification-scan"`
 
-	// ClamAV — empty string disables scanning (dev mode: all files approved immediately).
-	ClamAVAddr string `env:"CLAMAV_ADDR" default:""`
+	// todo-service gRPC (for the UpdateScanStatus callback).
+	TodoAddr string `env:"TODO_ADDR" default:"todo.todo.svc.cluster.local:50052"`
+
+	// ClamAV. Empty is an error unless SCAN_DISABLED=true (dev: every file is approved unscanned).
+	ClamAVAddr   string `env:"CLAMAV_ADDR"   default:""`
+	ScanDisabled bool   `env:"SCAN_DISABLED" default:"false"`
+	// Objects above this are quarantined unscanned; keep it <= clamd StreamMaxLength.
+	ScanMaxBytes int64 `env:"SCAN_MAX_BYTES" default:"2147483648"`
 }
 
 // todoScanUpdater wraps the todo-service gRPC client to satisfy consumer.ScanResultUpdater.
@@ -80,6 +85,13 @@ func main() {
 	}
 	defer kafkaConsumer.Close()
 
+	scanConsumer, err := pkgkafka.NewConsumer(brokers, cfg.KafkaScanGroup, consumer.ScanTopics(), log)
+	if err != nil {
+		log.Error("create kafka scan consumer", "err", err)
+		os.Exit(1)
+	}
+	defer scanConsumer.Close()
+
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	defer rdb.Close()
 
@@ -91,17 +103,19 @@ func main() {
 	defer todoConn.Close()
 	todoClient := todov1.NewTodoServiceClient(todoConn)
 
-	// Scanner is optional: if CLAMAV_ADDR is not set, every file is approved without scanning.
-	var scn consumer.ScannerClient
-	if cfg.ClamAVAddr != "" {
-		scn = scanner.New(cfg.ClamAVAddr)
-		log.Info("ClamAV scanning enabled", "addr", cfg.ClamAVAddr)
+	scn, err := newScanner(cfg)
+	if err != nil {
+		log.Error("scanner config", "err", err)
+		os.Exit(1)
+	}
+	if scn == nil {
+		log.Warn("SCAN_DISABLED is set; all uploaded files are approved without scanning")
 	} else {
-		log.Info("ClamAV scanning disabled (CLAMAV_ADDR not set) — all files auto-approved")
+		log.Info("ClamAV scanning enabled", "addr", cfg.ClamAVAddr, "max_bytes", cfg.ScanMaxBytes)
 	}
 
 	m := mailer.New(cfg.SMTPAddr, cfg.SMTPFrom, cfg.SMTPUser, cfg.SMTPPass)
-	h := consumer.New(m, rdb, scn, blobStore, &todoScanUpdater{client: todoClient}, log)
+	h := consumer.New(m, rdb, scn, blobStore, &todoScanUpdater{client: todoClient}, log).WithScanLimit(cfg.ScanMaxBytes)
 
 	go func() {
 		mux := http.NewServeMux()
@@ -119,8 +133,25 @@ func main() {
 		"clamav", cfg.ClamAVAddr,
 	)
 
-	if err := consumer.Run(ctx, brokers, kafkaConsumer, h); err != nil {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errc := make(chan error, 2)
+	go func() { errc <- consumer.Run(runCtx, brokers, kafkaConsumer, h) }()
+	go func() { errc <- consumer.Run(runCtx, brokers, scanConsumer, h) }()
+	err = <-errc
+	cancel()
+	<-errc
+	if err != nil {
 		log.Error("consumer error", "err", err)
 		os.Exit(1)
 	}
+}
+
+// newScanner returns a true nil interface when scanning is disabled; a typed-nil *Scanner would make the handler scan with it.
+func newScanner(cfg Config) (consumer.ScannerClient, error) {
+	s, err := scanner.FromConfig(cfg.ClamAVAddr, cfg.ScanDisabled)
+	if err != nil || s == nil {
+		return nil, err
+	}
+	return s, nil
 }

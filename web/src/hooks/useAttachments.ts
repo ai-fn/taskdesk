@@ -20,8 +20,22 @@ import { useAuth } from '@/hooks/useAuth'
 export const MULTIPART_THRESHOLD = 100 * 1024 * 1024
 // 10 MiB — must mirror freeMaxFileBytes in services/todo/internal/server/attachments.go
 export const FREE_MAX_FILE_BYTES = 10 * 1024 * 1024
-// 16 MiB per part
+// 16 MiB per part; only files above ~156 GiB need larger parts to stay within S3's 10000-part limit
 const PART_SIZE = 16 * 1024 * 1024
+const MAX_PARTS = 10_000
+const MIB = 1024 * 1024
+
+function partSizeFor(fileSize: number): number {
+  return Math.max(PART_SIZE, Math.ceil(fileSize / MAX_PARTS / MIB) * MIB)
+}
+
+// Fire-and-forget: frees the reservation (and aborts a multipart upload) after a failed transfer.
+// Never called once confirm/complete was sent, since the server may have committed despite a lost response.
+function discardUpload(taskId: string, attachmentId: string): void {
+  deleteAttachment(taskId, attachmentId).catch(() => {
+    // the server reaps abandoned uploads on its own
+  })
+}
 
 function extractErrorMessage(err: unknown): string {
   if (axios.isAxiosError(err)) {
@@ -71,7 +85,12 @@ export function useUploadAttachment(
           content_type: contentType,
           size_bytes: file.size,
         })
-        await putToStorage(upload_url, file, contentType, setProgress)
+        try {
+          await putToStorage(upload_url, file, contentType, setProgress)
+        } catch (err) {
+          discardUpload(taskId, attachment_id)
+          throw err
+        }
         return confirmAttachment(taskId, attachment_id)
       } else {
         // ── Multipart flow (pro only) ─────────────────────────────────────
@@ -84,7 +103,8 @@ export function useUploadAttachment(
           size_bytes: file.size,
         })
 
-        const totalParts = Math.ceil(file.size / PART_SIZE)
+        const partSize = partSizeFor(file.size)
+        const totalParts = Math.ceil(file.size / partSize)
         const partBytesLoaded = new Array<number>(totalParts).fill(0)
 
         const updateAggregateProgress = () => {
@@ -93,20 +113,24 @@ export function useUploadAttachment(
         }
 
         const parts: { part_number: number; etag: string }[] = []
-        for (let i = 0; i < totalParts; i++) {
-          const partNumber = i + 1
-          const start = i * PART_SIZE
-          const end = Math.min(start + PART_SIZE, file.size)
-          const blob = file.slice(start, end)
+        try {
+          for (let i = 0; i < totalParts; i++) {
+            const partNumber = i + 1
+            const start = i * partSize
+            const end = Math.min(start + partSize, file.size)
+            const blob = file.slice(start, end)
 
-          const { upload_url: partUrl } = await getPartURL(taskId, attachment_id, partNumber)
-          const etag = await putPart(partUrl, blob, (partPct) => {
-            partBytesLoaded[i] = Math.round((blob.size * partPct) / 100)
-            updateAggregateProgress()
-          })
-          parts.push({ part_number: partNumber, etag })
+            const { upload_url: partUrl } = await getPartURL(taskId, attachment_id, partNumber)
+            const etag = await putPart(partUrl, blob, (partPct) => {
+              partBytesLoaded[i] = Math.round((blob.size * partPct) / 100)
+              updateAggregateProgress()
+            })
+            parts.push({ part_number: partNumber, etag })
+          }
+        } catch (err) {
+          discardUpload(taskId, attachment_id)
+          throw err
         }
-
         return completeMultipart(taskId, attachment_id, parts)
       }
     },

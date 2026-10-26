@@ -2,13 +2,16 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
+	"strconv"
 
-	"github.com/go-chi/chi/v5"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
+	"github.com/go-chi/chi/v5"
 )
+
+// S3 allows at most 10000 parts per multipart upload.
+const maxMultipartParts = 10000
 
 // POST /api/v1/tasks/{taskID}/attachments/multipart/initiate
 func (h *AttachmentHandler) InitiateMultipart(w http.ResponseWriter, r *http.Request) {
@@ -16,21 +19,11 @@ func (h *AttachmentHandler) InitiateMultipart(w http.ResponseWriter, r *http.Req
 	taskID := chi.URLParam(r, "taskID")
 	plan := mw.SubscriptionPlanFromContext(r.Context())
 
-	var body struct {
-		Filename    string `json:"filename"`
-		ContentType string `json:"content_type"`
-		SizeBytes   int64  `json:"size_bytes"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		jsonError(w, "invalid JSON", http.StatusBadRequest)
+	if !h.allowUpload(w, userID) {
 		return
 	}
-	if body.Filename == "" {
-		jsonError(w, "filename is required", http.StatusBadRequest)
-		return
-	}
-	if body.SizeBytes <= 0 {
-		jsonError(w, "size_bytes must be positive", http.StatusBadRequest)
+	body, ok := decodeUploadBody(w, r)
+	if !ok {
 		return
 	}
 
@@ -54,12 +47,12 @@ func (h *AttachmentHandler) GetPartURL(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromContext(r.Context())
 	attID := chi.URLParam(r, "attachmentID")
 
-	var partNumber int32
-	fmt.Sscanf(chi.URLParam(r, "partNumber"), "%d", &partNumber)
-	if partNumber < 1 {
-		jsonError(w, "partNumber must be a positive integer", http.StatusBadRequest)
+	n, err := strconv.Atoi(chi.URLParam(r, "partNumber"))
+	if err != nil || n < 1 || n > maxMultipartParts {
+		jsonError(w, "partNumber must be between 1 and 10000", http.StatusBadRequest)
 		return
 	}
+	partNumber := int32(n)
 
 	resp, err := h.client.GetUploadPartURL(r.Context(), &todov1.GetUploadPartURLRequest{
 		UserId:       userID,
@@ -84,12 +77,13 @@ func (h *AttachmentHandler) CompleteMultipart(w http.ResponseWriter, r *http.Req
 			ETag       string `json:"etag"`
 		} `json:"parts"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxAttachmentBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if len(body.Parts) == 0 {
-		jsonError(w, "parts must not be empty", http.StatusBadRequest)
+	if len(body.Parts) == 0 || len(body.Parts) > maxMultipartParts {
+		jsonError(w, "parts must contain between 1 and 10000 entries", http.StatusBadRequest)
 		return
 	}
 

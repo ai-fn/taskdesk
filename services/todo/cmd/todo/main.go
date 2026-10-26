@@ -11,12 +11,12 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/fsociety/todo/pkg/blobstore"
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	pkgpgx "github.com/fsociety/todo/pkg/pgx"
-	"github.com/fsociety/todo/pkg/blobstore"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/todo/internal/outbox"
 	"github.com/fsociety/todo/services/todo/internal/reaper"
@@ -38,8 +38,13 @@ type Config struct {
 	BlobEndpoint  string `env:"BLOB_ENDPOINT"   default:"http://minio.data.svc.cluster.local:9000"`
 	BlobRegion    string `env:"BLOB_REGION"     default:"auto"`
 	BlobBucket    string `env:"BLOB_BUCKET"     default:"attachments"`
-	BlobAccessKey string `env:"BLOB_ACCESS_KEY" default:"minioadmin"`
-	BlobSecretKey string `env:"BLOB_SECRET_KEY" default:"minioadmin"`
+	BlobAccessKey string `env:"BLOB_ACCESS_KEY,required"`
+	BlobSecretKey string `env:"BLOB_SECRET_KEY,required"`
+	// Browser-reachable host for presigned URLs; empty = BlobEndpoint.
+	BlobPublicEndpoint string `env:"BLOB_PUBLIC_ENDPOINT" default:""`
+	// Dev only: create the bucket and set its CORS rules at startup (origins comma-separated).
+	BlobBootstrap   bool   `env:"BLOB_BOOTSTRAP"    default:"false"`
+	BlobCORSOrigins string `env:"BLOB_CORS_ORIGINS" default:"http://localhost:8080"`
 	pkgpgx.Config
 }
 
@@ -76,12 +81,19 @@ func main() {
 	defer producer.Close()
 
 	blob := blobstore.New(blobstore.Config{
-		Endpoint:  cfg.BlobEndpoint,
-		Region:    cfg.BlobRegion,
-		Bucket:    cfg.BlobBucket,
-		AccessKey: cfg.BlobAccessKey,
-		SecretKey: cfg.BlobSecretKey,
+		Endpoint:       cfg.BlobEndpoint,
+		PublicEndpoint: cfg.BlobPublicEndpoint,
+		Region:         cfg.BlobRegion,
+		Bucket:         cfg.BlobBucket,
+		AccessKey:      cfg.BlobAccessKey,
+		SecretKey:      cfg.BlobSecretKey,
 	})
+	if cfg.BlobBootstrap {
+		if err := blob.EnsureBucket(ctx, splitList(cfg.BlobCORSOrigins)); err != nil {
+			log.Error("bootstrap blob bucket", "err", err)
+			os.Exit(1)
+		}
+	}
 
 	st := store.New(pool)
 	pub := outbox.New(st, producer, log)
@@ -153,4 +165,15 @@ func main() {
 		wg.Wait()
 		os.Exit(1)
 	}
+}
+
+// splitList splits a comma-separated env value, trimming blanks and dropping empty entries.
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

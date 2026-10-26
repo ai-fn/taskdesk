@@ -218,6 +218,7 @@ k8s_yaml(kustomize('deploy/k8s/base/ai'))
 k8s_yaml(kustomize('deploy/k8s/base/scheduler'))
 k8s_yaml(kustomize('deploy/k8s/base/web'))
 k8s_yaml(kustomize('deploy/k8s/base/minio'))
+k8s_yaml(kustomize('deploy/k8s/base/clamav'))
 
 # ----------------------------------------------------------------------------
 # Monitoring (Prometheus + Grafana) — monitoring namespace
@@ -247,6 +248,7 @@ k8s_resource('web',                   labels=['web'])
 k8s_resource('prometheus',            labels=['monitoring'])
 k8s_resource('grafana',               labels=['monitoring'])
 k8s_resource('minio',                 labels=['data'])
+k8s_resource('clamav',                labels=['data'])
 
 # ----------------------------------------------------------------------------
 # ELK stack — monitoring namespace

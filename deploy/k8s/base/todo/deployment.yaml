@@ -40,9 +40,22 @@ spec:
             - name: BLOB_BUCKET
               value: "attachments"
             - name: BLOB_ACCESS_KEY
-              value: "minioadmin"
+              valueFrom:
+                secretKeyRef:
+                  name: blob-secret
+                  key: BLOB_ACCESS_KEY
             - name: BLOB_SECRET_KEY
-              value: "minioadmin"
+              valueFrom:
+                secretKeyRef:
+                  name: blob-secret
+                  key: BLOB_SECRET_KEY
+            # Browser-reachable MinIO (scripts/port-forwards.sh); presigned URLs are signed for this host.
+            - name: BLOB_PUBLIC_ENDPOINT
+              value: "http://localhost:9000"
+            - name: BLOB_BOOTSTRAP
+              value: "true"
+            - name: BLOB_CORS_ORIGINS
+              value: "http://localhost:8080,http://localhost:5173"
             - name: BLOB_REGION_LABEL
               value: "local"
           volumeMounts:

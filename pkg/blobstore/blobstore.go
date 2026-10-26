@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"strings"
 	"time"
 
@@ -24,8 +25,9 @@ type Store interface {
 	// PresignPut returns a URL the client can PUT to for up to ttl. The signed
 	// request pins Content-Type and Content-Length, so the store rejects any other size.
 	PresignPut(ctx context.Context, key, contentType string, size int64, ttl time.Duration) (string, error)
-	// PresignGet returns a short-lived download URL.
-	PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error)
+	// PresignGet returns a short-lived download URL that forces a download (Content-Disposition:
+	// attachment) and serves only allowlisted content types, anything else as octet-stream.
+	PresignGet(ctx context.Context, key, filename, contentType string, ttl time.Duration) (string, error)
 	// Head returns the stored object's size, or an error if it does not exist.
 	Head(ctx context.Context, key string) (int64, error)
 	// Delete removes the object (no error if already absent).
@@ -56,11 +58,14 @@ type CompletedPart struct {
 
 // Config configures an S3Store.
 type Config struct {
-	Endpoint  string `env:"BLOB_ENDPOINT"   default:"http://minio.data.svc.cluster.local:9000"`
-	Region    string `env:"BLOB_REGION"     default:"auto"`
-	Bucket    string `env:"BLOB_BUCKET"     default:"attachments"`
-	AccessKey string `env:"BLOB_ACCESS_KEY" default:"minioadmin"`
-	SecretKey string `env:"BLOB_SECRET_KEY" default:"minioadmin"`
+	Endpoint string `env:"BLOB_ENDPOINT" default:"http://minio.data.svc.cluster.local:9000"`
+	// PublicEndpoint is the host presigned URLs point at; it must be reachable by the browser
+	// (the in-cluster Endpoint is not). Empty = same as Endpoint.
+	PublicEndpoint string `env:"BLOB_PUBLIC_ENDPOINT" default:""`
+	Region         string `env:"BLOB_REGION"          default:"auto"`
+	Bucket         string `env:"BLOB_BUCKET"          default:"attachments"`
+	AccessKey      string `env:"BLOB_ACCESS_KEY,required"`
+	SecretKey      string `env:"BLOB_SECRET_KEY,required"`
 }
 
 // S3Store implements Store against any S3-compatible endpoint.
@@ -74,14 +79,44 @@ var _ Store = (*S3Store)(nil)
 
 // New builds an S3Store. UsePathStyle is required for MinIO and harmless for R2.
 func New(cfg Config) *S3Store {
-	client := s3.New(s3.Options{
-		BaseEndpoint: aws.String(cfg.Endpoint),
-		Region:       cfg.Region,
-		UsePathStyle: true,
-		Credentials: credentials.NewStaticCredentialsProvider(
-			cfg.AccessKey, cfg.SecretKey, ""),
+	newClient := func(endpoint string) *s3.Client {
+		return s3.New(s3.Options{
+			BaseEndpoint: aws.String(endpoint),
+			Region:       cfg.Region,
+			UsePathStyle: true,
+			Credentials:  credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, ""),
+		})
+	}
+	// A presigned signature covers the host, so URLs must be signed against the public endpoint.
+	public := cfg.PublicEndpoint
+	if public == "" {
+		public = cfg.Endpoint
+	}
+	return &S3Store{client: newClient(cfg.Endpoint), presign: s3.NewPresignClient(newClient(public)), bucket: cfg.Bucket}
+}
+
+// EnsureBucket creates the bucket if missing and applies a CORS policy that lets the browser PUT/GET
+// directly and read the ETag of each multipart part. Intended for dev/MinIO; prod buckets are provisioned.
+func (s *S3Store) EnsureBucket(ctx context.Context, origins []string) error {
+	_, err := s.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(s.bucket)})
+	var owned *types.BucketAlreadyOwnedByYou
+	if err != nil && !errors.As(err, &owned) {
+		return fmt.Errorf("create bucket: %w", err)
+	}
+	_, err = s.client.PutBucketCors(ctx, &s3.PutBucketCorsInput{
+		Bucket: aws.String(s.bucket),
+		CORSConfiguration: &types.CORSConfiguration{CORSRules: []types.CORSRule{{
+			AllowedOrigins: origins,
+			AllowedMethods: []string{"GET", "PUT"},
+			AllowedHeaders: []string{"*"},
+			ExposeHeaders:  []string{"ETag"},
+			MaxAgeSeconds:  aws.Int32(3600),
+		}}},
 	})
-	return &S3Store{client: client, presign: s3.NewPresignClient(client), bucket: cfg.Bucket}
+	if err != nil {
+		return fmt.Errorf("put bucket cors: %w", err)
+	}
+	return nil
 }
 
 func (s *S3Store) PresignPut(ctx context.Context, key, contentType string, size int64, ttl time.Duration) (string, error) {
@@ -97,10 +132,12 @@ func (s *S3Store) PresignPut(ctx context.Context, key, contentType string, size 
 	return req.URL, nil
 }
 
-func (s *S3Store) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
+func (s *S3Store) PresignGet(ctx context.Context, key, filename, contentType string, ttl time.Duration) (string, error) {
 	req, err := s.presign.PresignGetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
+		Bucket:                     aws.String(s.bucket),
+		Key:                        aws.String(key),
+		ResponseContentDisposition: aws.String(contentDisposition(filename)),
+		ResponseContentType:        aws.String(SafeDownloadType(contentType)),
 	}, s3.WithPresignExpires(ttl))
 	if err != nil {
 		return "", fmt.Errorf("presign get: %w", err)
@@ -205,4 +242,41 @@ func (s *S3Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 func Key(region, userID, taskID, attID, filename string) string {
 	safe := strings.NewReplacer(" ", "-", "/", "-").Replace(strings.TrimSpace(filename))
 	return fmt.Sprintf("%s/%s/%s/%s/%s", region, userID, taskID, attID, safe)
+}
+
+// safeTypes are served as-is; everything else (html, svg, xml, js, unknown) becomes octet-stream so a
+// stored file can never render as active content on the storage origin.
+var safeTypes = map[string]bool{
+	"application/pdf": true, "application/zip": true, "application/json": true,
+	"text/plain": true, "text/csv": true,
+	"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true, "image/avif": true,
+	"audio/mpeg": true, "audio/ogg": true, "audio/wav": true, "audio/mp4": true,
+	"video/mp4": true, "video/webm": true, "video/quicktime": true,
+}
+
+// SafeDownloadType returns the media type to serve a stored file with.
+func SafeDownloadType(contentType string) string {
+	mt, _, err := mime.ParseMediaType(contentType)
+	if err != nil || !safeTypes[mt] {
+		return "application/octet-stream"
+	}
+	return mt
+}
+
+// contentDisposition builds an attachment header with control characters stripped and non-ASCII
+// names RFC 2231-encoded.
+func contentDisposition(filename string) string {
+	clean := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, filename)
+	if clean == "" {
+		clean = "download"
+	}
+	if d := mime.FormatMediaType("attachment", map[string]string{"filename": clean}); d != "" {
+		return d
+	}
+	return "attachment"
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fsociety/todo/pkg/events"
+	"github.com/fsociety/todo/services/notification/internal/scanner"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -246,5 +247,74 @@ func TestBuildPlanEmail_UnknownLangFallsBackToEn(t *testing.T) {
 
 	if subject != subjectEn {
 		t.Errorf("unknown lang did not fall back: xx=%q en=%q", subject, subjectEn)
+	}
+}
+
+// ── scan policy ───────────────────────────────────────────────────────────────
+
+func sizedFileRecord(attID string, size int64) *kgo.Record {
+	payload, _ := json.Marshal(events.FileEvent{EventType: events.TypeFileUploaded, AttachmentID: attID, ObjectKey: "k/" + attID, SizeBytes: size})
+	return &kgo.Record{Topic: events.FileTopic, Value: payload}
+}
+
+func TestHandleFileUploaded_OverScanLimit_QuarantinedUnscanned(t *testing.T) {
+	upd := &fakeScanResultUpdater{}
+	blob := &fakeBlobGetter{data: []byte("x")}
+	h := (&Handler{
+		scanner:     &fakeScanner{clean: true}, // would approve if it were asked
+		blob:        blob,
+		scanUpdater: upd,
+		log:         slog.Default(),
+	}).WithScanLimit(100)
+
+	if err := h.handleFileUploaded(context.Background(), sizedFileRecord("big", 101)); err != nil {
+		t.Fatal(err)
+	}
+	if len(upd.calls) != 1 || upd.calls[0].status != events.ScanStatusQuarantined {
+		t.Fatalf("calls = %+v, want one quarantined verdict", upd.calls)
+	}
+
+	upd.calls = nil
+	if err := h.handleFileUploaded(context.Background(), sizedFileRecord("ok", 100)); err != nil {
+		t.Fatal(err)
+	}
+	if upd.calls[0].status != events.ScanStatusClean {
+		t.Errorf("an object at the limit must still be scanned, got %q", upd.calls[0].status)
+	}
+}
+
+func TestHandleFileUploaded_ClamdRefusesStream_Quarantined(t *testing.T) {
+	upd := &fakeScanResultUpdater{}
+	h := &Handler{
+		scanner:     &fakeScanner{err: scanner.ErrTooLarge},
+		blob:        &fakeBlobGetter{data: []byte("data")},
+		scanUpdater: upd,
+		log:         slog.Default(),
+	}
+	if err := h.handleFileUploaded(context.Background(), sizedFileRecord("a", 10)); err != nil {
+		t.Fatalf("a permanent refusal must not be retried: %v", err)
+	}
+	if len(upd.calls) != 1 || upd.calls[0].status != events.ScanStatusQuarantined {
+		t.Fatalf("calls = %+v, want quarantined", upd.calls)
+	}
+}
+
+func TestScanDeadline_GrowsWithSize(t *testing.T) {
+	if d := scanDeadline(0); d != scanBaseTimeout {
+		t.Errorf("empty object: %v", d)
+	}
+	if small, big := scanDeadline(1<<20), scanDeadline(8<<30); big <= small {
+		t.Errorf("deadline must grow with size: %v vs %v", small, big)
+	}
+}
+
+func TestFileTopicHasItsOwnConsumerGroup(t *testing.T) {
+	for _, topic := range Topics() {
+		if topic == events.FileTopic {
+			t.Errorf("Topics() must not include %q: it is consumed by the scan group", topic)
+		}
+	}
+	if got := ScanTopics(); len(got) != 1 || got[0] != events.FileTopic {
+		t.Errorf("ScanTopics() = %v", got)
 	}
 }

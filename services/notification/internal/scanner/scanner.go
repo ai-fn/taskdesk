@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +18,21 @@ const (
 	dialTimeout = 10 * time.Second
 	scanTimeout = 5 * time.Minute
 )
+
+// ErrTooLarge means clamd refused the stream because it exceeds its StreamMaxLength.
+var ErrTooLarge = errors.New("object exceeds clamd StreamMaxLength")
+
+// FromConfig builds the scanner for addr. An empty addr is only allowed when scanning is explicitly
+// disabled (dev); otherwise unscanned files would be approved silently, so it is an error.
+func FromConfig(addr string, disabled bool) (*Scanner, error) {
+	switch {
+	case addr != "":
+		return New(addr), nil
+	case disabled:
+		return nil, nil
+	}
+	return nil, errors.New("CLAMAV_ADDR is not set; set SCAN_DISABLED=true to approve files without scanning (dev only)")
+}
 
 // Scanner sends data to a running clamd over the INSTREAM TCP protocol.
 type Scanner struct {
@@ -32,8 +48,9 @@ func New(addr string) *Scanner {
 // Returns clean=true when no virus is found.
 // When a virus is detected, clean=false and virusName is populated.
 func (s *Scanner) Scan(ctx context.Context, r io.Reader) (clean bool, virusName string, err error) {
+	// The caller's deadline wins so it can scale with object size; scanTimeout is only the fallback.
 	deadline := time.Now().Add(scanTimeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+	if d, ok := ctx.Deadline(); ok {
 		deadline = d
 	}
 
@@ -55,10 +72,10 @@ func (s *Scanner) Scan(ctx context.Context, r io.Reader) (clean bool, virusName 
 		if n > 0 {
 			binary.BigEndian.PutUint32(hdr[:], uint32(n))
 			if _, err := conn.Write(hdr[:]); err != nil {
-				return false, "", fmt.Errorf("clamd write chunk header: %w", err)
+				return false, "", writeFailure(conn, "clamd write chunk header", err)
 			}
 			if _, err := conn.Write(buf[:n]); err != nil {
-				return false, "", fmt.Errorf("clamd write chunk body: %w", err)
+				return false, "", writeFailure(conn, "clamd write chunk body", err)
 			}
 		}
 		if readErr == io.EOF {
@@ -94,7 +111,19 @@ func (s *Scanner) Scan(ctx context.Context, r io.Reader) (clean bool, virusName 
 			name = strings.TrimSuffix(parts[1], " FOUND")
 		}
 		return false, name, nil
+	case strings.Contains(line, "size limit exceeded"):
+		return false, "", ErrTooLarge
 	default:
 		return false, "", fmt.Errorf("clamd unexpected response: %q", line)
 	}
+}
+
+// writeFailure wraps a write error. clamd closes the connection after replying "size limit exceeded",
+// so the reply is read back to tell that permanent refusal apart from a transient network error.
+func writeFailure(conn net.Conn, what string, err error) error {
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if line, rerr := bufio.NewReader(conn).ReadString('\n'); rerr == nil && strings.Contains(line, "size limit exceeded") {
+		return ErrTooLarge
+	}
+	return fmt.Errorf("%s: %w", what, err)
 }

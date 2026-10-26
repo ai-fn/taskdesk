@@ -32,6 +32,24 @@ spec:
               value: "mailpit.data.svc.cluster.local:1025"
             - name: SMTP_FROM
               value: "noreply@todo.local"
+            - name: TODO_ADDR
+              value: "todo.todo.svc.cluster.local:50052"
+            - name: BLOB_ENDPOINT
+              value: "http://minio.data.svc.cluster.local:9000"
+            - name: BLOB_BUCKET
+              value: "attachments"
+            - name: BLOB_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: blob-secret
+                  key: BLOB_ACCESS_KEY
+            - name: BLOB_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: blob-secret
+                  key: BLOB_SECRET_KEY
+            - name: CLAMAV_ADDR
+              value: "clamav.data.svc.cluster.local:3310"
             - name: SMTP_USER
               valueFrom:
                 secretKeyRef:

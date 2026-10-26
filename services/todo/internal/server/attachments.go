@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/fsociety/todo/pkg/blobstore"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
@@ -27,6 +29,11 @@ const (
 	multipartThreshold int64 = 100 << 20
 
 	planPro = "pro"
+
+	maxFilenameBytes    = 255
+	maxContentTypeBytes = 255
+	// Unfinished uploads a user may hold at once, on any plan.
+	maxPendingUploads = 100
 )
 
 // reserveError maps a ReserveAttachment failure to a gRPC status.
@@ -36,6 +43,8 @@ func (s *Server) reserveError(err error, op string) error {
 		return status.Error(codes.NotFound, "task not found")
 	case errors.Is(err, store.ErrQuotaExceeded):
 		return status.Error(codes.ResourceExhausted, "storage quota (1 GiB) exceeded for free plan")
+	case errors.Is(err, store.ErrTooManyPending):
+		return status.Errorf(codes.ResourceExhausted, "too many unfinished uploads (%d); finish or cancel some first", maxPendingUploads)
 	case errors.Is(err, store.ErrTaskAttachmentFull):
 		return status.Errorf(codes.ResourceExhausted, "task attachment limit (%d) reached for free plan", freeMaxFilesPerTask)
 	}
@@ -46,9 +55,26 @@ func (s *Server) reserveError(err error, op string) error {
 // limitsFor returns the reservation limits for a plan; anything but "pro" gets the free limits.
 func limitsFor(plan string) store.ReserveLimits {
 	if plan == planPro {
-		return store.ReserveLimits{}
+		return store.ReserveLimits{MaxPending: maxPendingUploads}
 	}
-	return store.ReserveLimits{MaxFilesPerTask: freeMaxFilesPerTask, QuotaBytes: freeUserQuotaBytes}
+	return store.ReserveLimits{MaxFilesPerTask: freeMaxFilesPerTask, QuotaBytes: freeUserQuotaBytes, MaxPending: maxPendingUploads}
+}
+
+// validateUpload rejects names and types that are unreasonably long or contain control characters.
+func validateUpload(filename, contentType string) error {
+	if len(filename) > maxFilenameBytes || len(contentType) > maxContentTypeBytes {
+		return status.Error(codes.InvalidArgument, "filename or content_type is too long")
+	}
+	if !utf8.ValidString(filename) || !utf8.ValidString(contentType) {
+		return status.Error(codes.InvalidArgument, "filename and content_type must be valid UTF-8")
+	}
+	for _, r := range filename + contentType {
+		// Rejects C0/C1 controls, line separators and bidi overrides (filename spoofing).
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' {
+			return status.Error(codes.InvalidArgument, "filename and content_type must not contain control characters")
+		}
+	}
+	return nil
 }
 
 func (s *Server) CreateAttachmentUploadURL(ctx context.Context, req *todov1.CreateAttachmentUploadURLRequest) (*todov1.CreateAttachmentUploadURLResponse, error) {
@@ -57,6 +83,9 @@ func (s *Server) CreateAttachmentUploadURL(ctx context.Context, req *todov1.Crea
 	}
 	if req.SizeBytes <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "size_bytes must be positive")
+	}
+	if err := validateUpload(req.Filename, req.ContentType); err != nil {
+		return nil, err
 	}
 
 	if req.Plan != planPro && req.SizeBytes > freeMaxFileBytes {
@@ -211,7 +240,7 @@ func (s *Server) GetAttachmentDownloadURL(ctx context.Context, req *todov1.GetAt
 		return nil, status.Error(codes.FailedPrecondition, "attachment is pending malware scan; try again shortly")
 	}
 
-	url, err := s.blob.PresignGet(ctx, att.ObjectKey, downloadURLTTL)
+	url, err := s.blob.PresignGet(ctx, att.ObjectKey, att.Filename, att.ContentType, downloadURLTTL)
 	if err != nil {
 		s.log.Error("presign get", "err", err)
 		return nil, status.Error(codes.Internal, "failed to generate download URL")

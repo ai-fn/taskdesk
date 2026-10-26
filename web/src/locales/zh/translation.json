@@ -395,6 +395,7 @@
     "empty": "暂无附件",
     "errorTooLargeFree": "文件超过免费版 {{max}} 限制",
     "errorNeedsPro": "超过 100 MB 的文件需要专业版",
+    "errorStorage": "上传失败：存储服务未返回分片校验值。请重试或联系支持。",
     "count_other": "{{count}} 个附件",
     "attachFiles": "附加文件",
     "attachedCount_other": "已附加 {{count}} 个文件",

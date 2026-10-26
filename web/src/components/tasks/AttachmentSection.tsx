@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import axios from 'axios'
 import { toBCP47 } from '@/i18n/config'
 import { formatBytes } from '@/lib/format'
+import { MISSING_ETAG } from '@/api/attachments'
 import { useAttachments, useUploadAttachment, useDeleteAttachment, useDownloadAttachment, MULTIPART_THRESHOLD, FREE_MAX_FILE_BYTES } from '@/hooks/useAttachments'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/Button'
@@ -61,10 +62,12 @@ export function AttachmentSection({ taskId, addToast }: Props) {
           setUploading((prev) => prev.filter((u) => u.filename !== file.name))
           if (axios.isAxiosError(err) && err.response?.data?.error) {
             addToast(err.response.data.error as string)
-          } else if (err instanceof Error && err.message !== '__needsPro__') {
-            addToast(err.message)
           } else if (err instanceof Error && err.message === '__needsPro__') {
             addToast(t('attachments.errorNeedsPro'))
+          } else if (err instanceof Error && err.message === MISSING_ETAG) {
+            addToast(t('attachments.errorStorage'))
+          } else if (err instanceof Error) {
+            addToast(err.message)
           }
         },
       })

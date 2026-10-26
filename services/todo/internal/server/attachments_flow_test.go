@@ -36,7 +36,7 @@ func (b *memBlob) PresignPut(_ context.Context, key, _ string, size int64, _ tim
 	b.presigned = append(b.presigned, size)
 	return "http://blob/" + key, nil
 }
-func (b *memBlob) PresignGet(_ context.Context, key string, _ time.Duration) (string, error) {
+func (b *memBlob) PresignGet(_ context.Context, key, _, _ string, _ time.Duration) (string, error) {
 	return "http://blob/get/" + key, nil
 }
 func (b *memBlob) Head(_ context.Context, key string) (int64, error) {
@@ -265,4 +265,33 @@ func TestListAttachments_BadPageToken(t *testing.T) {
 	seedTask(t, st, "u", "t1")
 	_, err := s.ListAttachments(t.Context(), &todov1.ListAttachmentsRequest{UserId: "u", TaskId: "t1", PageToken: strings.Repeat("x", 8)})
 	wantCode(t, err, codes.InvalidArgument)
+}
+
+func TestCreateUploadURL_RejectsBadNames(t *testing.T) {
+	s, st, _ := newFlowServer(t)
+	seedTask(t, st, "u", "t1")
+	for name, req := range map[string]*todov1.CreateAttachmentUploadURLRequest{
+		"long filename":   {UserId: "u", TaskId: "t1", Filename: strings.Repeat("a", 256), SizeBytes: 1, Plan: "pro"},
+		"newline in name": {UserId: "u", TaskId: "t1", Filename: "a\nb", SizeBytes: 1, Plan: "pro"},
+		"bidi override":   {UserId: "u", TaskId: "t1", Filename: "invoice\u202Efdp.exe", SizeBytes: 1, Plan: "pro"},
+		"C1 control":      {UserId: "u", TaskId: "t1", Filename: "a\u0085b", SizeBytes: 1, Plan: "pro"},
+		"invalid utf-8":   {UserId: "u", TaskId: "t1", Filename: "a\xffb", SizeBytes: 1, Plan: "pro"},
+		"control in type": {UserId: "u", TaskId: "t1", Filename: "a", ContentType: "text/plain\r\nX: 1", SizeBytes: 1, Plan: "pro"},
+	} {
+		if _, err := s.CreateAttachmentUploadURL(t.Context(), req); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%s: err = %v, want InvalidArgument", name, err)
+		}
+	}
+}
+
+func TestCreateUploadURL_ProIsBoundedByPendingCap(t *testing.T) {
+	s, st, _ := newFlowServer(t)
+	seedTask(t, st, "u", "t1")
+	for i := range maxPendingUploads {
+		if _, err := s.CreateAttachmentUploadURL(t.Context(), uploadReq("u", "t1", 1, "pro")); err != nil {
+			t.Fatalf("upload %d: %v", i, err)
+		}
+	}
+	_, err := s.CreateAttachmentUploadURL(t.Context(), uploadReq("u", "t1", 1, "pro"))
+	wantCode(t, err, codes.ResourceExhausted)
 }
