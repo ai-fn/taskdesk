@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fsociety/todo/pkg/events"
+	"github.com/fsociety/todo/services/notification/internal/mailer"
 	"github.com/redis/go-redis/v9"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -22,7 +24,7 @@ type fakeSender struct {
 	err  error
 }
 
-func (f *fakeSender) Send(to, subject, body string) error {
+func (f *fakeSender) Send(_ context.Context, to, subject, body string) error {
 	f.sent = append(f.sent, sentMail{to, subject, body})
 	return f.err
 }
@@ -109,14 +111,92 @@ func TestDailyPlan_EmailsTheEventAddress(t *testing.T) {
 	}
 }
 
-func TestTaskCompleted_MailFailureStillNotifiesInApp(t *testing.T) {
+func TestTaskCompleted_MailFailureIsRetriedWithoutToast(t *testing.T) {
 	h, mail, ps := newHandler()
 	mail.err = errors.New("smtp down")
-	if err := h.Handle(context.Background(), record(t, events.Topic, completed("alice@example.com"))); err != nil {
-		t.Fatalf("Handle = %v, want nil so the record is not retried and re-published", err)
+	if err := h.Handle(context.Background(), record(t, events.Topic, completed("alice@example.com"))); err == nil {
+		t.Fatal("Handle = nil, want the send error so the record is retried")
+	}
+	if len(ps.got) != 0 {
+		t.Errorf("redis publishes = %d, want 0: every retry would re-push the toast", len(ps.got))
+	}
+}
+
+func TestDailyPlan_MailFailureIsRetried(t *testing.T) {
+	h, mail, _ := newHandler()
+	mail.err = errors.New("smtp down")
+	ev := DailyPlanEvent{UserID: "u1", PlanID: "p1", GeneratedAt: time.Now(), Email: "bob@example.com"}
+	if err := h.Handle(context.Background(), record(t, DailyPlanTopic, ev)); err == nil {
+		t.Fatal("Handle = nil, want the send error")
+	}
+}
+
+func TestRefusedAddress_DroppedNotRetried(t *testing.T) {
+	refused := fmt.Errorf("smtp rcpt: %w", mailer.ErrRecipientRejected)
+
+	h, mail, ps := newHandler()
+	mail.err = refused
+	if err := h.Handle(context.Background(), record(t, events.Topic, completed("gone@example.com"))); err != nil {
+		t.Fatalf("task event: Handle = %v, want nil: retrying a refused address cannot succeed", err)
 	}
 	if len(ps.got) != 1 {
-		t.Errorf("redis publishes = %d, want 1", len(ps.got))
+		t.Errorf("redis publishes = %d, want 1: the in-app toast must still go out", len(ps.got))
+	}
+
+	h, mail, _ = newHandler()
+	mail.err = refused
+	if err := h.Handle(context.Background(), record(t, events.AuthEmailTopic, authEmail(time.Now(), 15))); err != nil {
+		t.Fatalf("auth email: Handle = %v, want nil", err)
+	}
+}
+
+func authEmail(at time.Time, mins int) events.AuthEmailEvent {
+	return events.AuthEmailEvent{UserID: "u1", Email: "alice@example.com", Purpose: events.PurposePasswordReset, Code: "123456", Language: "en", ExpiresMins: mins, OccurredAt: at}
+}
+
+func TestAuthEmail_SendFailureIsRetried(t *testing.T) {
+	h, mail, _ := newHandler()
+	mail.err = errors.New("smtp down")
+	if err := h.Handle(context.Background(), record(t, events.AuthEmailTopic, authEmail(time.Now(), 15))); err == nil {
+		t.Fatal("Handle = nil, want the send error so the OTP is not lost")
+	}
+}
+
+func TestAuthEmail_ExpiredCodeIsNotSent(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		at   time.Time
+		mins int
+		sent int
+	}{
+		{"fresh", now.Add(-5 * time.Minute), 15, 1},
+		{"expired", now.Add(-16 * time.Minute), 15, 0},
+		{"no timestamp", time.Time{}, 15, 1},
+		{"no lifetime", now.Add(-time.Hour), 0, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, mail, _ := newHandler()
+			h.now = func() time.Time { return now }
+			if err := h.Handle(context.Background(), record(t, events.AuthEmailTopic, authEmail(tc.at, tc.mins))); err != nil {
+				t.Fatal(err)
+			}
+			if len(mail.sent) != tc.sent {
+				t.Errorf("sent = %d, want %d", len(mail.sent), tc.sent)
+			}
+		})
+	}
+}
+
+func TestTopics_AuthMailHasItsOwnGroup(t *testing.T) {
+	for _, topic := range Topics() {
+		if topic == events.AuthEmailTopic {
+			t.Errorf("%s is in the shared topics: it would queue behind task traffic", topic)
+		}
+	}
+	if got := AuthTopics(); len(got) != 1 || got[0] != events.AuthEmailTopic {
+		t.Errorf("AuthTopics = %v", got)
 	}
 }
 

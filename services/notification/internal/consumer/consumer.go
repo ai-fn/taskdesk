@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"text/template"
@@ -27,11 +28,12 @@ type Handler struct {
 	mailer sender
 	redis  publisher
 	log    *slog.Logger
+	now    func() time.Time // nil = time.Now
 }
 
 // sender and publisher are the parts of *mailer.Mailer and *redis.Client used here; faked in tests.
 type sender interface {
-	Send(to, subject, body string) error
+	Send(ctx context.Context, to, subject, body string) error
 }
 
 type publisher interface {
@@ -42,21 +44,41 @@ func New(m *mailer.Mailer, rdb *redis.Client, log *slog.Logger) *Handler {
 	return &Handler{mailer: m, redis: rdb, log: log}
 }
 
+func (h *Handler) clock() time.Time {
+	if h.now != nil {
+		return h.now()
+	}
+	return time.Now()
+}
+
 // sendTo mails a verified address stamped on the event by its producer; empty means
-// the user has none, so only the in-app notification goes out.
-func (h *Handler) sendTo(email, userID, subject, body string) {
+// the user has none, so only the in-app notification goes out. A transient failure is
+// returned for retry; a refused address is dropped, as no retry can deliver it.
+func (h *Handler) sendTo(ctx context.Context, email, userID, subject, body string) error {
 	if email == "" {
 		h.log.Info("no verified email, skipping email", "user_id", userID)
-		return
+		return nil
 	}
-	if err := h.mailer.Send(email, subject, body); err != nil {
-		h.log.Error("send email", "user_id", userID, "err", err)
+	err := h.mailer.Send(ctx, email, subject, body)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, mailer.ErrRecipientRejected):
+		h.log.Warn("email address refused, dropping email", "user_id", userID, "err", err)
+		return nil
+	default:
+		return fmt.Errorf("send email: %w", err)
 	}
 }
 
-// Topics returns the list of topics this handler needs to subscribe to.
+// Topics are the task and plan topics, consumed in the main consumer group.
 func Topics() []string {
-	return []string{events.Topic, DailyPlanTopic, events.AuthEmailTopic}
+	return []string{events.Topic, DailyPlanTopic}
+}
+
+// AuthTopics are the OTP topics; their own group keeps slow task traffic from delaying codes.
+func AuthTopics() []string {
+	return []string{events.AuthEmailTopic}
 }
 
 // Handle dispatches based on topic.
@@ -124,7 +146,10 @@ func (h *Handler) handleTaskEvent(ctx context.Context, r *kgo.Record) error {
 	_ = tmpl.Subject.Execute(&subjectBuf, data)
 	_ = tmpl.Body.Execute(&bodyBuf, data)
 
-	h.sendTo(ev.Email, ev.UserID, subjectBuf.String(), bodyBuf.String())
+	// Mail first: a failed send retries the record, which must not re-push the toast each time.
+	if err := h.sendTo(ctx, ev.Email, ev.UserID, subjectBuf.String(), bodyBuf.String()); err != nil {
+		return err
+	}
 
 	// Push to Redis pub/sub so gateway WebSocket picks it up.
 	ev.Email = "" // the browser doesn't need it
@@ -196,7 +221,9 @@ func (h *Handler) handleDailyPlan(ctx context.Context, r *kgo.Record) error {
 	}
 
 	subject, body := buildPlanEmail(ev)
-	h.sendTo(ev.Email, ev.UserID, subject, body)
+	if err := h.sendTo(ctx, ev.Email, ev.UserID, subject, body); err != nil {
+		return err
+	}
 
 	// Push to Redis pub/sub so the SPA shows an in-app notification.
 	type wsNotification struct {
@@ -298,6 +325,12 @@ func (h *Handler) handleAuthEmail(ctx context.Context, r *kgo.Record) error {
 		return nil // poison pill — skip
 	}
 
+	// A code past its lifetime is useless; this also keeps a replayed topic from mailing old codes.
+	if ev.ExpiresMins > 0 && !ev.OccurredAt.IsZero() && h.clock().After(ev.OccurredAt.Add(time.Duration(ev.ExpiresMins)*time.Minute)) {
+		h.log.Warn("auth email expired before sending, dropping", "user_id", ev.UserID, "purpose", ev.Purpose)
+		return nil
+	}
+
 	tmpl := pickAuthEmailTmpl(ev.Purpose, ev.Language)
 	data := map[string]any{
 		"Code":        ev.Code,
@@ -308,8 +341,8 @@ func (h *Handler) handleAuthEmail(ctx context.Context, r *kgo.Record) error {
 	_ = tmpl.Subject.Execute(&subjectBuf, data)
 	_ = tmpl.Body.Execute(&bodyBuf, data)
 
-	if err := h.mailer.Send(ev.Email, subjectBuf.String(), bodyBuf.String()); err != nil {
-		h.log.Error("send auth email", "user_id", ev.UserID, "purpose", ev.Purpose, "err", err)
+	if err := h.sendTo(ctx, ev.Email, ev.UserID, subjectBuf.String(), bodyBuf.String()); err != nil {
+		return err
 	}
 
 	h.log.Info("auth email dispatched", "user_id", ev.UserID, "purpose", ev.Purpose)

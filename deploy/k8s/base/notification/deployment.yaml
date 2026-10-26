@@ -26,6 +26,8 @@ spec:
               value: "todo-kafka-bootstrap.data.svc.cluster.local:9092"
             - name: KAFKA_GROUP
               value: "notification-service"
+            - name: KAFKA_AUTH_GROUP
+              value: "notification-auth"
             - name: REDIS_ADDR
               value: "redis.data.svc.cluster.local:6379"
             - name: SMTP_ADDR
