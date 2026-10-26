@@ -17,6 +17,7 @@ import (
 	"github.com/fsociety/todo/pkg/i18n"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	"github.com/fsociety/todo/pkg/tokens"
+	"github.com/fsociety/todo/pkg/tz"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	"github.com/fsociety/todo/services/auth/internal/domain"
 	"github.com/fsociety/todo/services/auth/internal/password"
@@ -250,6 +251,7 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 			SessionId:        claims.SessionID,
 			Language:         lang,
 			SubscriptionPlan: "free",
+			TimeZone:         tz.Default,
 		}, nil
 	}
 	return &authv1.ValidateTokenResponse{
@@ -259,6 +261,7 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 		Language:         user.Language,
 		EmailVerified:    user.EmailVerified,
 		SubscriptionPlan: user.Plan,
+		TimeZone:         tz.Normalize(user.TimeZone),
 	}, nil
 }
 
@@ -331,6 +334,7 @@ func (s *Server) ListUserIDs(ctx context.Context, req *authv1.ListUserIDsRequest
 			Email:         u.Email,
 			Name:          u.Name,
 			Language:      u.Language,
+			TimeZone:      tz.Normalize(u.TimeZone),
 			EmailVerified: u.EmailVerified,
 			Plan:          u.Plan,
 		})
@@ -361,6 +365,7 @@ func (s *Server) GetUserByID(ctx context.Context, req *authv1.GetUserByIDRequest
 			Email:         u.Email,
 			Name:          u.Name,
 			Language:      u.Language,
+			TimeZone:      tz.Normalize(u.TimeZone),
 			EmailVerified: u.EmailVerified,
 			Plan:          u.Plan,
 		},
@@ -470,6 +475,25 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 		RefreshToken: refresh,
 		Created:      created,
 	}, nil
+}
+
+// ── UpdateUserTimeZone ────────────────────────────────────────────────────────
+
+func (s *Server) UpdateUserTimeZone(ctx context.Context, req *authv1.UpdateUserTimeZoneRequest) (*authv1.UpdateUserTimeZoneResponse, error) {
+	if req.UserId == "" || req.TimeZone == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and time_zone are required")
+	}
+	if !tz.Valid(req.TimeZone) {
+		return nil, status.Error(codes.InvalidArgument, "unknown time zone")
+	}
+	if err := s.store.UpdateUserTimeZone(ctx, req.UserId, req.TimeZone); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "user not found")
+		}
+		s.log.Error("update user time zone", "err", err)
+		return nil, status.Error(codes.Internal, "update time zone failed")
+	}
+	return &authv1.UpdateUserTimeZoneResponse{}, nil
 }
 
 // ── UpdateUserLanguage ────────────────────────────────────────────────────────

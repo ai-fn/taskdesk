@@ -79,5 +79,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.Info("scheduler done", "generated", res.Generated, "skipped", res.Skipped)
+	log.Info("scheduler done", "generated", res.Generated, "skipped", res.Skipped, "not_due", res.NotDue)
 }

@@ -74,6 +74,7 @@ type fakeAuthClient struct {
 	revokeSession       func(ctx context.Context, req *authv1.RevokeSessionRequest, opts ...grpc.CallOption) (*authv1.RevokeSessionResponse, error)
 	revokeOtherSessions func(ctx context.Context, req *authv1.RevokeOtherSessionsRequest, opts ...grpc.CallOption) (*authv1.RevokeOtherSessionsResponse, error)
 	updateUserLanguage  func(ctx context.Context, req *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error)
+	updateUserTimeZone  func(ctx context.Context, req *authv1.UpdateUserTimeZoneRequest, opts ...grpc.CallOption) (*authv1.UpdateUserTimeZoneResponse, error)
 	login               func(ctx context.Context, req *authv1.LoginRequest, opts ...grpc.CallOption) (*authv1.LoginResponse, error)
 	logout              func(ctx context.Context, req *authv1.LogoutRequest, opts ...grpc.CallOption) (*authv1.LogoutResponse, error)
 	refreshToken        func(ctx context.Context, req *authv1.RefreshTokenRequest, opts ...grpc.CallOption) (*authv1.RefreshTokenResponse, error)
@@ -164,6 +165,12 @@ func (f *fakeAuthClient) UpdateUserLanguage(ctx context.Context, in *authv1.Upda
 		return f.updateUserLanguage(ctx, in, opts...)
 	}
 	panic("fakeAuthClient.UpdateUserLanguage not configured")
+}
+func (f *fakeAuthClient) UpdateUserTimeZone(ctx context.Context, in *authv1.UpdateUserTimeZoneRequest, opts ...grpc.CallOption) (*authv1.UpdateUserTimeZoneResponse, error) {
+	if f.updateUserTimeZone != nil {
+		return f.updateUserTimeZone(ctx, in, opts...)
+	}
+	panic("fakeAuthClient.UpdateUserTimeZone not configured")
 }
 func (f *fakeAuthClient) OAuthSignIn(ctx context.Context, in *authv1.OAuthSignInRequest, opts ...grpc.CallOption) (*authv1.OAuthSignInResponse, error) {
 	panic("not used in handler tests")

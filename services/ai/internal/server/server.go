@@ -11,6 +11,7 @@ import (
 
 	pki18n "github.com/fsociety/todo/pkg/i18n"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
+	"github.com/fsociety/todo/pkg/tz"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/ai/internal/embedder"
@@ -76,11 +77,12 @@ func (s *Server) GeneratePlan(ctx context.Context, req *aiv1.GeneratePlanRequest
 	}
 
 	now := time.Now().UTC()
+	loc := tz.Load(req.TimeZone)
 	uc := planner.UserContext{
 		UserID:            req.UserId,
-		Today:             now.Format("2006-01-02"),
-		OpenTasks:         tasksToInput(listResp.Tasks),
-		RecentlyCompleted: tasksToInput(completedResp.Tasks),
+		Today:             localDate(now, loc),
+		OpenTasks:         tasksToInput(listResp.Tasks, loc),
+		RecentlyCompleted: tasksToInput(completedResp.Tasks, loc),
 	}
 
 	lang := pki18n.Normalize(req.Language)
@@ -118,7 +120,7 @@ func (s *Server) GeneratePlan(ctx context.Context, req *aiv1.GeneratePlanRequest
 			Rationale: it.Rationale,
 		}
 	}
-	if err := s.store.SavePlan(ctx, planID, req.UserId, plan.Summary, storeItems, now); err != nil {
+	if err := s.store.SavePlan(ctx, planID, req.UserId, plan.Summary, storeItems, now, loc); err != nil {
 		s.log.Error("save plan", "plan_id", planID, "err", err)
 		// Don't fail — still publish the event.
 	}
@@ -164,11 +166,12 @@ func (s *Server) GeneratePlanStream(req *aiv1.GeneratePlanRequest, stream aiv1.A
 	}
 
 	now := time.Now().UTC()
+	loc := tz.Load(req.TimeZone)
 	uc := planner.UserContext{
 		UserID:            req.UserId,
-		Today:             now.Format("2006-01-02"),
-		OpenTasks:         tasksToInput(listResp.Tasks),
-		RecentlyCompleted: tasksToInput(completedResp.Tasks),
+		Today:             localDate(now, loc),
+		OpenTasks:         tasksToInput(listResp.Tasks, loc),
+		RecentlyCompleted: tasksToInput(completedResp.Tasks, loc),
 	}
 
 	onText := func(delta string) {
@@ -213,7 +216,7 @@ func (s *Server) GeneratePlanStream(req *aiv1.GeneratePlanRequest, stream aiv1.A
 			Rationale: it.Rationale,
 		}
 	}
-	if err := s.store.SavePlan(ctx, planID, req.UserId, plan.Summary, storeItems, now); err != nil {
+	if err := s.store.SavePlan(ctx, planID, req.UserId, plan.Summary, storeItems, now, loc); err != nil {
 		s.log.Error("save plan (stream)", "plan_id", planID, "err", err)
 	}
 
@@ -301,8 +304,11 @@ func newPlanEvent(planID, userID, lang, email string, dp *aiv1.DailyPlan) DailyP
 	}
 }
 
-// tasksToInput converts proto tasks to the planner input shape.
-func tasksToInput(tasks []*todov1.Task) []planner.TaskInput {
+// localDate formats t as a calendar date in loc, the user's "today" for plans and parsing.
+func localDate(t time.Time, loc *time.Location) string { return t.In(loc).Format("2006-01-02") }
+
+// tasksToInput converts proto tasks to the planner input shape; due dates are calendar dates in loc.
+func tasksToInput(tasks []*todov1.Task, loc *time.Location) []planner.TaskInput {
 	out := make([]planner.TaskInput, 0, len(tasks))
 	for _, t := range tasks {
 		ti := planner.TaskInput{
@@ -314,7 +320,7 @@ func tasksToInput(tasks []*todov1.Task) []planner.TaskInput {
 			Tags:        t.Tags,
 		}
 		if t.DueAt != nil {
-			s := t.DueAt.AsTime().Format("2006-01-02")
+			s := localDate(t.DueAt.AsTime(), loc)
 			ti.DueAt = &s
 		}
 		out = append(out, ti)
@@ -346,12 +352,13 @@ func (s *Server) ParseTask(ctx context.Context, req *aiv1.ParseTaskRequest) (*ai
 		}}, nil
 	}
 
+	zone := tz.Normalize(req.TimeZone)
 	today := req.Today
 	if today == "" {
-		today = time.Now().UTC().Format("2006-01-02")
+		today = localDate(time.Now(), tz.Load(zone))
 	}
 
-	result, err := s.parser.Parse(ctx, req.Text, today, pki18n.Normalize(req.Language), req.ListNames)
+	result, err := s.parser.Parse(ctx, req.Text, today, zone, pki18n.Normalize(req.Language), req.ListNames)
 	if err != nil {
 		s.log.Error("parse task", "err", err)
 		return nil, status.Error(codes.Internal, "parse failed")
@@ -366,7 +373,7 @@ func (s *Server) ParseTask(ctx context.Context, req *aiv1.ParseTaskRequest) (*ai
 		Flagged:     result.Flagged,
 		Subtasks:    result.Subtasks,
 	}
-	if t := result.DueAtTime(); t != nil {
+	if t := result.DueAtTime(tz.Load(zone)); t != nil {
 		pt.DueAt = timestamppb.New(*t)
 	}
 

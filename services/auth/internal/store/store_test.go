@@ -525,6 +525,33 @@ func TestUpdateUserLanguage_NotFound(t *testing.T) {
 	}
 }
 
+func TestUpdateUserTimeZone_DefaultRoundTripAndNotFound(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("utz1", "tz1@example.com"))
+
+	got, err := s.GetUserByID(ctx, "utz1")
+	if err != nil || got.TimeZone != "UTC" {
+		t.Fatalf("default time zone = %q, err %v; want UTC", got.TimeZone, err)
+	}
+	for range 2 { // second call hits the unchanged-row path and must still succeed
+		if err := s.UpdateUserTimeZone(ctx, "utz1", "Asia/Shanghai"); err != nil {
+			t.Fatalf("UpdateUserTimeZone: %v", err)
+		}
+	}
+	got, _ = s.GetUserByID(ctx, "utz1")
+	if got.TimeZone != "Asia/Shanghai" {
+		t.Errorf("TimeZone = %q, want Asia/Shanghai", got.TimeZone)
+	}
+	users, _, err := s.ListUserSummaries(ctx, "", "", 10)
+	if err != nil || len(users) == 0 || users[0].TimeZone != "Asia/Shanghai" {
+		t.Errorf("ListUserSummaries time zone = %+v, err %v", users, err)
+	}
+	if err := s.UpdateUserTimeZone(ctx, "missing", "UTC"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("missing user: got %v, want ErrNotFound", err)
+	}
+}
+
 // ── Subscription source_ref uniqueness ────────────────────────────────────────
 
 func makeSub(id, userID, source, sourceRef string) *domain.Subscription {

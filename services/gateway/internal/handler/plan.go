@@ -71,6 +71,7 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		UserId:   userID,
 		Language: mw.LanguageFromContext(r.Context()),
 		Email:    mw.NotifyEmailFromContext(r.Context()),
+		TimeZone: mw.TimeZoneFromContext(r.Context()),
 	})
 	if err != nil {
 		writeSSEError(w, flusher, "could not start generation: "+err.Error())

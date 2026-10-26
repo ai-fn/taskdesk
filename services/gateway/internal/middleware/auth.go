@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fsociety/todo/pkg/tz"
 	"github.com/fsociety/todo/services/gateway/internal/auth"
 )
 
@@ -18,6 +19,7 @@ const (
 	ctxEmailVerified    contextKey = "email_verified"
 	ctxSessionID        contextKey = "session_id"
 	ctxLanguage         contextKey = "language"
+	ctxTimeZone         contextKey = "time_zone"
 	ctxSubscriptionPlan contextKey = "subscription_plan"
 )
 
@@ -67,6 +69,7 @@ func authenticate(verifier *auth.Verifier, allowQueryToken bool) func(http.Handl
 			ctx = context.WithValue(ctx, ctxEmailVerified, id.EmailVerified)
 			ctx = context.WithValue(ctx, ctxSessionID, id.SessionID)
 			ctx = context.WithValue(ctx, ctxLanguage, id.Language)
+			ctx = context.WithValue(ctx, ctxTimeZone, id.TimeZone)
 			ctx = context.WithValue(ctx, ctxSubscriptionPlan, plan)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -98,6 +101,12 @@ func NotifyEmailFromContext(ctx context.Context) string {
 func SessionIDFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(ctxSessionID).(string)
 	return v
+}
+
+// TimeZoneFromContext returns the authenticated user's IANA time zone ("UTC" if absent or invalid).
+func TimeZoneFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(ctxTimeZone).(string)
+	return tz.Normalize(v)
 }
 
 // LanguageFromContext returns the authenticated user's preferred language ("en" if absent).

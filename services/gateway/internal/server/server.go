@@ -191,6 +191,7 @@ func New(
 		r.Use(middleware.Authenticate(verifier))
 		r.Get("/me", account.Me)
 		r.Patch("/language", account.UpdateLanguage)
+		r.Patch("/time-zone", account.UpdateTimeZone)
 		r.Post("/email/verify/request", account.RequestEmailVerification)
 		r.With(confirmLimit).Post("/email/verify/confirm", account.ConfirmEmail)
 	})

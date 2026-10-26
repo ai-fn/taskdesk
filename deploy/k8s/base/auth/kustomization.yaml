@@ -40,5 +40,7 @@ configMapGenerator:
       - 000012_users_email_lowercase.down.sql
       - 000013_users_plan_id_index.up.sql
       - 000013_users_plan_id_index.down.sql
+      - 000014_users_time_zone.up.sql
+      - 000014_users_time_zone.down.sql
 generatorOptions:
   disableNameSuffixHash: true

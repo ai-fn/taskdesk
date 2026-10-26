@@ -274,6 +274,27 @@ func TestListTasks_TokenFollowsTheEffectivePageSize(t *testing.T) {
 	}
 }
 
+// A task due 12h from now is "today" in exactly one of two zones 12h apart, at any wall-clock
+// time, so a server that ignores the request zone cannot pass.
+func TestListTasks_DueTodayHonorsRequestTimeZone(t *testing.T) {
+	svc, _ := newServer(t)
+	ctx := context.Background()
+	due := timestamppb.New(time.Now().Add(12 * time.Hour))
+	if _, err := svc.CreateTask(ctx, &todov1.CreateTaskRequest{UserId: "u", Title: "t", DueAt: due}); err != nil {
+		t.Fatal(err)
+	}
+	count := func(zone string) int {
+		resp, err := svc.ListTasks(ctx, &todov1.ListTasksRequest{UserId: "u", DueTodayOnly: true, TimeZone: zone})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(resp.Tasks)
+	}
+	if utc, plus12 := count("UTC"), count("Etc/GMT-12"); utc+plus12 != 1 {
+		t.Errorf("task seen today in UTC=%d and UTC+12=%d zones; want exactly one", utc, plus12)
+	}
+}
+
 func TestUpdateTask_MaskedFieldsCanBeCleared(t *testing.T) {
 	svc, _ := newServer(t)
 	ctx := context.Background()

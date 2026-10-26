@@ -107,6 +107,7 @@ func (s *Server) ListTasks(ctx context.Context, req *todov1.ListTasksRequest) (*
 		IncludeDeleted: req.IncludeDeleted,
 		FlaggedOnly:    req.FlaggedOnly,
 		DueTodayOnly:   req.DueTodayOnly,
+		TimeZone:       req.TimeZone,
 		HasDueDate:     req.HasDueDate,
 		ExcludeBlocked: req.ExcludeBlocked,
 	}

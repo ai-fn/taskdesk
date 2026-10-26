@@ -3,8 +3,11 @@ package server
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
+	"github.com/fsociety/todo/pkg/tz"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
+	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -27,5 +30,20 @@ func TestNewPlanEvent_CarriesRecipient(t *testing.T) {
 	_ = json.Unmarshal(raw, &m)
 	if _, ok := m["email"]; ok {
 		t.Error("empty email must be omitted from the payload")
+	}
+}
+
+func TestLocalDateAndPlannerDueDates(t *testing.T) {
+	sh := tz.Load("Asia/Shanghai")
+	late := time.Date(2026, 5, 19, 18, 30, 0, 0, time.UTC) // 02:30 on the 20th in Shanghai
+	if got := localDate(late, sh); got != "2026-05-20" {
+		t.Errorf("localDate = %s, want 2026-05-20", got)
+	}
+	if got := localDate(late, time.UTC); got != "2026-05-19" {
+		t.Errorf("localDate(UTC) = %s, want 2026-05-19", got)
+	}
+	in := tasksToInput([]*todov1.Task{{Id: "a", DueAt: timestamppb.New(late)}}, sh)
+	if len(in) != 1 || in[0].DueAt == nil || *in[0].DueAt != "2026-05-20" {
+		t.Errorf("due date = %v, want 2026-05-20 in the user's zone", in)
 	}
 }

@@ -2,6 +2,7 @@ import { useRef, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toBCP47 } from '@/i18n/config'
+import { toDateTimeLocal } from '@/lib/dateTime'
 import type { Task, TaskList } from '@/types'
 import { Priority, Status } from '@/types'
 import { Input } from '@/components/ui/Input'
@@ -81,11 +82,7 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
       priority: task?.priority ?? prefill?.priority ?? Priority.UNSPECIFIED,
       status: task?.status ?? Status.TODO,
       tags: task?.tags?.join(', ') ?? prefill?.tags?.join(', ') ?? '',
-      due_at: task?.due_at
-        ? task.due_at.slice(0, 16)
-        : prefill?.due_at
-          ? prefill.due_at.slice(0, 16)
-          : '',
+      due_at: toDateTimeLocal(task?.due_at ?? prefill?.due_at ?? ''),
       list_id: task?.list_id ?? prefill?.list_id ?? defaultListId ?? '',
       flagged: task?.flagged ?? prefill?.flagged ?? false,
     },

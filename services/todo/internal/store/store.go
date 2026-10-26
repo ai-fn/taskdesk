@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fsociety/todo/pkg/tz"
 	"github.com/fsociety/todo/services/todo/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -161,6 +162,7 @@ type ListFilter struct {
 	FlaggedOnly    bool
 	IncludeDeleted bool // true = show ONLY soft-deleted; false = show only active
 	DueTodayOnly   bool
+	TimeZone       string // IANA zone deciding "today"; empty = UTC
 	HasDueDate     bool
 	ParentTaskID   *string // nil = root tasks only; set = subtasks of this parent
 	ExcludeBlocked bool    // true = omit tasks with any unfinished dependency
@@ -210,6 +212,17 @@ func NormalizePageSize(n int32) int32 {
 func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, error) {
 	f.PageSize = NormalizePageSize(f.PageSize)
 
+	zone := tz.Normalize(f.TimeZone)
+	tasks, err := s.listTasks(ctx, f, zone)
+	// Go's tzdata can be newer than Postgres's; degrade to UTC rather than fail the user's list.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "22023" && zone != tz.Default {
+		return s.listTasks(ctx, f, tz.Default)
+	}
+	return tasks, err
+}
+
+func (s *Store) listTasks(ctx context.Context, f ListFilter, zone string) ([]*domain.Task, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT `+taskListCols+`
 		`+taskListJoins+`
@@ -220,7 +233,7 @@ func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, er
 		  AND (CASE WHEN $7 THEN t.deleted_at IS NOT NULL ELSE t.deleted_at IS NULL END)
 		  AND ($8::text IS NULL OR t.list_id IS NOT DISTINCT FROM NULLIF($8, ''))
 		  AND (NOT $9::boolean OR t.flagged = TRUE)
-		  AND (NOT $10::boolean OR DATE(t.due_at AT TIME ZONE 'UTC') = CURRENT_DATE)
+		  AND (NOT $10::boolean OR (t.due_at AT TIME ZONE $14)::date = (now() AT TIME ZONE $14)::date)
 		  AND (NOT $11::boolean OR t.due_at IS NOT NULL)
 		  AND (CASE WHEN $12::text IS NULL THEN t.parent_task_id IS NULL
 		            ELSE t.parent_task_id = $12 END)
@@ -238,6 +251,7 @@ func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, er
 		f.HasDueDate,
 		f.ParentTaskID,
 		f.ExcludeBlocked,
+		zone,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)

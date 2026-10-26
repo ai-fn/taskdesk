@@ -162,6 +162,7 @@ message ListTasksRequest {
   bool   has_due_date    = 10;
   string parent_task_id  = 11; // when set: list subtasks of this task
   bool   exclude_blocked = 12; // if true, omit tasks with unfinished dependencies
+  string time_zone       = 13; // IANA name deciding "today" for due_today_only; empty = UTC
 }
 
 message ListUnembeddedTasksRequest {

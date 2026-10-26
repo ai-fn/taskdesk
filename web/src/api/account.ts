@@ -5,6 +5,7 @@ export interface Me {
   email: string
   name: string
   language: string
+  time_zone: string
   email_verified: boolean
 }
 
@@ -15,6 +16,10 @@ export async function getMe(): Promise<Me> {
 
 export async function updateLanguage(language: string): Promise<void> {
   await api.patch('/api/v1/account/language', { language })
+}
+
+export async function updateTimeZone(timeZone: string): Promise<void> {
+  await api.patch('/api/v1/account/time-zone', { time_zone: timeZone })
 }
 
 export async function requestEmailVerification(): Promise<void> {

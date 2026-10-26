@@ -53,6 +53,7 @@ func (h *TodoHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	if q.Get("due_today") == "true" {
 		req.DueTodayOnly = true
+		req.TimeZone = mw.TimeZoneFromContext(r.Context())
 	}
 	if q.Get("has_due_date") == "true" {
 		req.HasDueDate = true

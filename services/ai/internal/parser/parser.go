@@ -29,8 +29,9 @@ PRIORITY MAPPING:
 - "low", "minor", "someday", "eventually"       → low
 - nothing clear                                  → omit (unspecified)
 
-DATE PARSING: Use today's date for relative expressions ("next Friday", "tomorrow", "in 2 weeks").
-Return dates as ISO 8601: "YYYY-MM-DDTHH:MM:SSZ". Use midnight UTC if no time is specified.
+DATE PARSING: Use the given today (the user's local date) for relative expressions ("next Friday",
+"tomorrow", "in 2 weeks"). Return the local wall-clock time in the user's timezone as
+"YYYY-MM-DDTHH:MM:SS" with no UTC offset and no "Z". Use 00:00:00 if no time is specified.
 
 LIST MATCHING: If a project/list is mentioned, return its name exactly as given in available_lists
 (case-insensitive match). If no lists are provided or no match found, return the raw name mentioned.
@@ -66,18 +67,17 @@ func (p *ParsedTask) PriorityInt() int32 {
 	}
 }
 
-// DueAtTime parses DueAt into a time.Time. Returns nil if not set or unparseable.
-func (p *ParsedTask) DueAtTime() *time.Time {
+// DueAtTime parses DueAt into a time.Time. Offset-less values are read in loc, which applies the
+// right DST offset; an explicit offset is only a fallback. Returns nil if not set or unparseable.
+func (p *ParsedTask) DueAtTime(loc *time.Location) *time.Time {
 	if p.DueAt == "" {
 		return nil
 	}
-	formats := []string{
-		time.RFC3339,
-		"2006-01-02T15:04:05Z",
-		"2006-01-02",
+	if t, err := time.Parse(time.RFC3339, p.DueAt); err == nil {
+		return &t
 	}
-	for _, f := range formats {
-		if t, err := time.Parse(f, p.DueAt); err == nil {
+	for _, f := range []string{"2006-01-02T15:04:05", "2006-01-02"} {
+		if t, err := time.ParseInLocation(f, p.DueAt, loc); err == nil {
 			return &t
 		}
 	}
@@ -113,15 +113,15 @@ func languageDirective(lang string) string {
 	return languageDirectives["en"]
 }
 
+func userMessage(text, today, zone, lang string, listNames []string) string {
+	return fmt.Sprintf("today: %s\ntimezone: %s\navailable_lists: %s\n\nTask description:\n%s\n\n%s",
+		today, zone, strings.Join(listNames, ", "), text, languageDirective(lang))
+}
+
 // Parse calls Claude to extract structured task fields from free text.
 // lang steers output language without touching the cached system-prompt block.
-func (p *Parser) Parse(ctx context.Context, text, today, lang string, listNames []string) (*ParsedTask, error) {
-	userMsg := fmt.Sprintf("today: %s\navailable_lists: %s\n\nTask description:\n%s\n\n%s",
-		today,
-		strings.Join(listNames, ", "),
-		text,
-		languageDirective(lang),
-	)
+func (p *Parser) Parse(ctx context.Context, text, today, zone, lang string, listNames []string) (*ParsedTask, error) {
+	userMsg := userMessage(text, today, zone, lang, listNames)
 
 	resp, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeSonnet4_6,
@@ -151,7 +151,7 @@ func (p *Parser) Parse(ctx context.Context, text, today, lang string, listNames 
 							},
 							"due_at": map[string]any{
 								"type":        "string",
-								"description": "ISO 8601 due date/time, e.g. 2026-05-23T00:00:00Z",
+								"description": "Local due date/time without UTC offset, e.g. 2026-05-23T00:00:00",
 							},
 							"list_name": map[string]any{
 								"type":        "string",

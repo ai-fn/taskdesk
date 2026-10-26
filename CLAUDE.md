@@ -42,7 +42,7 @@ Auth, users, JWTs. Owns `auth.*` schema.
 **Password policy:** `services/auth/internal/password` — `Validate(pw)` called in `SignUp` before bcrypt. Scoring rules intentionally mirror `web/src/lib/passwordStrength.ts` so the strength bar the user sees matches server enforcement.
 
 **DB tables:**
-- `auth.users` — id, email, name, password_hash (argon2id), created_at, updated_at
+- `auth.users` — id, email, name, password_hash (argon2id), language, time_zone (IANA, default `UTC`; drives "today" and plan timing), created_at, updated_at
 - `auth.refresh_tokens` — token_hash, user_id, expires_at, created_at
 
 ---

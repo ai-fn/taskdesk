@@ -1,10 +1,13 @@
-import { createContext, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import { planKeys, taskKeys } from '@/api/queryKeys'
 import * as authApi from '@/api/auth'
 import * as accountApi from '@/api/account'
 import * as subscriptionApi from '@/api/subscription'
 import { setToken, setOnUnauthenticated } from '@/api/client'
 import i18n from '@/i18n/config'
+import { browserTimeZone } from '@/lib/dateTime'
 
 // Decode the JWT payload (display-only — never used for auth decisions).
 function jwtEmail(token: string): string | null {
@@ -15,6 +18,13 @@ function jwtEmail(token: string): string | null {
   } catch {
     return null
   }
+}
+
+// Keeps the account zone (server-side "today", plan timing) in step with the browser.
+function syncTimeZone(current: string | undefined, onChanged: () => void): void {
+  const zone = browserTimeZone()
+  if (!zone || zone === current) return
+  accountApi.updateTimeZone(zone).then(onChanged).catch(() => { /* non-fatal: the old zone stays */ })
 }
 
 interface AuthState {
@@ -47,6 +57,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     plan: 'free',
   })
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  // Fetches that raced the zone update used the old zone; refetch them.
+  const syncZone = useCallback((current?: string) => syncTimeZone(current, () => {
+    void queryClient.invalidateQueries({ queryKey: taskKeys.all })
+    void queryClient.invalidateQueries({ queryKey: planKeys.latest() })
+  }), [queryClient])
   // Avoid registering navigate on every render
   const navigateRef = useRef(navigate)
   navigateRef.current = navigate
@@ -75,6 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Reconcile language + email_verified from DB.
         accountApi.getMe().then((me) => {
           if (me.language && me.language !== i18n.language) i18n.changeLanguage(me.language)
+          syncZone(me.time_zone)
           setState((s) => ({ ...s, emailVerified: me.email_verified }))
         }).catch(() => { /* non-fatal */ })
         fetchPlan()
@@ -82,7 +99,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {
         setState({ accessToken: null, userId: null, email: null, emailVerified: false, isInitializing: false, plan: 'free' })
       })
-  }, [])
+  }, [syncZone])
 
   async function login(email: string, password: string) {
     const res = await authApi.login(email, password)
@@ -90,6 +107,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), emailVerified: false, isInitializing: false, plan: 'free' })
     accountApi.getMe().then((me) => {
       if (me.language && me.language !== i18n.language) i18n.changeLanguage(me.language)
+      syncZone(me.time_zone)
       setState((s) => ({ ...s, emailVerified: me.email_verified }))
     }).catch(() => { /* non-fatal */ })
     fetchPlan()
@@ -99,6 +117,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const res = await authApi.signup(email, password, name)
     setToken(res.access_token)
     setState({ accessToken: res.access_token, userId: res.user_id, email: jwtEmail(res.access_token), emailVerified: false, isInitializing: false, plan: 'free' })
+    syncZone()
     // New signups start on free plan — no need to fetch
   }
 

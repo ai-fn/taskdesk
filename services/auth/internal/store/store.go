@@ -70,11 +70,11 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*domain.User,
 	var u domain.User
 	email = NormalizeEmail(email)
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at
+		SELECT id, email, name, password_hash, language, time_zone, email_verified, plan, stripe_customer_id, created_at, updated_at
 		FROM auth.users WHERE lower(email) = $1
 		ORDER BY (email = $1) DESC, created_at
 		LIMIT 1`, email,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.TimeZone, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -87,9 +87,9 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*domain.User,
 func (s *Store) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at
+		SELECT id, email, name, password_hash, language, time_zone, email_verified, plan, stripe_customer_id, created_at, updated_at
 		FROM auth.users WHERE id = $1`, id,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.TimeZone, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -232,15 +232,15 @@ func (s *Store) RevokeOtherSessions(ctx context.Context, userID, currentSessionI
 
 // UserSummary is the listing view of a user: no credentials or billing ids.
 type UserSummary struct {
-	ID, Email, Name, Language, Plan string
-	EmailVerified                   bool
+	ID, Email, Name, Language, TimeZone, Plan string
+	EmailVerified                             bool
 }
 
 // ListUserSummaries returns up to limit users with id > afterID in id order, optionally filtered
 // by plan ("" = all), plus whether more remain. Used by the scheduler and AI backfills.
 func (s *Store) ListUserSummaries(ctx context.Context, planFilter, afterID string, limit int) ([]UserSummary, bool, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT id, email, name, language, email_verified, plan
+		SELECT id, email, name, language, time_zone, email_verified, plan
 		FROM auth.users
 		WHERE id > $1 AND ($2 = '' OR plan = $2)
 		ORDER BY id
@@ -253,7 +253,7 @@ func (s *Store) ListUserSummaries(ctx context.Context, planFilter, afterID strin
 	users := make([]UserSummary, 0, limit)
 	for rows.Next() {
 		var u UserSummary
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Language, &u.EmailVerified, &u.Plan); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Language, &u.TimeZone, &u.EmailVerified, &u.Plan); err != nil {
 			return nil, false, fmt.Errorf("scan user: %w", err)
 		}
 		users = append(users, u)
@@ -297,6 +297,27 @@ func (s *Store) UpdateUserLanguage(ctx context.Context, userID, lang string) err
 	return nil
 }
 
+// UpdateUserTimeZone sets the IANA time zone for the given user; callers validate it.
+func (s *Store) UpdateUserTimeZone(ctx context.Context, userID, zone string) error {
+	tag, err := s.db.Exec(ctx, `
+		UPDATE auth.users SET time_zone = $2, updated_at = now() WHERE id = $1 AND time_zone IS DISTINCT FROM $2`,
+		userID, zone,
+	)
+	if err != nil {
+		return fmt.Errorf("update user time zone: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		var exists bool
+		if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM auth.users WHERE id = $1)`, userID).Scan(&exists); err != nil {
+			return fmt.Errorf("update user time zone: %w", err)
+		}
+		if !exists {
+			return ErrNotFound
+		}
+	}
+	return nil
+}
+
 // ── OAuth identities ──────────────────────────────────────────────────────────
 
 // CreateUserNoPassword inserts an OAuth-only user (password_hash NULL).
@@ -329,12 +350,12 @@ func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error 
 func (s *Store) FindByOAuth(ctx context.Context, provider, providerUserID string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT u.id, u.email, u.name, u.password_hash, u.language, u.email_verified, u.plan, u.stripe_customer_id, u.created_at, u.updated_at
+		SELECT u.id, u.email, u.name, u.password_hash, u.language, u.time_zone, u.email_verified, u.plan, u.stripe_customer_id, u.created_at, u.updated_at
 		FROM auth.oauth_identities oi
 		JOIN auth.users u ON u.id = oi.user_id
 		WHERE oi.provider = $1 AND oi.provider_user_id = $2`,
 		provider, providerUserID,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.TimeZone, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -564,9 +585,9 @@ func (s *Store) SetStripeCustomerIDIfUnset(ctx context.Context, userID, customer
 func (s *Store) GetUserByStripeCustomerID(ctx context.Context, customerID string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at
+		SELECT id, email, name, password_hash, language, time_zone, email_verified, plan, stripe_customer_id, created_at, updated_at
 		FROM auth.users WHERE stripe_customer_id = $1`, customerID,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.TimeZone, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

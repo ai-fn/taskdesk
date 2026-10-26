@@ -37,6 +37,8 @@ service AuthService {
   rpc RevokeOtherSessions(RevokeOtherSessionsRequest) returns (RevokeOtherSessionsResponse);
   // UpdateUserLanguage sets the user's preferred UI language.
   rpc UpdateUserLanguage(UpdateUserLanguageRequest) returns (UpdateUserLanguageResponse);
+  // UpdateUserTimeZone sets the user's IANA time zone ("today" boundaries, plan timing).
+  rpc UpdateUserTimeZone(UpdateUserTimeZoneRequest) returns (UpdateUserTimeZoneResponse);
   // RequestPasswordReset sends a one-time code to the user's email.
   // Always returns OK regardless of whether the email exists (no enumeration).
   rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
@@ -151,6 +153,7 @@ message ValidateTokenResponse {
   string language           = 4;
   bool   email_verified     = 5;
   string subscription_plan  = 6; // "free" | "pro"
+  string time_zone          = 7; // IANA name; "UTC" when unset
 }
 
 // ── ListUserIDs ───────────────────────────────────────────────────────────────
@@ -162,6 +165,7 @@ message UserSummary {
   string language       = 4;
   bool   email_verified = 5;
   string plan           = 6; // "free" | "pro"
+  string time_zone      = 7; // IANA name
 }
 
 message ListUserIDsRequest {
@@ -261,6 +265,15 @@ message UpdateUserLanguageRequest {
 }
 
 message UpdateUserLanguageResponse {}
+
+// ── UpdateUserTimeZone ────────────────────────────────────────────────────────
+
+message UpdateUserTimeZoneRequest {
+  string user_id   = 1;
+  string time_zone = 2; // IANA name, e.g. "Asia/Shanghai"
+}
+
+message UpdateUserTimeZoneResponse {}
 
 // ── RequestPasswordReset ──────────────────────────────────────────────────────
 

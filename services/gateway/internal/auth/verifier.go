@@ -55,6 +55,7 @@ func (e *UnavailableError) Unwrap() error { return e.Err }
 // Profile is the per-user data denormalized from auth-service.
 type Profile struct {
 	Language      string
+	TimeZone      string
 	Plan          string
 	EmailVerified bool
 }
@@ -216,6 +217,7 @@ func (v *Verifier) profile(ctx context.Context, userID string) (Profile, error) 
 		}
 		return Profile{
 			Language:      resp.User.Language,
+			TimeZone:      resp.User.TimeZone,
 			Plan:          resp.User.Plan,
 			EmailVerified: resp.User.EmailVerified,
 		}, nil

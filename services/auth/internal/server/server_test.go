@@ -540,6 +540,48 @@ func TestUpdateUserLanguage_MissingFields(t *testing.T) {
 	}
 }
 
+// ── UpdateUserTimeZone ────────────────────────────────────────────────────────
+
+func TestUpdateUserTimeZone_FlowsThroughValidateGetAndList(t *testing.T) {
+	svc, _ := newServer(t)
+	ctx := context.Background()
+	su := signUp(t, svc, "tz@test.com", "Passw0rd1", "Tz User")
+
+	if _, err := svc.UpdateUserTimeZone(ctx, &authv1.UpdateUserTimeZoneRequest{UserId: su.UserId, TimeZone: "Asia/Shanghai"}); err != nil {
+		t.Fatalf("UpdateUserTimeZone: %v", err)
+	}
+	v, err := svc.ValidateToken(ctx, &authv1.ValidateTokenRequest{AccessToken: su.AccessToken})
+	if err != nil || v.TimeZone != "Asia/Shanghai" {
+		t.Errorf("ValidateToken time zone = %q, err %v", v.GetTimeZone(), err)
+	}
+	g, err := svc.GetUserByID(ctx, &authv1.GetUserByIDRequest{UserId: su.UserId})
+	if err != nil || g.User.TimeZone != "Asia/Shanghai" {
+		t.Errorf("GetUserByID time zone = %q, err %v", g.GetUser().GetTimeZone(), err)
+	}
+	l, err := svc.ListUserIDs(ctx, &authv1.ListUserIDsRequest{})
+	if err != nil || len(l.Users) != 1 || l.Users[0].TimeZone != "Asia/Shanghai" {
+		t.Errorf("ListUserIDs = %+v, err %v", l, err)
+	}
+}
+
+func TestUpdateUserTimeZone_Invalid(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "tz2@test.com", "Passw0rd1", "Tz User 2")
+	for _, req := range []*authv1.UpdateUserTimeZoneRequest{
+		{},
+		{UserId: su.UserId},
+		{UserId: su.UserId, TimeZone: "Mars/Olympus"},
+		{UserId: su.UserId, TimeZone: "Local"},
+	} {
+		if _, err := svc.UpdateUserTimeZone(context.Background(), req); grpcCode(err) != codes.InvalidArgument {
+			t.Errorf("%+v: expected InvalidArgument, got %v", req, err)
+		}
+	}
+	if _, err := svc.UpdateUserTimeZone(context.Background(), &authv1.UpdateUserTimeZoneRequest{UserId: "ghost", TimeZone: "UTC"}); grpcCode(err) != codes.NotFound {
+		t.Errorf("unknown user: expected NotFound, got %v", err)
+	}
+}
+
 func TestOAuthSignIn_EmailMatch(t *testing.T) {
 	svc, _ := newServer(t)
 	su := signUp(t, svc, "m@test.com", "Passw0rd", "Mia")

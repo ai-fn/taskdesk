@@ -6,6 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/fsociety/todo/pkg/tz"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
 )
@@ -76,10 +77,12 @@ func (h *ParseHandler) Parse(w http.ResponseWriter, r *http.Request) {
 
 	userID := mw.UserIDFromContext(r.Context())
 
+	zone := mw.TimeZoneFromContext(r.Context())
 	resp, err := h.aiClient.ParseTask(r.Context(), &aiv1.ParseTaskRequest{
 		UserId:    userID,
 		Text:      body.Text,
-		Today:     time.Now().UTC().Format("2006-01-02"),
+		Today:     time.Now().In(tz.Load(zone)).Format("2006-01-02"),
+		TimeZone:  zone,
 		ListNames: body.ListNames,
 		Language:  mw.LanguageFromContext(r.Context()),
 	})
