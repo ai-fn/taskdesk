@@ -41,7 +41,7 @@ func New(
 
 	r.Use(chimw.Recoverer)
 	r.Use(accessLog(log))
-	r.Use(pkgmetrics.HTTPMiddleware)
+	r.Use(pkgmetrics.HTTPMiddleware(middleware.RoutePattern))
 
 	// Per-pod limiters (not shared across replicas); stopped by cleanup.
 	var limiters []*handler.RateLimiter
