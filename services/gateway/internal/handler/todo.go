@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -70,9 +71,7 @@ func (h *TodoHandler) List(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
-	if mw.SubscriptionPlanFromContext(r.Context()) != "pro" {
-		stripCompletionScore(resp.Tasks)
-	}
+	stripUnlessPro(r, resp.Tasks...)
 	protoOK(w, resp)
 }
 
@@ -118,6 +117,7 @@ func (h *TodoHandler) Create(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
+	stripUnlessPro(r, resp.Task)
 	protoStatus(w, resp.Task, http.StatusCreated)
 }
 
@@ -134,9 +134,7 @@ func (h *TodoHandler) Get(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
-	if mw.SubscriptionPlanFromContext(r.Context()) != "pro" {
-		stripCompletionScore([]*todov1.Task{resp.Task})
-	}
+	stripUnlessPro(r, resp.Task)
 	protoOK(w, resp.Task)
 }
 
@@ -204,6 +202,7 @@ func (h *TodoHandler) Update(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
+	stripUnlessPro(r, resp.Task)
 	protoOK(w, resp.Task)
 }
 
@@ -238,6 +237,7 @@ func (h *TodoHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
+	stripUnlessPro(r, resp.Task)
 	protoOK(w, resp.Task)
 }
 
@@ -254,6 +254,7 @@ func (h *TodoHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
+	stripUnlessPro(r, resp.Task)
 	protoOK(w, resp.Task)
 }
 
@@ -295,6 +296,7 @@ func (h *TodoHandler) AddDependency(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
+	stripUnlessPro(r, resp.Task)
 	protoOK(w, resp.Task)
 }
 
@@ -316,11 +318,21 @@ func (h *TodoHandler) RemoveDependency(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// stripUnlessPro applies stripCompletionScore to every task a response carries; a missing plan means free.
+func stripUnlessPro(r *http.Request, tasks ...*todov1.Task) {
+	if mw.SubscriptionPlanFromContext(r.Context()) != "pro" {
+		stripCompletionScore(tasks)
+	}
+}
+
 // stripCompletionScore zeroes both score and insight fields for non-pro users.
 // Neither value reaches the client — score=0 and insight="" regardless of
 // what is stored in the DB.
 func stripCompletionScore(tasks []*todov1.Task) {
 	for _, t := range tasks {
+		if t == nil {
+			continue
+		}
 		t.CompletionScore = 0
 		t.CompletionInsight = ""
 	}
@@ -339,6 +351,7 @@ func (h *TodoHandler) ListDependencies(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
+	stripUnlessPro(r, append(slices.Clone(resp.DependsOn), resp.Blocking...)...)
 	protoOK(w, resp)
 }
 
@@ -356,5 +369,10 @@ func (h *TodoHandler) GetDependencyTree(w http.ResponseWriter, r *http.Request) 
 		handleGRPCError(w, err)
 		return
 	}
+	tasks := []*todov1.Task{resp.Root}
+	for _, n := range slices.Concat(resp.DependsOn, resp.Blocking) {
+		tasks = append(tasks, n.Task)
+	}
+	stripUnlessPro(r, tasks...)
 	protoOK(w, resp)
 }

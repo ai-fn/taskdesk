@@ -35,8 +35,7 @@
       "forgotPassword": "Forgot password?",
       "emailRequired": "Email is required",
       "passwordRequired": "Password is required",
-      "invalidCredentials": "Email or password is incorrect.",
-      "oauthAccount": "This account uses social sign-in. Please use Google or Discord to log in.",
+      "invalidCredentials": "Email or password is incorrect. If you signed up with Google or Discord, use that button instead.",
       "tooManyRequests": "Too many attempts. Please wait before trying again.",
       "failed": "Login failed. Please try again."
     },

@@ -200,6 +200,21 @@ func TestLogin_OAuthOnlyUser(t *testing.T) {
 	if grpcCode(err) != codes.Unauthenticated {
 		t.Errorf("OAuth-only login: want Unauthenticated, got %v", err)
 	}
+
+	// Indistinguishable from an unknown email: same message, and bcrypt still runs.
+	_, ghost := svc.Login(context.Background(), &authv1.LoginRequest{Email: "ghost@test.com", Password: "anything"})
+	if status.Convert(err).Message() != status.Convert(ghost).Message() {
+		t.Errorf("OAuth-only message %q differs from unknown-email message %q", status.Convert(err).Message(), status.Convert(ghost).Message())
+	}
+}
+
+func TestLogin_UnknownEmailStillPaysForBcrypt(t *testing.T) {
+	svc, _ := newServer(t)
+	start := time.Now()
+	_, _ = svc.Login(context.Background(), &authv1.LoginRequest{Email: "nobody@test.com", Password: "Passw0rd1"})
+	if d := time.Since(start); d < 10*time.Millisecond {
+		t.Errorf("unknown-email login took %v; the dummy bcrypt compare is missing", d)
+	}
 }
 
 // ── RefreshToken ──────────────────────────────────────────────────────────────
@@ -1191,5 +1206,15 @@ func TestListUserIDs_PagesCoverEveryUserOnce(t *testing.T) {
 
 	if resp, err := svc.ListUserIDs(context.Background(), &authv1.ListUserIDsRequest{}); err != nil || len(resp.Users) != 5 || resp.NextPageToken != "" {
 		t.Errorf("default page: %d users, token %q, err %v; want all 5 and no token", len(resp.Users), resp.NextPageToken, err)
+	}
+}
+
+func TestRequestPasswordReset_CooldownLooksLikeUnknownEmail(t *testing.T) {
+	svc, _ := newServer(t)
+	signUp(t, svc, "cool@test.com", "Passw0rd1", "Cool")
+	for i := 0; i < 2; i++ { // the second call is inside the resend cooldown
+		if _, err := svc.RequestPasswordReset(context.Background(), &authv1.RequestPasswordResetRequest{Email: "cool@test.com"}); err != nil {
+			t.Fatalf("call %d: %v", i+1, err)
+		}
 	}
 }

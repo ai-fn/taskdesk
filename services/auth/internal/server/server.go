@@ -125,25 +125,33 @@ func (s *Server) SignUp(ctx context.Context, req *authv1.SignUpRequest) (*authv1
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 
+// dummyHash is compared against when there is no real hash, to equalise Login timing.
+var dummyHash = func() string {
+	h, err := bcrypt.GenerateFromPassword([]byte("dummy-password"), bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	return string(h)
+}()
+
 func (s *Server) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.LoginResponse, error) {
 	if store.NormalizeEmail(req.Email) == "" || req.Password == "" {
 		return nil, status.Error(codes.InvalidArgument, "email and password are required")
 	}
 
 	user, err := s.store.GetUserByEmail(ctx, req.Email)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, status.Error(codes.Unauthenticated, "invalid credentials")
-		}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.log.Error("get user by email", "err", err)
 		return nil, status.Error(codes.Internal, "login failed")
 	}
 
-	if user.PasswordHash == nil {
-		// OAuth-only account — no password to compare against.
-		return nil, status.Error(codes.Unauthenticated, "no password set for this account; use OAuth to sign in")
+	// Unknown emails and OAuth-only accounts (no hash) take the same bcrypt time and
+	// return the same error, so neither leaks whether an account exists.
+	hash, ok := []byte(dummyHash), err == nil && user.PasswordHash != nil
+	if ok {
+		hash = []byte(*user.PasswordHash)
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.Password)); err != nil {
+	if bcrypt.CompareHashAndPassword(hash, []byte(req.Password)) != nil || !ok {
 		return nil, status.Error(codes.Unauthenticated, "invalid credentials")
 	}
 
@@ -652,11 +660,18 @@ func (s *Server) RequestPasswordReset(ctx context.Context, req *authv1.RequestPa
 
 	user, err := s.store.GetUserByEmail(ctx, req.Email)
 	if err != nil {
-		// User not found — return OK silently.
+		// Unknown email answers OK silently; a real DB failure is still logged.
+		if !errors.Is(err, store.ErrNotFound) {
+			s.log.Error("get user by email (password reset)", "err", err)
+		}
 		return &authv1.RequestPasswordResetResponse{}, nil
 	}
 
 	if err := s.issueCode(ctx, user, events.PurposePasswordReset); err != nil {
+		// The cooldown answer must look like the unknown-email one, or it reveals the account.
+		if status.Code(err) == codes.ResourceExhausted {
+			return &authv1.RequestPasswordResetResponse{}, nil
+		}
 		return nil, err
 	}
 	return &authv1.RequestPasswordResetResponse{}, nil

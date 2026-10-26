@@ -35,8 +35,7 @@
       "forgotPassword": "忘记密码？",
       "emailRequired": "请输入邮箱",
       "passwordRequired": "请输入密码",
-      "invalidCredentials": "邮箱或密码不正确。",
-      "oauthAccount": "该账号使用社交登录，请使用 Google 或 Discord 登录。",
+      "invalidCredentials": "邮箱或密码不正确。如果您使用 Google 或 Discord 注册，请使用对应的按钮登录。",
       "tooManyRequests": "尝试次数过多，请稍后再试。",
       "failed": "登录失败，请重试。"
     },
