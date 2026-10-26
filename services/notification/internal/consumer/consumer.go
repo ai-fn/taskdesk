@@ -159,7 +159,7 @@ func (h *Handler) handleTaskEvent(ctx context.Context, r *kgo.Record) error {
 		return fmt.Errorf("redis publish: %w", err)
 	}
 
-	h.log.Info("task notification dispatched", "user_id", ev.UserID, "task", ev.TaskTitle)
+	h.log.Info("task notification dispatched", "user_id", ev.UserID, "task_id", ev.TaskID)
 	return nil
 }
 

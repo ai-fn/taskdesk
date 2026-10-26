@@ -247,7 +247,7 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 	}
 	claims, err := s.tokens.VerifyAccess(req.AccessToken)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("invalid token: %v", err))
+		return nil, status.Error(codes.Unauthenticated, "invalid token")
 	}
 	user, err := s.store.GetUserByID(ctx, claims.UserID)
 	if err != nil {
@@ -806,7 +806,7 @@ func (s *Server) RedeemPromoCode(ctx context.Context, req *authv1.RedeemPromoCod
 		}
 	}
 
-	s.log.Info("promo code redeemed", "user_id", req.UserId, "code", pc.Code)
+	s.log.Info("promo code redeemed", "user_id", req.UserId, "promo_id", pc.ID)
 	return &authv1.RedeemPromoCodeResponse{Plan: "pro"}, nil
 }
 

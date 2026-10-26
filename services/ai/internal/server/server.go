@@ -4,7 +4,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -89,7 +88,7 @@ func (s *Server) GeneratePlan(ctx context.Context, req *aiv1.GeneratePlanRequest
 	plan, err := s.planner.Generate(ctx, uc, lang)
 	if err != nil {
 		s.log.Error("generate plan", "user_id", req.UserId, "err", err)
-		return nil, status.Error(codes.Internal, fmt.Sprintf("plan generation failed: %v", err))
+		return nil, status.Error(codes.Internal, "plan generation failed")
 	}
 
 	// Build the proto response.
@@ -185,9 +184,9 @@ func (s *Server) GeneratePlanStream(req *aiv1.GeneratePlanRequest, stream aiv1.A
 	if err != nil {
 		s.log.Error("generate plan stream", "user_id", req.UserId, "err", err)
 		_ = stream.Send(&aiv1.PlanStreamChunk{
-			Payload: &aiv1.PlanStreamChunk_Error{Error: err.Error()},
+			Payload: &aiv1.PlanStreamChunk_Error{Error: "plan generation failed"},
 		})
-		return status.Error(codes.Internal, fmt.Sprintf("plan generation failed: %v", err))
+		return status.Error(codes.Internal, "plan generation failed")
 	}
 
 	planID := uuid.New().String()
@@ -377,7 +376,7 @@ func (s *Server) ParseTask(ctx context.Context, req *aiv1.ParseTaskRequest) (*ai
 		pt.DueAt = timestamppb.New(*t)
 	}
 
-	s.log.Info("task parsed", "title", result.Title, "priority", result.Priority, "due_at", result.DueAt)
+	s.log.Info("task parsed", "priority", result.Priority, "has_due", result.DueAt != "")
 	return &aiv1.ParseTaskResponse{Task: pt}, nil
 }
 

@@ -159,6 +159,7 @@ func TestSend_RecipientRejection(t *testing.T) {
 		permanent   bool
 	}{
 		{"unknown mailbox is permanent", "550 no such user", true},
+		{"reply echoing the address", "550 5.1.1 <a@example.com>: Recipient address rejected", true},
 		{"4xx is transient", "451 try later", false},
 		{"relay denied is our config", "554 relay access denied", false},
 		{"auth required is our config", "530 authentication required", false},
@@ -172,6 +173,9 @@ func TestSend_RecipientRejection(t *testing.T) {
 			}
 			if got := errors.Is(err, ErrRecipientRejected); got != tc.permanent {
 				t.Errorf("ErrRecipientRejected = %v, want %v (err: %v)", got, tc.permanent, err)
+			}
+			if strings.Contains(err.Error(), "a@example.com") {
+				t.Errorf("error leaks the recipient address: %v", err)
 			}
 		})
 	}

@@ -96,10 +96,15 @@ func (m *Mailer) Send(ctx context.Context, to, subject, body string) error {
 		return fmt.Errorf("smtp mail: %w", err)
 	}
 	if err := c.Rcpt(to); err != nil {
-		if addressRefused(err) {
-			return fmt.Errorf("smtp rcpt: %w: %w", ErrRecipientRejected, err)
+		// The server's text usually echoes the address, which must not reach the logs; keep the code only.
+		reason := "failed"
+		if te := new(textproto.Error); errors.As(err, &te) {
+			reason = fmt.Sprintf("code %d", te.Code)
 		}
-		return fmt.Errorf("smtp rcpt: %w", err)
+		if addressRefused(err) {
+			return fmt.Errorf("smtp rcpt: %w: %s", ErrRecipientRejected, reason)
+		}
+		return fmt.Errorf("smtp rcpt: %s", reason)
 	}
 	w, err := c.Data()
 	if err != nil {

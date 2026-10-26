@@ -11,6 +11,7 @@ import (
 
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -74,7 +75,7 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		TimeZone: mw.TimeZoneFromContext(r.Context()),
 	})
 	if err != nil {
-		writeSSEError(w, flusher, "could not start generation: "+err.Error())
+		writeSSEError(w, flusher, sseErrorMessage(err, "could not start generation"))
 		return
 	}
 
@@ -90,10 +91,8 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			}
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				writeSSEError(w, flusher, "plan generation timed out")
-			} else if st, ok := status.FromError(err); ok && st.Message() != "" {
-				writeSSEError(w, flusher, st.Message())
 			} else {
-				writeSSEError(w, flusher, err.Error())
+				writeSSEError(w, flusher, sseErrorMessage(err, "plan generation failed"))
 			}
 			return
 		}
@@ -124,7 +123,7 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			return
 
 		case *aiv1.PlanStreamChunk_Error:
-			writeSSEError(w, flusher, p.Error)
+			writeSSEError(w, flusher, "plan generation failed") // never forward the upstream text
 			return
 		}
 	}
@@ -136,6 +135,22 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeSSEError(w, flusher, "stream ended without a plan")
 	}
+}
+
+// sseErrorMessage passes through only messages the AI service wrote for the user; anything else
+// (Internal, transport errors) may carry upstream or Anthropic text and gets the generic fallback.
+func sseErrorMessage(err error, fallback string) string {
+	st, ok := status.FromError(err)
+	if !ok {
+		return fallback
+	}
+	switch st.Code() {
+	case codes.FailedPrecondition, codes.InvalidArgument, codes.ResourceExhausted, codes.NotFound:
+		if st.Message() != "" {
+			return st.Message()
+		}
+	}
+	return fallback
 }
 
 func writeSSEError(w http.ResponseWriter, flusher http.Flusher, msg string) {
