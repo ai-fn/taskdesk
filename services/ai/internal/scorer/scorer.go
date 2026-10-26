@@ -8,11 +8,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/fsociety/todo/services/ai/internal/llm"
 )
 
 const systemPrompt = `You are a productivity analyst. Given a task and a user's recent completion history, estimate the probability (0–100) that the user will actually complete this task.
@@ -48,7 +50,7 @@ type ScoreInput struct {
 type HistoryTask struct {
 	Title       string `json:"title"`
 	Priority    string `json:"priority"`
-	Status      string `json:"status"` // "done" or "open"
+	Status      string `json:"status"`       // "done" or "open"
 	DaysElapsed int    `json:"days_elapsed"` // days since creation
 }
 
@@ -61,26 +63,28 @@ type ScoreResult struct {
 // Scorer wraps the Anthropic client for task-scoring calls.
 type Scorer struct {
 	client *anthropic.Client
+	model  anthropic.Model
+	log    *slog.Logger
 }
 
 // New creates a Scorer. Uses ANTHROPIC_API_KEY env var if apiKey is empty.
-func New(apiKey string) *Scorer {
+func New(apiKey, model string, log *slog.Logger) *Scorer {
 	opts := []option.RequestOption{}
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}
 	c := anthropic.NewClient(opts...)
-	return &Scorer{client: &c}
+	return &Scorer{client: &c, model: anthropic.Model(model), log: log}
 }
 
 // Score calls Claude and returns a completion probability score (0–100) plus
 // a short insight explaining the key factor driving the estimate.
 func (sc *Scorer) Score(ctx context.Context, today string, task ScoreInput, history []HistoryTask) (*ScoreResult, error) {
 	type userMsg struct {
-		Today        string        `json:"today"`
-		Task         ScoreInput    `json:"task"`
-		RecentTasks  []HistoryTask `json:"recent_tasks_30d"` // up to 50 entries
-		OpenTaskCount int          `json:"open_task_count"`
+		Today         string        `json:"today"`
+		Task          ScoreInput    `json:"task"`
+		RecentTasks   []HistoryTask `json:"recent_tasks_30d"` // up to 50 entries
+		OpenTaskCount int           `json:"open_task_count"`
 	}
 
 	// Count open tasks from history for workload context.
@@ -103,7 +107,7 @@ func (sc *Scorer) Score(ctx context.Context, today string, task ScoreInput, hist
 	}
 
 	resp, err := sc.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeSonnet4_6,
+		Model:     sc.model,
 		MaxTokens: 256,
 		System: []anthropic.TextBlockParam{
 			{
@@ -142,6 +146,7 @@ func (sc *Scorer) Score(ctx context.Context, today string, task ScoreInput, hist
 	if err != nil {
 		return nil, fmt.Errorf("claude api: %w", err)
 	}
+	llm.LogUsage(sc.log, "score", sc.model, resp.Usage)
 
 	for _, block := range resp.Content {
 		tu := block.AsToolUse()

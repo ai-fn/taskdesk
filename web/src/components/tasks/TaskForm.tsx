@@ -2,6 +2,7 @@ import { useRef, useState, type ReactNode, type DragEvent } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toBCP47 } from '@/i18n/config'
+import { toDateTimeLocal } from '@/lib/dateTime'
 import type { Task, TaskList } from '@/types'
 import { Priority, Status } from '@/types'
 import { Input } from '@/components/ui/Input'
@@ -43,7 +44,7 @@ interface Props {
     priority: number
     status?: number
     tags: string[]
-    due_at?: string
+    due_at?: string | null // null = clear (edit only)
     list_id?: string | null
     flagged?: boolean
     subtasks?: string[]
@@ -142,11 +143,7 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
       priority: task?.priority ?? prefill?.priority ?? Priority.UNSPECIFIED,
       status: task?.status ?? Status.TODO,
       tags: task?.tags?.join(', ') ?? prefill?.tags?.join(', ') ?? '',
-      due_at: task?.due_at
-        ? task.due_at.slice(0, 16)
-        : prefill?.due_at
-          ? prefill.due_at.slice(0, 16)
-          : '',
+      due_at: toDateTimeLocal(task?.due_at ?? prefill?.due_at ?? ''),
       list_id: task?.list_id ?? prefill?.list_id ?? defaultListId ?? '',
       flagged: task?.flagged ?? prefill?.flagged ?? false,
     },
@@ -158,8 +155,8 @@ export function TaskForm({ task, prefill, lists = [], defaultListId, onSubmit, o
       description: values.description,
       priority: Number(values.priority),
       status: task ? Number(values.status) : undefined,
-      tags: values.tags ? values.tags.split(',').map((v) => v.trim()).filter(Boolean) : [],
-      due_at: values.due_at ? new Date(values.due_at).toISOString() : undefined,
+      tags: values.tags ? values.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+      due_at: values.due_at ? new Date(values.due_at).toISOString() : (task?.due_at ? null : undefined),
       list_id: values.list_id === '' ? (task?.list_id ? null : undefined) : values.list_id,
       flagged: values.flagged,
       subtasks: isCreate ? draftSubtasks : undefined,

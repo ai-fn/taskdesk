@@ -31,6 +31,7 @@ func (h *AccountHandler) Me(w http.ResponseWriter, r *http.Request) {
 		"email":          resp.User.Email,
 		"name":           resp.User.Name,
 		"language":       resp.User.Language,
+		"time_zone":      resp.User.TimeZone,
 		"email_verified": resp.User.EmailVerified,
 	})
 }
@@ -87,6 +88,29 @@ func (h *AccountHandler) UpdateLanguage(w http.ResponseWriter, r *http.Request) 
 	_, err := h.client.UpdateUserLanguage(r.Context(), &authv1.UpdateUserLanguageRequest{
 		UserId:   userID,
 		Language: body.Language,
+	})
+	if err != nil {
+		handleGRPCError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PATCH /api/v1/account/time-zone
+func (h *AccountHandler) UpdateTimeZone(w http.ResponseWriter, r *http.Request) {
+	userID := mw.UserIDFromContext(r.Context())
+
+	var body struct {
+		TimeZone string `json:"time_zone"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.TimeZone == "" {
+		jsonError(w, "time_zone is required", http.StatusBadRequest)
+		return
+	}
+
+	_, err := h.client.UpdateUserTimeZone(r.Context(), &authv1.UpdateUserTimeZoneRequest{
+		UserId:   userID,
+		TimeZone: body.TimeZone,
 	})
 	if err != nil {
 		handleGRPCError(w, err)

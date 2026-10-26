@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	"github.com/fsociety/todo/services/gateway/internal/oauth"
+	"github.com/go-chi/chi/v5"
 )
 
 const (
@@ -22,16 +22,18 @@ const (
 
 // OAuthHandler runs the Authorization Code flow for any registered provider.
 //
-//   GET /api/v1/auth/oauth/{provider}            → Start
-//   GET /api/v1/auth/oauth/{provider}/callback   → Callback
+//	GET /api/v1/auth/oauth/{provider}            → Start
+//	GET /api/v1/auth/oauth/{provider}/callback   → Callback
 type OAuthHandler struct {
 	client    authv1.AuthServiceClient
 	providers oauth.Registry
 	log       *slog.Logger
+
+	cookieSecure bool
 }
 
-func NewOAuthHandler(c authv1.AuthServiceClient, providers oauth.Registry, log *slog.Logger) *OAuthHandler {
-	return &OAuthHandler{client: c, providers: providers, log: log}
+func NewOAuthHandler(c authv1.AuthServiceClient, providers oauth.Registry, log *slog.Logger, cookieSecure bool) *OAuthHandler {
+	return &OAuthHandler{client: c, providers: providers, log: log, cookieSecure: cookieSecure}
 }
 
 // Start kicks off the OAuth flow: generate a CSRF `state`, stash it in a
@@ -60,8 +62,8 @@ func (h *OAuthHandler) Start(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Path:     "/api/v1/auth",
 		MaxAge:   int(oauthStateMaxAge.Seconds()),
+		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteLaxMode, // Lax: cookie sent on cross-site redirect-back
-		// Secure: true — set in production
 	})
 
 	http.Redirect(w, r, prov.AuthURL(state), http.StatusFound)
@@ -97,7 +99,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 	// Clear the state cookie regardless of outcome.
 	http.SetCookie(w, &http.Cookie{
-		Name: oauthStateCookie, Value: "", MaxAge: -1, Path: "/api/v1/auth", HttpOnly: true,
+		Name: oauthStateCookie, Value: "", MaxAge: -1, Path: "/api/v1/auth", HttpOnly: true, Secure: h.cookieSecure, SameSite: http.SameSiteLaxMode,
 	})
 
 	cookieProvider, cookieState, ok := strings.Cut(cookie.Value, ".")
@@ -139,7 +141,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setRefreshCookie(w, resp.RefreshToken)
+	setRefreshCookie(w, resp.RefreshToken, h.cookieSecure)
 	h.log.Info("oauth: success",
 		"provider", name,
 		"user_id", resp.UserId,

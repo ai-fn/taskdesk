@@ -5,10 +5,10 @@ import "time"
 type Subscription struct {
 	ID        string
 	UserID    string
-	Plan      string     // "pro"
-	Source    string     // "promo_code" | "stripe"
-	SourceRef string     // promo_code ID or Stripe subscription ID
-	Status    string     // "active" | "cancelled"
+	Plan      string // "pro"
+	Source    string // "promo_code" | "stripe"
+	SourceRef string // promo_code ID or Stripe subscription ID
+	Status    string // "active" | "cancelled"
 	StartedAt time.Time
 	ExpiresAt *time.Time // nil = lifetime
 	CreatedAt time.Time

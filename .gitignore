@@ -5,7 +5,6 @@ services/*/build/
 *.test
 *.out
 vendor/
-go.work.sum
 
 # Proto generated code
 proto/gen/
@@ -32,6 +31,10 @@ dist/
 .vite/
 
 
-docs/superpowers/
 /scheduler
+services/scheduler/scheduler
 /promo-admin
+docs/superpowers/
+
+# Claude Code local settings
+.claude/settings.local.json

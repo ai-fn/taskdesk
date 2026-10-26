@@ -26,6 +26,8 @@ spec:
               value: "todo-kafka-bootstrap.data.svc.cluster.local:9092"
             - name: KAFKA_GROUP
               value: "notification-service"
+            - name: KAFKA_AUTH_GROUP
+              value: "notification-auth"
             - name: REDIS_ADDR
               value: "redis.data.svc.cluster.local:6379"
             - name: SMTP_ADDR
@@ -60,6 +62,19 @@ spec:
                 secretKeyRef:
                   name: notification-secret
                   key: SMTP_PASS
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 15
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true

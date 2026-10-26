@@ -25,6 +25,8 @@ service AIService {
 message GeneratePlanRequest {
   string user_id  = 1;
   string language = 2;
+  string email    = 3; // verified address to notify; empty = no email
+  string time_zone = 4; // IANA name deciding the plan's "today"; empty = UTC
 }
 
 message GeneratePlanResponse {
@@ -93,6 +95,7 @@ message ParseTaskRequest {
   string today                = 3; // ISO date "2026-05-19" for relative-date resolution
   repeated string list_names  = 4; // user's available list names for context
   string language             = 5; // preferred language for parsed output
+  string time_zone            = 6; // IANA name; due_at is resolved in this zone, empty = UTC
 }
 
 // ParsedTask holds the structured fields Claude extracted from free text.

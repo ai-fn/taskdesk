@@ -2,9 +2,14 @@ package server_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +18,7 @@ import (
 	"github.com/fsociety/todo/services/auth/internal/server"
 	"github.com/fsociety/todo/services/auth/internal/store"
 	"github.com/fsociety/todo/services/auth/internal/testutil"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	stripewebhook "github.com/stripe/stripe-go/v82/webhook"
 	"google.golang.org/grpc/codes"
@@ -194,6 +200,21 @@ func TestLogin_OAuthOnlyUser(t *testing.T) {
 	if grpcCode(err) != codes.Unauthenticated {
 		t.Errorf("OAuth-only login: want Unauthenticated, got %v", err)
 	}
+
+	// Indistinguishable from an unknown email: same message, and bcrypt still runs.
+	_, ghost := svc.Login(context.Background(), &authv1.LoginRequest{Email: "ghost@test.com", Password: "anything"})
+	if status.Convert(err).Message() != status.Convert(ghost).Message() {
+		t.Errorf("OAuth-only message %q differs from unknown-email message %q", status.Convert(err).Message(), status.Convert(ghost).Message())
+	}
+}
+
+func TestLogin_UnknownEmailStillPaysForBcrypt(t *testing.T) {
+	svc, _ := newServer(t)
+	start := time.Now()
+	_, _ = svc.Login(context.Background(), &authv1.LoginRequest{Email: "nobody@test.com", Password: "Passw0rd1"})
+	if d := time.Since(start); d < 10*time.Millisecond {
+		t.Errorf("unknown-email login took %v; the dummy bcrypt compare is missing", d)
+	}
 }
 
 // ── RefreshToken ──────────────────────────────────────────────────────────────
@@ -270,11 +291,93 @@ func TestValidateToken_Success(t *testing.T) {
 	}
 }
 
+func TestValidateToken_RejectsRefreshToken(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "r@test.com", "Passw0rd1", "Rita")
+
+	_, err := svc.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{AccessToken: su.RefreshToken})
+	if got := grpcCode(err); got != codes.Unauthenticated {
+		t.Errorf("code = %v, want Unauthenticated", got)
+	}
+}
+
 func TestValidateToken_BadToken(t *testing.T) {
 	svc, _ := newServer(t)
 	_, err := svc.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{AccessToken: "garbage"})
 	if grpcCode(err) != codes.Unauthenticated {
 		t.Errorf("want Unauthenticated, got %v", err)
+	}
+}
+
+// ── ValidateSession ───────────────────────────────────────────────────────────
+
+func sessionActive(t *testing.T, svc *server.Server, sid string) bool {
+	t.Helper()
+	resp, err := svc.ValidateSession(context.Background(), &authv1.ValidateSessionRequest{SessionId: sid})
+	if err != nil {
+		t.Fatalf("ValidateSession(%q): %v", sid, err)
+	}
+	return resp.Active
+}
+
+func TestValidateSession_LiveThenRevoked(t *testing.T) {
+	svc, maker := newServer(t)
+	su := signUp(t, svc, "s1@test.com", "Passw0rd1", "Sam")
+	sid := sessionID(t, maker, su.AccessToken)
+
+	if !sessionActive(t, svc, sid) {
+		t.Fatal("fresh session reported inactive")
+	}
+	if _, err := svc.RevokeSession(context.Background(), &authv1.RevokeSessionRequest{UserId: su.UserId, SessionId: sid}); err != nil {
+		t.Fatalf("RevokeSession: %v", err)
+	}
+	if sessionActive(t, svc, sid) {
+		t.Error("revoked session still active")
+	}
+}
+
+func TestValidateSession_InactiveAfterLogout(t *testing.T) {
+	svc, maker := newServer(t)
+	su := signUp(t, svc, "s2@test.com", "Passw0rd1", "Sue")
+	sid := sessionID(t, maker, su.AccessToken)
+
+	if _, err := svc.Logout(context.Background(), &authv1.LogoutRequest{RefreshToken: su.RefreshToken}); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	if sessionActive(t, svc, sid) {
+		t.Error("session still active after logout")
+	}
+}
+
+func TestValidateSession_OtherSessionsRevoked(t *testing.T) {
+	svc, maker := newServer(t)
+	su := signUp(t, svc, "s3@test.com", "Passw0rd1", "Sid")
+	keep := sessionID(t, maker, su.AccessToken)
+	login, err := svc.Login(context.Background(), &authv1.LoginRequest{
+		Email: "s3@test.com", Password: "Passw0rd1",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "9.9.9.9"},
+	})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	other := sessionID(t, maker, login.AccessToken)
+
+	if _, err := svc.RevokeOtherSessions(context.Background(), &authv1.RevokeOtherSessionsRequest{UserId: su.UserId, CurrentSessionId: keep}); err != nil {
+		t.Fatalf("RevokeOtherSessions: %v", err)
+	}
+	if !sessionActive(t, svc, keep) || sessionActive(t, svc, other) {
+		t.Errorf("keep active=%v other active=%v, want true/false", sessionActive(t, svc, keep), sessionActive(t, svc, other))
+	}
+}
+
+func TestValidateSession_BadInput(t *testing.T) {
+	svc, _ := newServer(t)
+	if sessionActive(t, svc, "not-a-uuid") {
+		t.Error("non-UUID session reported active")
+	}
+	_, err := svc.ValidateSession(context.Background(), &authv1.ValidateSessionRequest{})
+	if grpcCode(err) != codes.InvalidArgument {
+		t.Errorf("empty id: want InvalidArgument, got %v", err)
 	}
 }
 
@@ -452,6 +555,48 @@ func TestUpdateUserLanguage_MissingFields(t *testing.T) {
 	}
 }
 
+// ── UpdateUserTimeZone ────────────────────────────────────────────────────────
+
+func TestUpdateUserTimeZone_FlowsThroughValidateGetAndList(t *testing.T) {
+	svc, _ := newServer(t)
+	ctx := context.Background()
+	su := signUp(t, svc, "tz@test.com", "Passw0rd1", "Tz User")
+
+	if _, err := svc.UpdateUserTimeZone(ctx, &authv1.UpdateUserTimeZoneRequest{UserId: su.UserId, TimeZone: "Asia/Shanghai"}); err != nil {
+		t.Fatalf("UpdateUserTimeZone: %v", err)
+	}
+	v, err := svc.ValidateToken(ctx, &authv1.ValidateTokenRequest{AccessToken: su.AccessToken})
+	if err != nil || v.TimeZone != "Asia/Shanghai" {
+		t.Errorf("ValidateToken time zone = %q, err %v", v.GetTimeZone(), err)
+	}
+	g, err := svc.GetUserByID(ctx, &authv1.GetUserByIDRequest{UserId: su.UserId})
+	if err != nil || g.User.TimeZone != "Asia/Shanghai" {
+		t.Errorf("GetUserByID time zone = %q, err %v", g.GetUser().GetTimeZone(), err)
+	}
+	l, err := svc.ListUserIDs(ctx, &authv1.ListUserIDsRequest{})
+	if err != nil || len(l.Users) != 1 || l.Users[0].TimeZone != "Asia/Shanghai" {
+		t.Errorf("ListUserIDs = %+v, err %v", l, err)
+	}
+}
+
+func TestUpdateUserTimeZone_Invalid(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "tz2@test.com", "Passw0rd1", "Tz User 2")
+	for _, req := range []*authv1.UpdateUserTimeZoneRequest{
+		{},
+		{UserId: su.UserId},
+		{UserId: su.UserId, TimeZone: "Mars/Olympus"},
+		{UserId: su.UserId, TimeZone: "Local"},
+	} {
+		if _, err := svc.UpdateUserTimeZone(context.Background(), req); grpcCode(err) != codes.InvalidArgument {
+			t.Errorf("%+v: expected InvalidArgument, got %v", req, err)
+		}
+	}
+	if _, err := svc.UpdateUserTimeZone(context.Background(), &authv1.UpdateUserTimeZoneRequest{UserId: "ghost", TimeZone: "UTC"}); grpcCode(err) != codes.NotFound {
+		t.Errorf("unknown user: expected NotFound, got %v", err)
+	}
+}
+
 func TestOAuthSignIn_EmailMatch(t *testing.T) {
 	svc, _ := newServer(t)
 	su := signUp(t, svc, "m@test.com", "Passw0rd", "Mia")
@@ -469,6 +614,133 @@ func TestOAuthSignIn_EmailMatch(t *testing.T) {
 	}
 }
 
+func TestOAuthSignIn_ClaimsUnverifiedAccount(t *testing.T) {
+	svc, _ := newServer(t)
+	// Attacker pre-registers the victim's email with a password they know.
+	attacker := signUp(t, svc, "victim@test.com", "Passw0rd1", "Attacker")
+
+	resp, err := svc.OAuthSignIn(context.Background(), &authv1.OAuthSignInRequest{
+		Provider: "google", ProviderUserId: "g-victim",
+		Email: "victim@test.com", Name: "Victim",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "4.4.4.4"},
+	})
+	if err != nil {
+		t.Fatalf("OAuthSignIn: %v", err)
+	}
+	if resp.UserId != attacker.UserId {
+		t.Fatalf("expected the existing account to be linked, got %q want %q", resp.UserId, attacker.UserId)
+	}
+
+	_, err = svc.Login(context.Background(), &authv1.LoginRequest{
+		Email: "victim@test.com", Password: "Passw0rd1",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "6.6.6.6"},
+	})
+	if grpcCode(err) != codes.Unauthenticated {
+		t.Errorf("attacker password login after claim: want Unauthenticated, got %v", err)
+	}
+	if _, err := svc.RefreshToken(context.Background(), &authv1.RefreshTokenRequest{RefreshToken: attacker.RefreshToken}); grpcCode(err) != codes.Unauthenticated {
+		t.Errorf("attacker's old session after claim: want Unauthenticated, got %v", err)
+	}
+	got, err := svc.GetUserByID(context.Background(), &authv1.GetUserByIDRequest{UserId: attacker.UserId})
+	if err != nil || !got.User.EmailVerified {
+		t.Errorf("claimed account should be email-verified: %+v, %v", got, err)
+	}
+}
+
+func TestOAuthSignIn_ExistingLinkClaimsUnverifiedAccount(t *testing.T) {
+	svc, _ := newServer(t)
+	// State left by the old bug: attacker's password account already linked to the victim's identity.
+	attacker := signUp(t, svc, "linked@test.com", "Passw0rd1", "Attacker")
+	if err := store.New(testPool).LinkOAuth(context.Background(), attacker.UserId, "google", "g-linked", "linked@test.com"); err != nil {
+		t.Fatalf("LinkOAuth: %v", err)
+	}
+
+	if _, err := svc.OAuthSignIn(context.Background(), &authv1.OAuthSignInRequest{
+		Provider: "google", ProviderUserId: "g-linked",
+		Email: "linked@test.com", Name: "Victim",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "4.4.4.4"},
+	}); err != nil {
+		t.Fatalf("OAuthSignIn: %v", err)
+	}
+	_, err := svc.Login(context.Background(), &authv1.LoginRequest{
+		Email: "linked@test.com", Password: "Passw0rd1",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "6.6.6.6"},
+	})
+	if grpcCode(err) != codes.Unauthenticated {
+		t.Errorf("attacker password login after claim: want Unauthenticated, got %v", err)
+	}
+}
+
+func TestOAuthSignIn_LegacyUnverifiedOAuthUserKeepsSession(t *testing.T) {
+	svc, maker := newServer(t)
+	req := &authv1.OAuthSignInRequest{
+		Provider: "google", ProviderUserId: "g-legacy",
+		Email: "legacy@test.com", Name: "Legacy",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "4.4.4.4"},
+	}
+	first, err := svc.OAuthSignIn(context.Background(), req)
+	if err != nil {
+		t.Fatalf("OAuthSignIn: %v", err)
+	}
+	// Created before OAuth users were marked verified.
+	if _, err := testPool.Exec(context.Background(), `UPDATE auth.users SET email_verified = false WHERE id = $1`, first.UserId); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.OAuthSignIn(context.Background(), req); err != nil {
+		t.Fatalf("second OAuthSignIn: %v", err)
+	}
+	got, err := svc.GetUserByID(context.Background(), &authv1.GetUserByIDRequest{UserId: first.UserId})
+	if err != nil || !got.User.EmailVerified {
+		t.Errorf("legacy user should be verified after sign-in: %+v, %v", got, err)
+	}
+	if !sessionActive(t, svc, sessionID(t, maker, first.AccessToken)) {
+		t.Error("OAuth-only user's earlier session was revoked")
+	}
+}
+
+func TestOAuthSignIn_VerifiedAccountKeepsPassword(t *testing.T) {
+	svc, maker := newServer(t)
+	su := signUp(t, svc, "real@test.com", "Passw0rd1", "Real")
+	// Mark the email verified the way ConfirmEmail does.
+	if err := store.New(testPool).SetEmailVerified(context.Background(), su.UserId); err != nil {
+		t.Fatalf("SetEmailVerified: %v", err)
+	}
+
+	if _, err := svc.OAuthSignIn(context.Background(), &authv1.OAuthSignInRequest{
+		Provider: "google", ProviderUserId: "g-real",
+		Email: "real@test.com", Name: "Real",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "4.4.4.4"},
+	}); err != nil {
+		t.Fatalf("OAuthSignIn: %v", err)
+	}
+	if _, err := svc.Login(context.Background(), &authv1.LoginRequest{
+		Email: "real@test.com", Password: "Passw0rd1",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "5.5.5.5"},
+	}); err != nil {
+		t.Errorf("password login on a verified account should still work: %v", err)
+	}
+	if !sessionActive(t, svc, sessionID(t, maker, su.AccessToken)) {
+		t.Error("verified account's session was revoked")
+	}
+}
+
+func TestOAuthSignIn_FreshUserIsVerified(t *testing.T) {
+	svc, _ := newServer(t)
+	resp, err := svc.OAuthSignIn(context.Background(), &authv1.OAuthSignInRequest{
+		Provider: "google", ProviderUserId: "g-fresh",
+		Email: "fresh@test.com", Name: "Fresh",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "4.4.4.4"},
+	})
+	if err != nil {
+		t.Fatalf("OAuthSignIn: %v", err)
+	}
+	got, err := svc.GetUserByID(context.Background(), &authv1.GetUserByIDRequest{UserId: resp.UserId})
+	if err != nil || !got.User.EmailVerified {
+		t.Errorf("OAuth-created user should be verified: %+v, %v", got, err)
+	}
+}
+
 // ── Password policy ─────────────────────────────────────────────────────────
 
 func TestSignUp_WeakPassword(t *testing.T) {
@@ -478,6 +750,7 @@ func TestSignUp_WeakPassword(t *testing.T) {
 	}{
 		{"too short", "Ab1!"},
 		{"lowercase only", "abcdefgh"}, // score 1
+		{"over bcrypt's 72 bytes", "Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!Aa1!"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -491,8 +764,7 @@ func TestSignUp_WeakPassword(t *testing.T) {
 	}
 }
 
-// Weak-password and reuse checks both run before OTP code verification, so
-// these cases need no seeded code.
+// The weak-password check needs no code: it does not depend on the account.
 
 func TestResetPassword_WeakPassword(t *testing.T) {
 	svc, _ := newServer(t)
@@ -506,18 +778,30 @@ func TestResetPassword_WeakPassword(t *testing.T) {
 	}
 }
 
-func TestResetPassword_RejectsReuse(t *testing.T) {
+func TestResetPassword_ReuseIsOnlyRevealedToTheCodeHolder(t *testing.T) {
 	svc, _ := newServer(t)
-	signUp(t, svc, "reuse@test.com", "Passw0rd1", "Rita")
-
-	_, err := svc.ResetPassword(context.Background(), &authv1.ResetPasswordRequest{
-		Email: "reuse@test.com", Code: "000000", NewPassword: "Passw0rd1",
-	})
-	if grpcCode(err) != codes.InvalidArgument {
-		t.Fatalf("ResetPassword reuse: want InvalidArgument, got %v", err)
+	a := signUp(t, svc, "reuse@test.com", "Passw0rd1", "Rita")
+	b := signUp(t, svc, "reuse2@test.com", "Passw0rd1", "Rob")
+	seedCode(t, a.UserId, "password_reset", "123456")
+	seedCode(t, b.UserId, "password_reset", "123456")
+	reset := func(email, code, pw string) error {
+		_, err := svc.ResetPassword(context.Background(), &authv1.ResetPasswordRequest{Email: email, Code: code, NewPassword: pw})
+		return err
 	}
-	if msg := status.Convert(err).Message(); !strings.Contains(msg, "different") {
-		t.Errorf("expected reuse message, got %q", msg)
+
+	// Wrong code: the answer must not depend on whether the candidate is the current password.
+	errReuse, errFresh := reset("reuse@test.com", "000000", "Passw0rd1"), reset("reuse2@test.com", "000000", "Brand-new-Pw9")
+	if grpcCode(errReuse) != codes.Unauthenticated || errReuse.Error() != errFresh.Error() {
+		t.Fatalf("wrong code: reuse=%v fresh=%v; want identical Unauthenticated errors", errReuse, errFresh)
+	}
+
+	// Right code, current password: rejected, and the code survives for a retry.
+	err := reset("reuse@test.com", "123456", "Passw0rd1")
+	if grpcCode(err) != codes.InvalidArgument || !strings.Contains(status.Convert(err).Message(), "different") {
+		t.Fatalf("right code + reuse: want InvalidArgument 'different', got %v", err)
+	}
+	if err := reset("reuse@test.com", "123456", "Brand-new-Pw9"); err != nil {
+		t.Fatalf("retry with the same code after a rejected reuse: %v", err)
 	}
 }
 
@@ -696,7 +980,7 @@ func TestHandleStripeWebhook_CheckoutIdempotent(t *testing.T) {
 
 	// Use GenerateTestSignedPayload to produce a valid HMAC signature.
 	// api_version mismatch is now ignored (IgnoreAPIVersionMismatch: true).
-	payloadBytes := []byte(`{"id":"evt_test_idem","object":"event","api_version":"2024-06-20","type":"checkout.session.completed","data":{"object":{"id":"cs_test_idem","object":"checkout.session","customer":"cus_test_idempotent","subscription":"sub_test_idempotent"}}}`)
+	payloadBytes := []byte(`{"id":"evt_test_idem","object":"event","api_version":"2024-06-20","type":"checkout.session.completed","data":{"object":{"id":"cs_test_idem","object":"checkout.session","customer":"cus_test_idempotent","subscription":"sub_test_idempotent","payment_status":"paid"}}}`)
 	signed := stripewebhook.GenerateTestSignedPayload(&stripewebhook.UnsignedPayload{
 		Payload: payloadBytes,
 		Secret:  webhookSecret,
@@ -712,5 +996,225 @@ func TestHandleStripeWebhook_CheckoutIdempotent(t *testing.T) {
 	}
 	if _, err := svc.HandleStripeWebhook(context.Background(), req); err != nil {
 		t.Errorf("second webhook delivery (idempotent): want nil, got %v", err)
+	}
+}
+
+// ── OTP attempt limit ─────────────────────────────────────────────────────────
+
+func seedEmailCode(t *testing.T, userID, code string) { seedCode(t, userID, "email_verify", code) }
+
+func seedCode(t *testing.T, userID, purpose, code string) {
+	t.Helper()
+	sum := sha256.Sum256([]byte(code))
+	_, err := testPool.Exec(context.Background(), `
+		INSERT INTO auth.verification_codes (id, user_id, purpose, code_hash, expires_at)
+		VALUES (gen_random_uuid(), $1, $2, $3, now() + interval '10 minutes')`,
+		userID, purpose, hex.EncodeToString(sum[:]))
+	if err != nil {
+		t.Fatalf("seed code: %v", err)
+	}
+}
+
+func TestConfirmEmail_ParallelWrongGuessesBurnTheCodeAtTheCap(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "otp@test.com", "Passw0rd1", "Otto")
+	seedEmailCode(t, su.UserId, "123456")
+
+	var exhausted, wrong atomic.Int32
+	var wg sync.WaitGroup
+	for i := range 30 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := svc.ConfirmEmail(context.Background(), &authv1.ConfirmEmailRequest{UserId: su.UserId, Code: fmt.Sprintf("00000%d", i%10)})
+			switch grpcCode(err) {
+			case codes.ResourceExhausted:
+				exhausted.Add(1)
+			case codes.Unauthenticated:
+				wrong.Add(1)
+			default:
+				t.Errorf("unexpected result: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if exhausted.Load() != 1 || wrong.Load() != 29 {
+		t.Errorf("exhausted=%d wrong=%d, want exactly 1 and 29: only MaxAttempts guesses may be evaluated", exhausted.Load(), wrong.Load())
+	}
+
+	_, err := svc.ConfirmEmail(context.Background(), &authv1.ConfirmEmailRequest{UserId: su.UserId, Code: "123456"})
+	if grpcCode(err) != codes.Unauthenticated {
+		t.Errorf("correct code after the cap: want Unauthenticated, got %v", err)
+	}
+}
+
+func TestConfirmEmail_CorrectCodeWithinCapSucceeds(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "otp2@test.com", "Passw0rd1", "Olga")
+	seedEmailCode(t, su.UserId, "123456")
+
+	for range 2 {
+		if _, err := svc.ConfirmEmail(context.Background(), &authv1.ConfirmEmailRequest{UserId: su.UserId, Code: "000000"}); grpcCode(err) != codes.Unauthenticated {
+			t.Fatalf("wrong guess: got %v", err)
+		}
+	}
+	if _, err := svc.ConfirmEmail(context.Background(), &authv1.ConfirmEmailRequest{UserId: su.UserId, Code: "123456"}); err != nil {
+		t.Fatalf("third attempt with the right code: %v", err)
+	}
+}
+
+// ── Stripe webhook robustness ─────────────────────────────────────────────────
+
+const stripeTestSecret = "whsec_test_robust"
+
+func stripeEvent(t *testing.T, svc *server.Server, eventType, object string) {
+	t.Helper()
+	payload := fmt.Sprintf(`{"id":"evt_%s","object":"event","api_version":"2024-06-20","type":%q,"data":{"object":%s}}`, uuid.NewString(), eventType, object)
+	signed := stripewebhook.GenerateTestSignedPayload(&stripewebhook.UnsignedPayload{Payload: []byte(payload), Secret: stripeTestSecret})
+	if _, err := svc.HandleStripeWebhook(context.Background(), &authv1.HandleStripeWebhookRequest{Payload: signed.Payload, Signature: signed.Header}); err != nil {
+		t.Fatalf("%s: %v", eventType, err)
+	}
+}
+
+func userPlan(t *testing.T, userID string) string {
+	t.Helper()
+	var plan string
+	if err := testPool.QueryRow(context.Background(), `SELECT plan FROM auth.users WHERE id = $1`, userID).Scan(&plan); err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+func TestStripeCheckout_ResolvesUserWithoutStoredCustomerID(t *testing.T) {
+	cases := []struct{ name, userField string }{
+		{"client_reference_id", `"client_reference_id":"%s"`},
+		{"metadata.user_id", `"metadata":{"user_id":"%s"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newServerWithStripe(t, server.StripeConfig{WebhookSecret: stripeTestSecret})
+			su := signUp(t, svc, "paid@test.com", "Passw0rd1", "Pat") // no customer id stored, as after a failed save
+			obj := fmt.Sprintf(`{"id":"cs_1","object":"checkout.session","customer":"cus_lost","subscription":"sub_lost","payment_status":"paid",`+tc.userField+`}`, su.UserId)
+			stripeEvent(t, svc, "checkout.session.completed", obj)
+
+			if got := userPlan(t, su.UserId); got != "pro" {
+				t.Errorf("plan = %q, want pro: the payment must not be lost with the customer id", got)
+			}
+			var cust *string
+			if err := testPool.QueryRow(context.Background(), `SELECT stripe_customer_id FROM auth.users WHERE id = $1`, su.UserId).Scan(&cust); err != nil || cust == nil || *cust != "cus_lost" {
+				t.Errorf("stripe_customer_id = %v, %v; want cus_lost backfilled", cust, err)
+			}
+		})
+	}
+}
+
+func TestStripeCheckout_UnpaidWaitsForAsyncPayment(t *testing.T) {
+	svc := newServerWithStripe(t, server.StripeConfig{WebhookSecret: stripeTestSecret})
+	su := signUp(t, svc, "async@test.com", "Passw0rd1", "Ann")
+	obj := func(paymentStatus string) string {
+		return fmt.Sprintf(`{"id":"cs_2","object":"checkout.session","customer":"cus_async","subscription":"sub_async","payment_status":%q,"client_reference_id":%q}`, paymentStatus, su.UserId)
+	}
+
+	stripeEvent(t, svc, "checkout.session.completed", obj("unpaid"))
+	if got := userPlan(t, su.UserId); got != "free" {
+		t.Fatalf("plan before payment = %q, want free", got)
+	}
+	stripeEvent(t, svc, "checkout.session.async_payment_succeeded", obj("paid"))
+	if got := userPlan(t, su.UserId); got != "pro" {
+		t.Errorf("plan after payment = %q, want pro", got)
+	}
+}
+
+func TestStripeSubscription_PastDueIsGraceAndRecoveryRestoresPro(t *testing.T) {
+	svc := newServerWithStripe(t, server.StripeConfig{WebhookSecret: stripeTestSecret})
+	su := signUp(t, svc, "dunning@test.com", "Passw0rd1", "Dan")
+	stripeEvent(t, svc, "checkout.session.completed", fmt.Sprintf(`{"id":"cs_3","object":"checkout.session","customer":"cus_d","subscription":"sub_d","payment_status":"paid","client_reference_id":%q}`, su.UserId))
+	subEvent := func(status string) {
+		stripeEvent(t, svc, "customer.subscription.updated", fmt.Sprintf(`{"id":"sub_d","object":"subscription","status":%q}`, status))
+	}
+
+	subEvent("past_due")
+	if got := userPlan(t, su.UserId); got != "pro" {
+		t.Errorf("past_due: plan = %q, want pro (grace period)", got)
+	}
+	subEvent("unpaid")
+	if got := userPlan(t, su.UserId); got != "free" {
+		t.Errorf("unpaid: plan = %q, want free", got)
+	}
+	subEvent("active")
+	if got := userPlan(t, su.UserId); got != "pro" {
+		t.Errorf("recovered: plan = %q, want pro", got)
+	}
+}
+
+func TestLogin_EmailCaseDoesNotMatter(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "Carol@Test.com", "Passw0rd1", "Carol")
+
+	resp, err := svc.Login(context.Background(), &authv1.LoginRequest{Email: "CAROL@test.com", Password: "Passw0rd1",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "1.2.3.4", UserAgent: "Go-test/1.0"}})
+	if err != nil || resp.UserId != su.UserId {
+		t.Fatalf("Login with another case = %v, %v; want the same account", resp, err)
+	}
+	_, err = svc.SignUp(context.Background(), &authv1.SignUpRequest{Email: "carol@test.com", Password: "Passw0rd1", Name: "Dup",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "1.2.3.4", UserAgent: "Go-test/1.0"}})
+	if grpcCode(err) != codes.AlreadyExists {
+		t.Errorf("second signup in another case: want AlreadyExists, got %v", err)
+	}
+}
+
+func TestSignUp_WhitespaceOnlyEmailIsRejected(t *testing.T) {
+	svc, _ := newServer(t)
+	_, err := svc.SignUp(context.Background(), &authv1.SignUpRequest{Email: "   ", Password: "Passw0rd1", Name: "Nobody",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "1.2.3.4", UserAgent: "Go-test/1.0"}})
+	if grpcCode(err) != codes.InvalidArgument {
+		t.Errorf("whitespace-only email: want InvalidArgument, got %v", err)
+	}
+}
+
+func TestListUserIDs_PagesCoverEveryUserOnce(t *testing.T) {
+	svc, _ := newServer(t)
+	want := map[string]bool{}
+	for i := range 5 {
+		want[signUp(t, svc, fmt.Sprintf("page%d@test.com", i), "Passw0rd1", "P").UserId] = true
+	}
+
+	got, token, pages := map[string]bool{}, "", 0
+	for {
+		resp, err := svc.ListUserIDs(context.Background(), &authv1.ListUserIDsRequest{PageSize: 2, PageToken: token})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Users) > 2 {
+			t.Fatalf("page of %d users, want <= 2", len(resp.Users))
+		}
+		for _, u := range resp.Users {
+			if got[u.UserId] {
+				t.Errorf("user %s listed twice", u.UserId)
+			}
+			got[u.UserId] = true
+		}
+		pages++
+		if resp.NextPageToken == "" {
+			break
+		}
+		token = resp.NextPageToken
+	}
+	if len(got) != len(want) || pages != 3 {
+		t.Errorf("listed %d users in %d pages, want 5 in 3", len(got), pages)
+	}
+
+	if resp, err := svc.ListUserIDs(context.Background(), &authv1.ListUserIDsRequest{}); err != nil || len(resp.Users) != 5 || resp.NextPageToken != "" {
+		t.Errorf("default page: %d users, token %q, err %v; want all 5 and no token", len(resp.Users), resp.NextPageToken, err)
+	}
+}
+
+func TestRequestPasswordReset_CooldownLooksLikeUnknownEmail(t *testing.T) {
+	svc, _ := newServer(t)
+	signUp(t, svc, "cool@test.com", "Passw0rd1", "Cool")
+	for i := 0; i < 2; i++ { // the second call is inside the resend cooldown
+		if _, err := svc.RequestPasswordReset(context.Background(), &authv1.RequestPasswordResetRequest{Email: "cool@test.com"}); err != nil {
+			t.Fatalf("call %d: %v", i+1, err)
+		}
 	}
 }

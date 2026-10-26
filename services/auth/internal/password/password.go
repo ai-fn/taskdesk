@@ -13,6 +13,9 @@ import (
 // MinLength is the minimum acceptable password length.
 const MinLength = 8
 
+// MaxBytes is bcrypt's input limit; longer passwords would be silently truncated (or rejected by newer bcrypt).
+const MaxBytes = 72
+
 // MinScore is the minimum acceptable strength score (see Score). Anything below
 // this is considered "weak" and rejected.
 const MinScore = 2
@@ -21,6 +24,7 @@ const MinScore = 2
 // the gateway's gRPC error extraction, so keep them user-readable.
 var (
 	ErrTooShort = errors.New("password must be at least 8 characters")
+	ErrTooLong  = errors.New("password must be at most 72 bytes")
 	ErrTooWeak  = errors.New("password is too weak; add length or a mix of letters, numbers and symbols")
 )
 
@@ -78,6 +82,9 @@ func Score(pw string) int {
 func Validate(pw string) error {
 	if len([]rune(pw)) < MinLength {
 		return ErrTooShort
+	}
+	if len(pw) > MaxBytes {
+		return ErrTooLong
 	}
 	if Score(pw) < MinScore {
 		return ErrTooWeak

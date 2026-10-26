@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/fsociety/todo/pkg/blobstore"
-	"github.com/fsociety/todo/pkg/events"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/todo/internal/domain"
 	"github.com/fsociety/todo/services/todo/internal/store"
@@ -32,6 +31,9 @@ type Server struct {
 func New(st *store.Store, blob blobstore.Store, region string, log *slog.Logger) *Server {
 	return &Server{store: st, blob: blob, region: region, log: log}
 }
+
+// errRefNotFound is the same for foreign and missing ids, so it is no existence oracle.
+const errRefNotFound = "referenced list, group or parent task not found"
 
 // ── CreateTask ────────────────────────────────────────────────────────────────
 
@@ -65,6 +67,9 @@ func (s *Server) CreateTask(ctx context.Context, req *todov1.CreateTaskRequest) 
 	}
 
 	if err := s.store.CreateTaskWithEvent(ctx, t); err != nil {
+		if errors.Is(err, store.ErrRefNotFound) {
+			return nil, status.Error(codes.NotFound, errRefNotFound)
+		}
 		s.log.Error("create task", "err", err)
 		return nil, status.Error(codes.Internal, "create task failed")
 	}
@@ -104,6 +109,7 @@ func (s *Server) ListTasks(ctx context.Context, req *todov1.ListTasksRequest) (*
 		IncludeDeleted: req.IncludeDeleted,
 		FlaggedOnly:    req.FlaggedOnly,
 		DueTodayOnly:   req.DueTodayOnly,
+		TimeZone:       req.TimeZone,
 		HasDueDate:     req.HasDueDate,
 		ExcludeBlocked: req.ExcludeBlocked,
 	}
@@ -141,11 +147,8 @@ func (s *Server) ListTasks(ctx context.Context, req *todov1.ListTasksRequest) (*
 		resp.Tasks = append(resp.Tasks, toProto(t))
 	}
 
-	pageSize := int(req.PageSize)
-	if pageSize <= 0 {
-		pageSize = 50
-	}
-	if len(tasks) == pageSize {
+	// Compare with the size the store applied, not the requested one, or an oversized request never gets a token.
+	if len(tasks) == int(store.NormalizePageSize(req.PageSize)) {
 		last := tasks[len(tasks)-1]
 		resp.NextPageToken = encodeCursor(last.CreatedAt, last.ID)
 	}
@@ -160,34 +163,7 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
 	}
 
-	existing, err := s.store.GetTask(ctx, req.UserId, req.TaskId)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "task not found")
-		}
-		return nil, status.Error(codes.Internal, "get task failed")
-	}
-
-	if req.Title != "" {
-		existing.Title = req.Title
-	}
-	if req.Description != "" {
-		existing.Description = req.Description
-	}
-	if req.Priority != todov1.Priority_PRIORITY_UNSPECIFIED {
-		existing.Priority = domain.Priority(req.Priority)
-	}
-	if req.Status != todov1.Status_STATUS_UNSPECIFIED {
-		existing.Status = domain.Status(req.Status)
-	}
-	if len(req.Tags) > 0 {
-		existing.Tags = req.Tags
-	}
-	if req.DueAt != nil {
-		ts := req.DueAt.AsTime()
-		existing.DueAt = &ts
-	}
-
+	// A masked field is applied as sent, which is how it gets cleared; unmasked fields only change when non-empty.
 	inMask := func(field string) bool {
 		for _, f := range req.UpdateMask {
 			if f == field {
@@ -196,49 +172,71 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 		}
 		return false
 	}
-	if inMask("flagged") {
-		existing.Flagged = req.Flagged
-	}
-	if inMask("list_id") {
-		if req.ListId == "" {
-			existing.ListID = nil
-		} else {
+	// Runs under the task's row lock, so concurrent edits serialize instead of overwriting each other.
+	apply := func(existing *domain.Task) error {
+		if req.Title != "" {
+			existing.Title = req.Title
+		}
+		if req.Priority != todov1.Priority_PRIORITY_UNSPECIFIED {
+			existing.Priority = domain.Priority(req.Priority)
+		}
+		if req.Status != todov1.Status_STATUS_UNSPECIFIED {
+			existing.Status = domain.Status(req.Status)
+		}
+		if inMask("description") || req.Description != "" {
+			existing.Description = req.Description
+		}
+		if inMask("tags") {
+			existing.Tags = append([]string{}, req.Tags...)
+		} else if len(req.Tags) > 0 {
+			existing.Tags = req.Tags
+		}
+		switch {
+		case req.DueAt != nil:
+			ts := req.DueAt.AsTime()
+			existing.DueAt = &ts
+		case inMask("due_at"):
+			existing.DueAt = nil
+		}
+		if inMask("flagged") {
+			existing.Flagged = req.Flagged
+		}
+		if inMask("list_id") {
+			if req.ListId == "" {
+				existing.ListID = nil
+			} else {
+				existing.ListID = &req.ListId
+			}
+		} else if req.ListId != "" {
 			existing.ListID = &req.ListId
 		}
-	} else if req.ListId != "" {
-		existing.ListID = &req.ListId
+		existing.UpdatedAt = time.Now().UTC()
+		return nil
 	}
 
-	existing.UpdatedAt = time.Now().UTC()
-
-	// Reject Done if any dependency is still open. Applies to direct Status=DONE
-	// updates as well as the CompleteTask RPC (which routes through here).
-	if existing.Status == domain.StatusDone {
-		blocked, err := s.store.HasUnfinishedDependencies(ctx, req.TaskId)
-		if err != nil {
-			s.log.Error("check unfinished deps", "err", err)
-			return nil, status.Error(codes.Internal, "check dependencies failed")
-		}
-		if blocked {
-			return nil, status.Error(codes.FailedPrecondition, "task is blocked by unfinished dependencies")
-		}
-	}
-
-	evType := events.TypeTaskUpdated
-	if existing.Status == domain.StatusDone {
-		evType = events.TypeTaskCompleted
-	}
-
-	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, evType, "")
+	updated, err := s.store.ModifyTask(ctx, req.UserId, req.TaskId, store.Notify{Language: req.Language, Email: req.Email}, apply)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "task not found")
-		}
-		s.log.Error("update task", "err", err)
-		return nil, status.Error(codes.Internal, "update task failed")
+		return nil, s.modifyTaskError(err, "update task")
 	}
-
 	return &todov1.UpdateTaskResponse{Task: toProto(updated)}, nil
+}
+
+// modifyTaskError maps ModifyTask failures to gRPC statuses.
+func (s *Server) modifyTaskError(err error, op string) error {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return status.Error(codes.NotFound, "task not found")
+	case errors.Is(err, store.ErrRefNotFound):
+		return status.Error(codes.NotFound, errRefNotFound)
+	case errors.Is(err, store.ErrBlocked):
+		return status.Error(codes.FailedPrecondition, "task is blocked by unfinished dependencies")
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, "request cancelled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, "request timed out")
+	}
+	s.log.Error(op, "err", err)
+	return status.Error(codes.Internal, op+" failed")
 }
 
 // ── DeleteTask ────────────────────────────────────────────────────────────────
@@ -262,42 +260,22 @@ func (s *Server) DeleteTask(ctx context.Context, req *todov1.DeleteTaskRequest) 
 // ── CompleteTask ──────────────────────────────────────────────────────────────
 
 func (s *Server) CompleteTask(ctx context.Context, req *todov1.CompleteTaskRequest) (*todov1.CompleteTaskResponse, error) {
-	existing, err := s.store.GetTask(ctx, req.UserId, req.TaskId)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "task not found")
+	if req.UserId == "" || req.TaskId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
+	}
+	complete := func(existing *domain.Task) error {
+		if existing.Status == domain.StatusDone { // idempotent: no second event or email
+			return store.ErrNoChange
 		}
-		return nil, status.Error(codes.Internal, "get task failed")
+		existing.Status = domain.StatusDone
+		existing.UpdatedAt = time.Now().UTC()
+		return nil
 	}
-
-	blocked, err := s.store.HasUnfinishedDependencies(ctx, req.TaskId)
+	// The store also completes the parent once every sibling is done.
+	updated, err := s.store.ModifyTask(ctx, req.UserId, req.TaskId, store.Notify{Language: req.Language, Email: req.Email}, complete)
 	if err != nil {
-		s.log.Error("check unfinished deps", "err", err)
-		return nil, status.Error(codes.Internal, "check dependencies failed")
+		return nil, s.modifyTaskError(err, "complete task")
 	}
-	if blocked {
-		return nil, status.Error(codes.FailedPrecondition, "task is blocked by unfinished dependencies")
-	}
-
-	existing.Status = domain.StatusDone
-	existing.UpdatedAt = time.Now().UTC()
-
-	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, events.TypeTaskCompleted, req.Language)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "task not found")
-		}
-		s.log.Error("complete task", "err", err)
-		return nil, status.Error(codes.Internal, "complete task failed")
-	}
-
-	// If this is a subtask, auto-complete the parent when all siblings are done.
-	if updated.ParentTaskID != nil {
-		if _, err := s.store.AutoCompleteParent(ctx, req.UserId, *updated.ParentTaskID); err != nil {
-			s.log.Warn("auto-complete parent", "parent_id", *updated.ParentTaskID, "err", err)
-		}
-	}
-
 	return &todov1.CompleteTaskResponse{Task: toProto(updated)}, nil
 }
 
@@ -358,6 +336,9 @@ func (s *Server) CreateList(ctx context.Context, req *todov1.CreateListRequest) 
 		l.GroupID = &req.GroupId
 	}
 	if err := s.store.CreateList(ctx, l); err != nil {
+		if errors.Is(err, store.ErrRefNotFound) {
+			return nil, status.Error(codes.NotFound, errRefNotFound)
+		}
 		s.log.Error("create list", "err", err)
 		return nil, status.Error(codes.Internal, "create list failed")
 	}
@@ -388,6 +369,10 @@ func (s *Server) UpdateList(ctx context.Context, req *todov1.UpdateListRequest) 
 	if req.UserId == "" || req.ListId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id and list_id are required")
 	}
+	// An empty mask must not mean "all": a bare rename would un-hide the list and drop its group.
+	if len(req.UpdateMask) == 0 && req.Name == "" && req.Color == "" && req.Icon == "" {
+		return nil, status.Error(codes.InvalidArgument, "nothing to update")
+	}
 
 	lists, err := s.store.ListLists(ctx, req.UserId)
 	if err != nil {
@@ -410,7 +395,7 @@ func (s *Server) UpdateList(ctx context.Context, req *todov1.UpdateListRequest) 
 				return true
 			}
 		}
-		return len(req.UpdateMask) == 0 // no mask = update all non-zero
+		return false
 	}
 	if req.Name != "" {
 		existing.Name = req.Name
@@ -436,6 +421,9 @@ func (s *Server) UpdateList(ctx context.Context, req *todov1.UpdateListRequest) 
 
 	updated, err := s.store.UpdateList(ctx, existing, updateGroupID)
 	if err != nil {
+		if errors.Is(err, store.ErrRefNotFound) {
+			return nil, status.Error(codes.NotFound, errRefNotFound)
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "list not found")
 		}
@@ -688,6 +676,33 @@ func (s *Server) UpsertTaskEmbedding(ctx context.Context, req *todov1.UpsertTask
 		return nil, status.Error(codes.Internal, "upsert embedding failed")
 	}
 	return &todov1.UpsertTaskEmbeddingResponse{}, nil
+}
+
+func (s *Server) ListUnembeddedTasks(ctx context.Context, req *todov1.ListUnembeddedTasksRequest) (*todov1.ListTasksResponse, error) {
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+	pageSize := int(req.PageSize)
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+	// The page token is the last task id of the previous page.
+	tasks, err := s.store.ListUnembeddedTasks(ctx, req.UserId, req.PageToken, pageSize)
+	if err != nil {
+		s.log.Error("list unembedded tasks", "err", err)
+		return nil, status.Error(codes.Internal, "list unembedded tasks failed")
+	}
+	resp := &todov1.ListTasksResponse{}
+	for _, t := range tasks {
+		resp.Tasks = append(resp.Tasks, toProto(t))
+	}
+	if len(tasks) == pageSize {
+		resp.NextPageToken = tasks[len(tasks)-1].ID
+	}
+	return resp, nil
 }
 
 func (s *Server) DeleteTaskEmbedding(ctx context.Context, req *todov1.DeleteTaskEmbeddingRequest) (*todov1.DeleteTaskEmbeddingResponse, error) {

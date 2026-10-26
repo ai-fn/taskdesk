@@ -1,6 +1,7 @@
 package tokens_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -96,13 +97,38 @@ func TestCreateRefreshToken_Claims(t *testing.T) {
 	}
 }
 
+func TestTokenTypes(t *testing.T) {
+	m := newMaker(t)
+	access, err := m.CreateAccessToken("u", "e@x.com", "s")
+	if err != nil {
+		t.Fatalf("CreateAccessToken: %v", err)
+	}
+	refresh, err := m.CreateRefreshToken("u", "e@x.com", "s")
+	if err != nil {
+		t.Fatalf("CreateRefreshToken: %v", err)
+	}
+
+	if c, err := m.Verify(access); err != nil || c.Type != tokens.TypeAccess {
+		t.Errorf("access: type=%v err=%v", c, err)
+	}
+	if c, err := m.Verify(refresh); err != nil || c.Type != tokens.TypeRefresh {
+		t.Errorf("refresh: type=%v err=%v", c, err)
+	}
+	if _, err := m.VerifyAccess(access); err != nil {
+		t.Errorf("VerifyAccess(access): %v", err)
+	}
+	if _, err := m.VerifyAccess(refresh); !errors.Is(err, tokens.ErrWrongTokenType) {
+		t.Errorf("VerifyAccess(refresh) err = %v, want ErrWrongTokenType", err)
+	}
+}
+
 func TestAccessToken_TTL(t *testing.T) {
 	m := newMaker(t)
 	before := time.Now()
 	tok, _ := m.CreateAccessToken("u", "e@x.com", "s")
 	claims, _ := m.Verify(tok)
 
-	ttl := claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time)
+	ttl := claims.ExpiresAt.Sub(claims.IssuedAt.Time)
 	// Allow 5 s of slack around the 15 min TTL.
 	if ttl < tokens.AccessTokenTTL-5*time.Second || ttl > tokens.AccessTokenTTL+5*time.Second {
 		t.Errorf("access TTL = %v, want ~%v", ttl, tokens.AccessTokenTTL)
@@ -115,7 +141,7 @@ func TestRefreshToken_TTL(t *testing.T) {
 	tok, _ := m.CreateRefreshToken("u", "e@x.com", "s")
 	claims, _ := m.Verify(tok)
 
-	ttl := claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time)
+	ttl := claims.ExpiresAt.Sub(claims.IssuedAt.Time)
 	if ttl < tokens.RefreshTokenTTL-5*time.Second || ttl > tokens.RefreshTokenTTL+5*time.Second {
 		t.Errorf("refresh TTL = %v, want ~%v", ttl, tokens.RefreshTokenTTL)
 	}

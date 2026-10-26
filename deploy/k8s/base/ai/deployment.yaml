@@ -17,6 +17,7 @@ spec:
         prometheus.io/port: "9090"
         prometheus.io/path: "/metrics"
     spec:
+      terminationGracePeriodSeconds: 45 # 25 s stream drain + teardown
       containers:
         - name: ai
           image: todo/ai
@@ -44,6 +45,8 @@ spec:
                   optional: true
             - name: MOCK_PARSE
               value: "false"
+            - name: DB_MAX_CONNS
+              value: "5"
             - name: MIGRATIONS_DIR
               value: "file:///migrations/ai"
             - name: TODO_SERVICE_ADDR
@@ -57,6 +60,7 @@ spec:
           readinessProbe:
             grpc:
               port: 50054
+              service: readiness
             initialDelaySeconds: 3
             periodSeconds: 5
           livenessProbe:

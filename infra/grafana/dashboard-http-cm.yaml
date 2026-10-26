@@ -74,7 +74,7 @@ data:
         {
           "id": 5, "type": "timeseries", "title": "Request Rate by Path",
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
-          "targets": [{"expr": "sum by(method, path)(rate(http_requests_total{path!=\"/healthz\"}[1m]))", "legendFormat": "{{method}} {{path}}", "refId": "A"}],
+          "targets": [{"expr": "sum by(method, path)(rate(http_requests_total{path!~\"/healthz|/readyz\"}[1m]))", "legendFormat": "{{method}} {{path}}", "refId": "A"}],
           "fieldConfig": {"defaults": {
             "unit": "reqps",
             "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 15, "gradientMode": "opacity"}
@@ -94,7 +94,7 @@ data:
         {
           "id": 7, "type": "timeseries", "title": "p99 Latency by Path",
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
-          "targets": [{"expr": "histogram_quantile(0.99, sum by(path,le)(rate(http_duration_seconds_bucket{path!=\"/healthz\"}[5m])))", "legendFormat": "p99 {{path}}", "refId": "A"}],
+          "targets": [{"expr": "histogram_quantile(0.99, sum by(path,le)(rate(http_duration_seconds_bucket{path!~\"/healthz|/readyz\"}[5m])))", "legendFormat": "p99 {{path}}", "refId": "A"}],
           "fieldConfig": {"defaults": {
             "unit": "s",
             "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}
@@ -103,7 +103,7 @@ data:
         {
           "id": 8, "type": "timeseries", "title": "p50 Latency by Path",
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
-          "targets": [{"expr": "histogram_quantile(0.50, sum by(path,le)(rate(http_duration_seconds_bucket{path!=\"/healthz\"}[5m])))", "legendFormat": "p50 {{path}}", "refId": "A"}],
+          "targets": [{"expr": "histogram_quantile(0.50, sum by(path,le)(rate(http_duration_seconds_bucket{path!~\"/healthz|/readyz\"}[5m])))", "legendFormat": "p50 {{path}}", "refId": "A"}],
           "fieldConfig": {"defaults": {
             "unit": "s",
             "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}
@@ -112,7 +112,7 @@ data:
         {
           "id": 9, "type": "table", "title": "Top Paths by Volume",
           "gridPos": {"h": 6, "w": 24, "x": 0, "y": 20},
-          "targets": [{"expr": "sort_desc(sum by(method, path, code)(http_requests_total{path!=\"/healthz\"}))", "refId": "A", "instant": true, "legendFormat": ""}],
+          "targets": [{"expr": "sort_desc(sum by(method, path, code)(http_requests_total{path!~\"/healthz|/readyz\"}))", "refId": "A", "instant": true, "legendFormat": ""}],
           "options": {"sortBy": [{"displayName": "Value", "desc": true}]},
           "fieldConfig": {"defaults": {"unit": "short"}}
         }

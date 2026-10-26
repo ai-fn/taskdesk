@@ -30,7 +30,7 @@ func init() {
 		panic(err)
 	}
 	testKey = k
-	testKid = fmt.Sprintf("%x", k.PublicKey.N.Bytes()[:8]) // mirrors tokens.go
+	testKid = fmt.Sprintf("%x", k.N.Bytes()[:8]) // mirrors tokens.go
 }
 
 // authVerifier builds a Verifier over the fake auth client for use with
@@ -45,6 +45,7 @@ func mintTestToken(userID, email, sid string) string {
 		UserID:    userID,
 		Email:     email,
 		SessionID: sid,
+		Type:      tokens.TypeAccess,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-time.Minute)),
@@ -68,12 +69,17 @@ func u1Token() string { return "Bearer " + mintTestToken("u1", "u1@test.com", "s
 // else panics with a clear message to catch accidental calls.
 
 type fakeAuthClient struct {
-	validateToken        func(ctx context.Context, req *authv1.ValidateTokenRequest, opts ...grpc.CallOption) (*authv1.ValidateTokenResponse, error)
-	listSessions         func(ctx context.Context, req *authv1.ListSessionsRequest, opts ...grpc.CallOption) (*authv1.ListSessionsResponse, error)
-	revokeSession        func(ctx context.Context, req *authv1.RevokeSessionRequest, opts ...grpc.CallOption) (*authv1.RevokeSessionResponse, error)
-	revokeOtherSessions  func(ctx context.Context, req *authv1.RevokeOtherSessionsRequest, opts ...grpc.CallOption) (*authv1.RevokeOtherSessionsResponse, error)
-	updateUserLanguage   func(ctx context.Context, req *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error)
-	getUserByID          func(ctx context.Context, req *authv1.GetUserByIDRequest, opts ...grpc.CallOption) (*authv1.GetUserByIDResponse, error)
+	validateToken       func(ctx context.Context, req *authv1.ValidateTokenRequest, opts ...grpc.CallOption) (*authv1.ValidateTokenResponse, error)
+	listSessions        func(ctx context.Context, req *authv1.ListSessionsRequest, opts ...grpc.CallOption) (*authv1.ListSessionsResponse, error)
+	revokeSession       func(ctx context.Context, req *authv1.RevokeSessionRequest, opts ...grpc.CallOption) (*authv1.RevokeSessionResponse, error)
+	revokeOtherSessions func(ctx context.Context, req *authv1.RevokeOtherSessionsRequest, opts ...grpc.CallOption) (*authv1.RevokeOtherSessionsResponse, error)
+	updateUserLanguage  func(ctx context.Context, req *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error)
+	updateUserTimeZone  func(ctx context.Context, req *authv1.UpdateUserTimeZoneRequest, opts ...grpc.CallOption) (*authv1.UpdateUserTimeZoneResponse, error)
+	login               func(ctx context.Context, req *authv1.LoginRequest, opts ...grpc.CallOption) (*authv1.LoginResponse, error)
+	logout              func(ctx context.Context, req *authv1.LogoutRequest, opts ...grpc.CallOption) (*authv1.LogoutResponse, error)
+	refreshToken        func(ctx context.Context, req *authv1.RefreshTokenRequest, opts ...grpc.CallOption) (*authv1.RefreshTokenResponse, error)
+	resetPassword       func(ctx context.Context, req *authv1.ResetPasswordRequest, opts ...grpc.CallOption) (*authv1.ResetPasswordResponse, error)
+	getUserByID         func(ctx context.Context, req *authv1.GetUserByIDRequest, opts ...grpc.CallOption) (*authv1.GetUserByIDResponse, error)
 }
 
 func (f *fakeAuthClient) ValidateToken(ctx context.Context, req *authv1.ValidateTokenRequest, opts ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
@@ -110,24 +116,39 @@ func (f *fakeAuthClient) SignUp(ctx context.Context, in *authv1.SignUpRequest, o
 	panic("not used in handler tests")
 }
 func (f *fakeAuthClient) Login(ctx context.Context, in *authv1.LoginRequest, opts ...grpc.CallOption) (*authv1.LoginResponse, error) {
-	panic("not used in handler tests")
+	if f.login == nil {
+		panic("not used in handler tests")
+	}
+	return f.login(ctx, in, opts...)
 }
 func (f *fakeAuthClient) RefreshToken(ctx context.Context, in *authv1.RefreshTokenRequest, opts ...grpc.CallOption) (*authv1.RefreshTokenResponse, error) {
-	panic("not used in handler tests")
+	if f.refreshToken == nil {
+		panic("not used in handler tests")
+	}
+	return f.refreshToken(ctx, in, opts...)
 }
 func (f *fakeAuthClient) Logout(ctx context.Context, in *authv1.LogoutRequest, opts ...grpc.CallOption) (*authv1.LogoutResponse, error) {
-	panic("not used in handler tests")
+	if f.logout == nil {
+		panic("not used in handler tests")
+	}
+	return f.logout(ctx, in, opts...)
 }
 func (f *fakeAuthClient) GetJWKS(ctx context.Context, in *authv1.GetJWKSRequest, opts ...grpc.CallOption) (*authv1.GetJWKSResponse, error) {
 	return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{{
 		Kty: "RSA", Kid: testKid, Use: "sig", Alg: "RS256",
-		N: base64.RawURLEncoding.EncodeToString(testKey.PublicKey.N.Bytes()),
+		N: base64.RawURLEncoding.EncodeToString(testKey.N.Bytes()),
 		E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(testKey.PublicKey.E)).Bytes()),
 	}}}, nil
 }
 func (f *fakeAuthClient) ListUserIDs(ctx context.Context, in *authv1.ListUserIDsRequest, opts ...grpc.CallOption) (*authv1.ListUserIDsResponse, error) {
 	panic("not used in handler tests")
 }
+
+// ValidateSession reports every session as live so tests exercise the handler, not revocation.
+func (f *fakeAuthClient) ValidateSession(context.Context, *authv1.ValidateSessionRequest, ...grpc.CallOption) (*authv1.ValidateSessionResponse, error) {
+	return &authv1.ValidateSessionResponse{Active: true}, nil
+}
+
 func (f *fakeAuthClient) GetUserByID(ctx context.Context, in *authv1.GetUserByIDRequest, opts ...grpc.CallOption) (*authv1.GetUserByIDResponse, error) {
 	if f.getUserByID != nil {
 		return f.getUserByID(ctx, in, opts...)
@@ -145,6 +166,12 @@ func (f *fakeAuthClient) UpdateUserLanguage(ctx context.Context, in *authv1.Upda
 	}
 	panic("fakeAuthClient.UpdateUserLanguage not configured")
 }
+func (f *fakeAuthClient) UpdateUserTimeZone(ctx context.Context, in *authv1.UpdateUserTimeZoneRequest, opts ...grpc.CallOption) (*authv1.UpdateUserTimeZoneResponse, error) {
+	if f.updateUserTimeZone != nil {
+		return f.updateUserTimeZone(ctx, in, opts...)
+	}
+	panic("fakeAuthClient.UpdateUserTimeZone not configured")
+}
 func (f *fakeAuthClient) OAuthSignIn(ctx context.Context, in *authv1.OAuthSignInRequest, opts ...grpc.CallOption) (*authv1.OAuthSignInResponse, error) {
 	panic("not used in handler tests")
 }
@@ -152,7 +179,10 @@ func (f *fakeAuthClient) RequestPasswordReset(ctx context.Context, in *authv1.Re
 	panic("not used in handler tests")
 }
 func (f *fakeAuthClient) ResetPassword(ctx context.Context, in *authv1.ResetPasswordRequest, opts ...grpc.CallOption) (*authv1.ResetPasswordResponse, error) {
-	panic("not used in handler tests")
+	if f.resetPassword == nil {
+		panic("not used in handler tests")
+	}
+	return f.resetPassword(ctx, in, opts...)
 }
 func (f *fakeAuthClient) RequestEmailVerification(ctx context.Context, in *authv1.RequestEmailVerificationRequest, opts ...grpc.CallOption) (*authv1.RequestEmailVerificationResponse, error) {
 	panic("not used in handler tests")

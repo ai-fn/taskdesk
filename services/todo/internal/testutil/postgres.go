@@ -21,34 +21,15 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// StartPostgres starts one ephemeral postgres:16-alpine container, applies
-// all todo migrations (000001–000016), and returns the pool and a teardown
-// function. Designed for use in TestMain so the container is shared across all
-// tests in a package — far cheaper than one container per test.
-//
-// Usage in a test package:
-//
-//	var testPool *pgxpool.Pool
-//
-//	func TestMain(m *testing.M) {
-//	    pool, teardown := testutil.StartPostgres()
-//	    testPool = pool
-//	    code := m.Run()
-//	    teardown()
-//	    os.Exit(code)
-//	}
-//
-// When Docker is unavailable the function prints a skip notice and calls
-// os.Exit(0) so the binary reports success rather than failure.
+// StartPostgres runs one pgvector Postgres container (migrations need vector and pg_trgm)
+// with all todo migrations applied, for TestMain. Without Docker it returns a nil pool so
+// DB tests can skip, unless REQUIRE_DOCKER=1 (set in CI), which makes that a failure.
 func StartPostgres() (pool *pgxpool.Pool, teardown func()) {
-	// Disable the ryuk reaper — it requires a separate image that may not be
-	// pre-pulled in restricted-network environments.
-	os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+	// Ryuk needs a separate image that may not be pre-pulled.
+	_ = os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
 
 	ctx := context.Background()
 
-	// pgvector/pgvector:pg16 is used instead of postgres:16-alpine because
-	// migration 000006 requires the vector extension.
 	container, err := tcpostgres.Run(ctx,
 		"pgvector/pgvector:pg16",
 		tcpostgres.WithDatabase("testtodo"),
@@ -61,30 +42,30 @@ func StartPostgres() (pool *pgxpool.Pool, teardown func()) {
 		),
 	)
 	if err != nil {
-		if isDockerUnavailable(err) {
-			fmt.Println("SKIP: Docker unavailable, skipping DB integration tests:", err)
-			os.Exit(0)
+		if isDockerUnavailable(err) && os.Getenv("REQUIRE_DOCKER") != "1" {
+			fmt.Println("SKIP: Docker unavailable, DB integration tests will be skipped:", err)
+			return nil, func() {}
 		}
 		fmt.Println("FATAL: start postgres container:", err)
+		os.Exit(1)
+	}
+	fatal := func(what string, err error) {
+		fmt.Printf("FATAL: %s: %v\n", what, err)
+		_ = testcontainers.TerminateContainer(container) // Ryuk is off, so don't orphan it
 		os.Exit(1)
 	}
 
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Println("FATAL: container DSN:", err)
-		os.Exit(1)
+		fatal("container DSN", err)
 	}
-
 	p, err := pkgpgx.New(ctx, pkgpgx.Config{DSN: dsn, MaxConns: 5, MinConns: 1}, slog.Default())
 	if err != nil {
-		fmt.Println("FATAL: open pool:", err)
-		os.Exit(1)
+		fatal("open pool", err)
 	}
-
-	migrationsDir := "file://" + findMigrationsDir()
-	if err := pkgpgx.Migrate(dsn, migrationsDir, slog.Default()); err != nil {
-		fmt.Println("FATAL: migrate:", err)
-		os.Exit(1)
+	if err := pkgpgx.Migrate(dsn, "file://"+findMigrationsDir(), slog.Default()); err != nil {
+		p.Close()
+		fatal("migrate", err)
 	}
 
 	return p, func() {
@@ -95,12 +76,30 @@ func StartPostgres() (pool *pgxpool.Pool, teardown func()) {
 	}
 }
 
-// Truncate removes all rows from todo tables between tests, preserving schema.
+// Truncate empties every todo table between tests, preserving schema.
 func Truncate(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	_, err := pool.Exec(context.Background(),
-		`TRUNCATE todo.user_storage, todo.attachments, todo.blob_gc, todo.outbox, todo.tasks, todo.lists, todo.list_groups CASCADE`)
+	ctx := context.Background()
+	rows, err := pool.Query(ctx, `SELECT quote_ident(tablename) FROM pg_tables WHERE schemaname = 'todo'`)
 	if err != nil {
+		t.Fatalf("list tables: %v", err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan table: %v", err)
+		}
+		tables = append(tables, "todo."+name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("list tables: %v", err)
+	}
+	if len(tables) == 0 {
+		return
+	}
+	if _, err := pool.Exec(ctx, "TRUNCATE "+strings.Join(tables, ", ")+" CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 }
@@ -141,9 +140,8 @@ func isDockerUnavailable(err error) bool {
 	for _, s := range []string{
 		"Cannot connect to the Docker daemon",
 		"docker: not found",
-		"no such file",
-		"permission denied",
-		"connection refused",
+		"rootless Docker not found",
+		"docker.sock: connect: no such file",
 	} {
 		if strings.Contains(msg, s) {
 			return true

@@ -53,7 +53,9 @@ func TestHandleGRPCError_MessageStripped(t *testing.T) {
 	handleGRPCError(w, status.Error(codes.NotFound, "session not found"))
 
 	var body map[string]string
-	json.NewDecoder(w.Body).Decode(&body)
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
 	if body["error"] != "session not found" {
 		t.Errorf(`body["error"] = %q, want "session not found"`, body["error"])
 	}

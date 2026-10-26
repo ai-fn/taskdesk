@@ -3,13 +3,18 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/fsociety/todo/services/auth/internal/domain"
 	"github.com/fsociety/todo/services/auth/internal/store"
 	"github.com/fsociety/todo/services/auth/internal/testutil"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -229,6 +234,39 @@ func TestDeleteSessionByTokenHash(t *testing.T) {
 	}
 }
 
+func TestSessionActive(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u31", "act@example.com"))
+	mustCreateSession(t, s, uuidSLive, "u31", "hashAct", time.Hour)
+	if err := s.CreateSession(ctx, uuidSDead, "u31", "hashExp", "1.2.3.4", "TestAgent/1.0", time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("CreateSession (expired): %v", err)
+	}
+
+	cases := []struct {
+		name string
+		id   string
+		want bool
+	}{
+		{"live", uuidSLive, true},
+		{"expired", uuidSDead, false},
+		{"unknown", "00000000-0000-0000-0000-000000000000", false},
+	}
+	for _, tc := range cases {
+		got, err := s.SessionActive(ctx, tc.id)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: SessionActive = %v, %v; want %v", tc.name, got, err, tc.want)
+		}
+	}
+
+	if err := s.DeleteSessionByTokenHash(ctx, "hashAct"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.SessionActive(ctx, uuidSLive); got {
+		t.Error("deleted session still active")
+	}
+}
+
 func TestRevokeSession_OwnershipScoped(t *testing.T) {
 	s := newStore(t)
 	mustCreateUser(t, s, makeUser("u40", "owner@example.com"))
@@ -313,6 +351,133 @@ func TestLinkOAuth_Idempotent(t *testing.T) {
 	}
 }
 
+func TestClaimUnverifiedAccount(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	pw := "bcrypt-hash"
+	u := makeUser("u70", "claim@example.com")
+	u.PasswordHash = &pw
+	mustCreateUser(t, s, u)
+	mustCreateSession(t, s, uuidS1, "u70", "hashClaim", time.Hour)
+	if err := s.CreateVerificationCode(ctx, "00000000-0000-0000-0000-0000000000c1", "u70", "email_verify", "codehash", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, err := s.ClaimUnverifiedAccount(ctx, "u70")
+	if err != nil || !claimed {
+		t.Fatalf("ClaimUnverifiedAccount = %v, %v; want true, nil", claimed, err)
+	}
+	got, err := s.GetUserByID(ctx, "u70")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PasswordHash != nil || !got.EmailVerified {
+		t.Errorf("after claim: password=%v verified=%v, want nil/true", got.PasswordHash, got.EmailVerified)
+	}
+	if sessions, _ := s.ListSessions(ctx, "u70"); len(sessions) != 0 {
+		t.Errorf("sessions after claim = %d, want 0", len(sessions))
+	}
+	if _, err := s.GetActiveVerificationCode(ctx, "u70", "email_verify"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("pending code survived the claim: err = %v", err)
+	}
+
+	// Already verified now: a second claim must not touch the account.
+	if claimed, err := s.ClaimUnverifiedAccount(ctx, "u70"); err != nil || claimed {
+		t.Errorf("second claim = %v, %v; want false, nil", claimed, err)
+	}
+}
+
+func TestClaimUnverifiedAccount_OAuthOnlyKeepsSessions(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u72", "legacy@example.com")) // no password, unverified
+	mustCreateSession(t, s, uuidS1, "u72", "hashLegacy", time.Hour)
+
+	if claimed, err := s.ClaimUnverifiedAccount(ctx, "u72"); err != nil || !claimed {
+		t.Fatalf("claim = %v, %v; want true, nil", claimed, err)
+	}
+	if sessions, _ := s.ListSessions(ctx, "u72"); len(sessions) != 1 {
+		t.Errorf("OAuth-only account lost its sessions: %d", len(sessions))
+	}
+}
+
+func TestCreateLoginSession_GuardedByPasswordHash(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	pw := "hash-1"
+	u := makeUser("u73", "guard@example.com")
+	u.PasswordHash = &pw
+	mustCreateUser(t, s, u)
+	exp := time.Now().Add(time.Hour)
+
+	if err := s.CreateLoginSession(ctx, uuidS1, "u73", "tok1", "1.2.3.4", "UA", exp, "hash-1"); err != nil {
+		t.Fatalf("matching hash: %v", err)
+	}
+	if err := s.CreateLoginSession(ctx, uuidS2, "u73", "tok2", "1.2.3.4", "UA", exp, "stale-hash"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("stale hash: err = %v, want ErrNotFound", err)
+	}
+	if _, err := s.ClaimUnverifiedAccount(ctx, "u73"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateLoginSession(ctx, uuidS2, "u73", "tok2", "1.2.3.4", "UA", exp, "hash-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("after claim: err = %v, want ErrNotFound", err)
+	}
+}
+
+// A login racing a claim must never leave a session behind: it either lands before
+// the claim (and is deleted by it) or after (and is refused).
+func TestClaimUnverifiedAccount_NoSessionSurvivesRacingLogin(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("race%d", i)
+		pw := "hash"
+		u := makeUser(id, id+"@example.com")
+		u.PasswordHash = &pw
+		mustCreateUser(t, s, u)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = s.CreateLoginSession(ctx, uuid.NewString(), id, "tok-"+id, "1.2.3.4", "UA", time.Now().Add(time.Hour), "hash")
+		}()
+		go func() {
+			defer wg.Done()
+			if _, err := s.ClaimUnverifiedAccount(ctx, id); err != nil {
+				t.Errorf("claim: %v", err)
+			}
+		}()
+		wg.Wait()
+
+		if sessions, _ := s.ListSessions(ctx, id); len(sessions) != 0 {
+			t.Fatalf("iteration %d: %d session(s) survived the claim", i, len(sessions))
+		}
+	}
+}
+
+func TestClaimUnverifiedAccount_VerifiedUntouched(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	pw := "bcrypt-hash"
+	u := makeUser("u71", "verified@example.com")
+	u.PasswordHash = &pw
+	u.EmailVerified = true
+	mustCreateUser(t, s, u)
+	mustCreateSession(t, s, uuidS1, "u71", "hashV", time.Hour)
+
+	if claimed, err := s.ClaimUnverifiedAccount(ctx, "u71"); err != nil || claimed {
+		t.Fatalf("claim of verified account = %v, %v; want false, nil", claimed, err)
+	}
+	got, _ := s.GetUserByID(ctx, "u71")
+	if got.PasswordHash == nil {
+		t.Error("verified account lost its password")
+	}
+	if sessions, _ := s.ListSessions(ctx, "u71"); len(sessions) != 1 {
+		t.Errorf("verified account sessions = %d, want 1", len(sessions))
+	}
+}
+
 // ── language column ────────────────────────────────────────────────────────────
 
 func TestCreateUser_DefaultLanguageIsEn(t *testing.T) {
@@ -357,6 +522,33 @@ func TestUpdateUserLanguage_NotFound(t *testing.T) {
 	err := s.UpdateUserLanguage(context.Background(), "nonexistent", "zh")
 	if err == nil {
 		t.Error("expected error for nonexistent user, got nil")
+	}
+}
+
+func TestUpdateUserTimeZone_DefaultRoundTripAndNotFound(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("utz1", "tz1@example.com"))
+
+	got, err := s.GetUserByID(ctx, "utz1")
+	if err != nil || got.TimeZone != "UTC" {
+		t.Fatalf("default time zone = %q, err %v; want UTC", got.TimeZone, err)
+	}
+	for range 2 { // second call hits the unchanged-row path and must still succeed
+		if err := s.UpdateUserTimeZone(ctx, "utz1", "Asia/Shanghai"); err != nil {
+			t.Fatalf("UpdateUserTimeZone: %v", err)
+		}
+	}
+	got, _ = s.GetUserByID(ctx, "utz1")
+	if got.TimeZone != "Asia/Shanghai" {
+		t.Errorf("TimeZone = %q, want Asia/Shanghai", got.TimeZone)
+	}
+	users, _, err := s.ListUserSummaries(ctx, "", "", 10)
+	if err != nil || len(users) == 0 || users[0].TimeZone != "Asia/Shanghai" {
+		t.Errorf("ListUserSummaries time zone = %+v, err %v", users, err)
+	}
+	if err := s.UpdateUserTimeZone(ctx, "missing", "UTC"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("missing user: got %v, want ErrNotFound", err)
 	}
 }
 
@@ -515,5 +707,301 @@ func TestRedeemPromoCode_PerUserLimitEnforced(t *testing.T) {
 	err := s.RedeemPromoCode(context.Background(), pc, "plim-u1", "plim1@test.com", "sub-plim-2")
 	if !errors.Is(err, store.ErrPromoCodePerUserLimitReached) {
 		t.Errorf("want ErrPromoCodePerUserLimitReached, got %v", err)
+	}
+}
+
+func TestClaimCodeAttempt_ParallelGuessesNeverExceedTheCap(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u80", "otp@example.com"))
+
+	const maxAttempts, guessers, rounds = 3, 40, 10 // the race is probabilistic; rounds make it reliable
+	for round := range rounds {
+		if err := s.CreateVerificationCode(ctx, uuid.NewString(), "u80", "email_verify", "h", time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		var granted atomic.Int32
+		var wg sync.WaitGroup
+		for range guessers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				vc, err := s.ClaimCodeAttempt(ctx, "u80", "email_verify", maxAttempts)
+				switch {
+				case err == nil:
+					if vc.CodeHash != "h" {
+						t.Errorf("hash = %q", vc.CodeHash)
+					}
+					granted.Add(1)
+				case !errors.Is(err, store.ErrNotFound):
+					t.Errorf("unexpected error: %v", err)
+				}
+			}()
+		}
+		wg.Wait()
+		if got := granted.Load(); got != maxAttempts {
+			t.Fatalf("round %d: %d guesses were evaluated, want exactly %d", round, got, maxAttempts)
+		}
+		// Burn the exhausted code so the next round gets a fresh latest one.
+		if _, err := testPool.Exec(ctx, `UPDATE auth.verification_codes SET consumed_at = now() WHERE user_id = 'u80'`); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+func TestClaimCodeAttempt_OnlyTheLatestLiveCode(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u81", "otp2@example.com"))
+
+	if _, err := s.ClaimCodeAttempt(ctx, "u81", "email_verify", 3); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("no code: err = %v, want ErrNotFound", err)
+	}
+
+	mk := func(id, hash string, expires time.Duration) {
+		t.Helper()
+		if err := s.CreateVerificationCode(ctx, id, "u81", "email_verify", hash, time.Now().Add(expires)); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond) // distinct created_at
+	}
+	mk("00000000-0000-0000-0000-0000000000e1", "old", time.Hour)
+	mk("00000000-0000-0000-0000-0000000000e2", "expired", -time.Minute)
+
+	vc, err := s.ClaimCodeAttempt(ctx, "u81", "email_verify", 3)
+	if err != nil || vc.CodeHash != "old" || vc.Attempts != 1 {
+		t.Fatalf("claim = %+v, %v; want the old live code with attempts=1", vc, err)
+	}
+	if err := s.ConsumeCode(ctx, vc.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimCodeAttempt(ctx, "u81", "email_verify", 3); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("consumed code: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSetStripeCustomerIDIfUnset_FirstWriterWins(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u90", "stripe@example.com"))
+
+	got, err := s.SetStripeCustomerIDIfUnset(ctx, "u90", "cus_first")
+	if err != nil || got != "cus_first" {
+		t.Fatalf("first = %q, %v", got, err)
+	}
+	got, err = s.SetStripeCustomerIDIfUnset(ctx, "u90", "cus_second")
+	if err != nil || got != "cus_first" {
+		t.Errorf("second = %q, %v; want the first customer kept", got, err)
+	}
+	if _, err := s.SetStripeCustomerIDIfUnset(ctx, "nobody", "cus_x"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown user: err = %v, want ErrNotFound", err)
+	}
+
+	mustCreateUser(t, s, makeUser("u91", "stripe2@example.com"))
+	var pgErr *pgconn.PgError
+	if _, err := s.SetStripeCustomerIDIfUnset(ctx, "u91", "cus_first"); !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Errorf("customer attached to a second user: err = %v, want unique violation", err)
+	}
+}
+
+func TestMoveSubscription_KeepsPlanInSyncAndRespectsOtherSources(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u92", "mix@example.com"))
+	plan := func() string {
+		t.Helper()
+		u, err := s.GetUserByID(ctx, "u92")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u.Plan
+	}
+
+	if err := s.CreateSubscriptionAndSetPlan(ctx, makeSub("sub-m1", "u92", "stripe", "sub_mix"), "pro"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReactivateSubscriptionBySourceRef(ctx, "sub_mix"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("reactivating an active row: err = %v, want ErrNotFound", err)
+	}
+	if uid, err := s.CancelSubscriptionBySourceRef(ctx, "sub_mix"); err != nil || uid != "u92" {
+		t.Fatalf("cancel = %q, %v", uid, err)
+	}
+	if got := plan(); got != "free" {
+		t.Errorf("plan after cancel = %q, want free (updated in the same transaction)", got)
+	}
+	if uid, err := s.ReactivateSubscriptionBySourceRef(ctx, "sub_mix"); err != nil || uid != "u92" {
+		t.Fatalf("reactivate = %q, %v", uid, err)
+	}
+	if got := plan(); got != "pro" {
+		t.Errorf("plan after reactivate = %q, want pro", got)
+	}
+
+	// A promo subscription keeps the user on pro when the Stripe one ends.
+	if err := s.CreateSubscriptionAndSetPlan(ctx, makeSub("sub-m2", "u92", "promo_code", "promo-ref"), "pro"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CancelSubscriptionBySourceRef(ctx, "sub_mix"); err != nil {
+		t.Fatal(err)
+	}
+	if got := plan(); got != "pro" {
+		t.Errorf("plan with a live promo subscription = %q, want pro", got)
+	}
+}
+
+func TestEmails_AreMatchedCaseInsensitively(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	u := makeUser("u100", "  Alice@Example.COM ")
+	mustCreateUser(t, s, u)
+	if u.Email != "alice@example.com" {
+		t.Errorf("stored email = %q, want lowercased and trimmed", u.Email)
+	}
+
+	for _, probe := range []string{"alice@example.com", "ALICE@EXAMPLE.COM", " Alice@Example.com"} {
+		got, err := s.GetUserByEmail(ctx, probe)
+		if err != nil || got.ID != "u100" {
+			t.Errorf("GetUserByEmail(%q) = %v, %v; want u100", probe, got, err)
+		}
+	}
+	if err := s.CreateUser(ctx, makeUser("u101", "ALICE@example.com")); !errors.Is(err, store.ErrEmailTaken) {
+		t.Errorf("same address in another case: err = %v, want ErrEmailTaken", err)
+	}
+	if err := s.CreateUserNoPassword(ctx, makeUser("u102", "Alice@example.com")); !errors.Is(err, store.ErrEmailTaken) {
+		t.Errorf("oauth signup with another case: err = %v, want ErrEmailTaken", err)
+	}
+}
+
+func TestEmails_LegacyMixedCaseRowIsStillFoundAndBlocksDuplicates(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	// A row written before normalization.
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO auth.users (id, email, name, language) VALUES ('legacy1', 'Bob@Example.com', 'Bob', 'en')`); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetUserByEmail(ctx, "bob@example.com")
+	if err != nil || got.ID != "legacy1" {
+		t.Fatalf("GetUserByEmail = %v, %v; want the legacy row", got, err)
+	}
+	if err := s.CreateUser(ctx, makeUser("u103", "bob@example.com")); !errors.Is(err, store.ErrEmailTaken) {
+		t.Errorf("duplicate of a legacy row: err = %v, want ErrEmailTaken", err)
+	}
+}
+
+func TestRedeemPromoCode_AllowedEmailIgnoresCase(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u104", "promo@example.com"))
+	allowed, maxUse := "Promo@Example.com", 5
+	pc := &domain.PromoCode{ID: uuid.NewString(), Code: "CASE1", AllowedEmail: &allowed, MaxUsageCount: &maxUse, MaxUsagePerUser: 1}
+	if err := s.CreatePromoCode(ctx, pc); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RedeemPromoCode(ctx, pc, "u104", "PROMO@example.com", uuid.NewString()); err != nil {
+		t.Errorf("redeem with a different case: %v", err)
+	}
+}
+
+func TestMigration000012_LowercasesOnlyWhatCannotCollide(t *testing.T) {
+	_ = newStore(t)
+	ctx := context.Background()
+	sql, err := os.ReadFile("../../../../migrations/auth/000012_users_email_lowercase.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range [][2]string{{"m1", "Zed@Example.com"}, {"m2", "Dup@Example.com"}, {"m3", "dup@example.com"}} {
+		if _, err := testPool.Exec(ctx, `INSERT INTO auth.users (id, email, name, language) VALUES ($1, $2, 'n', 'en')`, r[0], r[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := testPool.Exec(ctx, string(sql)); err != nil {
+		t.Fatalf("migration: %v", err)
+	}
+
+	emails := map[string]string{}
+	rows, err := testPool.Query(ctx, `SELECT id, email FROM auth.users ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, email string
+		if err := rows.Scan(&id, &email); err != nil {
+			t.Fatal(err)
+		}
+		emails[id] = email
+	}
+	if emails["m1"] != "zed@example.com" {
+		t.Errorf("non-colliding row = %q, want lowercased", emails["m1"])
+	}
+	if emails["m2"] != "Dup@Example.com" || emails["m3"] != "dup@example.com" {
+		t.Errorf("colliding rows were rewritten: %q / %q (they need a human merge)", emails["m2"], emails["m3"])
+	}
+}
+
+func TestCreateUser_EmptyEmailAfterNormalizationIsRejected(t *testing.T) {
+	s := newStore(t)
+	if err := s.CreateUser(context.Background(), makeUser("u110", "  ")); !errors.Is(err, store.ErrInvalidEmail) {
+		t.Errorf("err = %v, want ErrInvalidEmail", err)
+	}
+}
+
+// A request whose IP could not be determined must still get a session (ip_address is nullable).
+func TestCreateSession_EmptyIPStoresNull(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	h := "pw-hash"
+	u := makeUser("u-noip", "noip@example.com")
+	u.PasswordHash = &h
+	mustCreateUser(t, s, u)
+
+	if err := s.CreateSession(ctx, uuidS1, "u-noip", "h1", "", "UA", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession with empty ip: %v", err)
+	}
+	if err := s.CreateLoginSession(ctx, uuidS2, "u-noip", "h2", "", "UA", time.Now().Add(time.Hour), h); err != nil {
+		t.Fatalf("CreateLoginSession with empty ip: %v", err)
+	}
+	var nulls int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM auth.sessions WHERE user_id = 'u-noip' AND ip_address IS NULL`).Scan(&nulls); err != nil || nulls != 2 {
+		t.Errorf("sessions with NULL ip = %d (err %v), want 2", nulls, err)
+	}
+}
+
+func TestRotateSession_ExpiredSessionIsNotRevived(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u-exp", "exp@example.com"))
+	mustCreateSession(t, s, uuidS1, "u-exp", "expHash", -time.Minute)
+
+	if _, _, err := s.RotateSession(ctx, "expHash", "newExp", time.Now().Add(time.Hour)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("rotating an expired session: want ErrNotFound, got %v", err)
+	}
+	var hash string
+	if err := testPool.QueryRow(ctx, `SELECT token_hash FROM auth.sessions WHERE id = $1`, uuidS1).Scan(&hash); err != nil || hash != "expHash" {
+		t.Errorf("expired session was modified: hash %q, err %v", hash, err)
+	}
+}
+
+func TestDeleteExpiredSessions_BatchedAndOnlyExpired(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u-gc", "gc@example.com"))
+	mustCreateSession(t, s, uuidS1, "u-gc", "live", time.Hour)
+	mustCreateSession(t, s, uuidS2, "u-gc", "dead1", -time.Hour)
+	mustCreateSession(t, s, uuidS3, "u-gc", "dead2", -2*time.Hour)
+
+	n, err := s.DeleteExpiredSessions(ctx, 1)
+	if err != nil || n != 1 {
+		t.Fatalf("first batch = %d, %v; want 1 (limit respected)", n, err)
+	}
+	n, err = s.DeleteExpiredSessions(ctx, 10)
+	if err != nil || n != 1 {
+		t.Fatalf("second batch = %d, %v; want the remaining 1", n, err)
+	}
+	var live int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM auth.sessions WHERE user_id = 'u-gc'`).Scan(&live); err != nil || live != 1 {
+		t.Errorf("sessions left = %d (err %v), want the 1 live one", live, err)
 	}
 }

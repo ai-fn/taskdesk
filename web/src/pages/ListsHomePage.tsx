@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { listTasks } from '@/api/tasks'
+import { listAllTasks } from '@/api/tasks'
 import { taskKeys } from '@/api/queryKeys'
 import { useLists, useCreateList } from '@/hooks/useLists'
 import { useGroups } from '@/hooks/useGroups'
@@ -25,10 +25,11 @@ import { ToastContainer, type ToastMessage } from '@/components/ui/Toast'
 
 type TaskMode = 'quick' | 'ai'
 
-function useSystemCount(filter: Parameters<typeof listTasks>[0]) {
+// Shares cache entries with the task list pages (same key), so it must fetch the same full result.
+function useSystemCount(filter: Parameters<typeof listAllTasks>[0]) {
   return useQuery({
     queryKey: taskKeys.list(JSON.stringify(filter)),
-    queryFn: () => listTasks(filter),
+    queryFn: ({ signal }) => listAllTasks(filter, signal),
     staleTime: 60_000,
     select: (data) => data.tasks?.length ?? 0,
   })
@@ -54,12 +55,7 @@ export function ListsHomePage() {
   const { data: countToday = 0 }     = useSystemCount({ due_today: true })
   const { data: countScheduled = 0 } = useSystemCount({ has_due_date: true })
   const { data: countFlagged = 0 }   = useSystemCount({ flagged_only: true })
-  const { data: countCompleted = 0 } = useQuery({
-    queryKey: taskKeys.list(JSON.stringify({ status: 3 })),
-    queryFn: () => listTasks(),
-    staleTime: 60_000,
-    select: (data) => (data.tasks ?? []).filter((t) => t.status === 3).length,
-  })
+  const { data: countCompleted = 0 } = useSystemCount({ status: 3 })
   const { data: countDeleted = 0 }   = useSystemCount({ include_deleted: true })
 
   const systemCounts: Record<string, number> = {
@@ -108,9 +104,9 @@ export function ListsHomePage() {
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }, [])
 
-  async function handleCreateTask(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string; list_id?: string | null; flagged?: boolean; subtasks?: string[]; files?: File[] }) {
-    const { list_id, subtasks = [], files = [], ...rest } = values
-    const newTask = await createTask.mutateAsync({ ...rest, list_id: list_id ?? undefined })
+  async function handleCreateTask(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string | null; list_id?: string | null; flagged?: boolean; subtasks?: string[]; files?: File[] }) {
+    const { list_id, due_at, subtasks = [], files = [], ...rest } = values
+    const newTask = await createTask.mutateAsync({ ...rest, due_at: due_at ?? undefined, list_id: list_id ?? undefined })
     if (subtasks.length > 0) {
       await Promise.all(subtasks.map((title) =>
         createTask.mutateAsync({ title, parent_task_id: newTask.id, list_id: newTask.list_id ?? undefined })

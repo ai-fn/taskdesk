@@ -30,16 +30,22 @@ func newKey(t *testing.T) (*rsa.PrivateKey, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kid := fmt.Sprintf("%x", key.PublicKey.N.Bytes()[:8])
+	kid := fmt.Sprintf("%x", key.N.Bytes()[:8])
 	return key, kid
 }
 
 func mint(t *testing.T, key *rsa.PrivateKey, kid, userID, email, sid string, exp time.Time) string {
 	t.Helper()
+	return mintTyped(t, key, kid, userID, email, sid, tokens.TypeAccess, exp)
+}
+
+func mintTyped(t *testing.T, key *rsa.PrivateKey, kid, userID, email, sid, typ string, exp time.Time) string {
+	t.Helper()
 	claims := tokens.Claims{
 		UserID:    userID,
 		Email:     email,
 		SessionID: sid,
+		Type:      typ,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-time.Minute)),
@@ -63,14 +69,22 @@ type fakeAuth struct {
 	kid  string
 	plan string
 	lang string
+	// unverified makes the profile report an unverified email.
+	unverified bool
 	// userErr, when set, makes GetUserByID fail (simulates auth-service down).
 	userErr error
+	// revoked makes ValidateSession report the session as gone.
+	revoked bool
+}
+
+func (f *fakeAuth) ValidateSession(context.Context, *authv1.ValidateSessionRequest, ...grpc.CallOption) (*authv1.ValidateSessionResponse, error) {
+	return &authv1.ValidateSessionResponse{Active: !f.revoked}, nil
 }
 
 func (f *fakeAuth) GetJWKS(_ context.Context, _ *authv1.GetJWKSRequest, _ ...grpc.CallOption) (*authv1.GetJWKSResponse, error) {
 	return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{{
 		Kty: "RSA", Kid: f.kid, Use: "sig", Alg: "RS256",
-		N: base64.RawURLEncoding.EncodeToString(f.key.PublicKey.N.Bytes()),
+		N: base64.RawURLEncoding.EncodeToString(f.key.N.Bytes()),
 		E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(f.key.PublicKey.E)).Bytes()),
 	}}}, nil
 }
@@ -80,7 +94,7 @@ func (f *fakeAuth) GetUserByID(_ context.Context, in *authv1.GetUserByIDRequest,
 		return nil, f.userErr
 	}
 	return &authv1.GetUserByIDResponse{User: &authv1.UserSummary{
-		UserId: in.UserId, Language: f.lang, Plan: f.plan, EmailVerified: true,
+		UserId: in.UserId, Language: f.lang, Plan: f.plan, EmailVerified: !f.unverified,
 	}}, nil
 }
 
@@ -91,6 +105,13 @@ func newMiddleware(t *testing.T, f *fakeAuth) func(http.Handler) http.Handler {
 	v := auth.NewVerifier(f)
 	t.Cleanup(v.Stop)
 	return middleware.Authenticate(v)
+}
+
+func newWSMiddleware(t *testing.T, f *fakeAuth) func(http.Handler) http.Handler {
+	t.Helper()
+	v := auth.NewVerifier(f)
+	t.Cleanup(v.Stop)
+	return middleware.AuthenticateWS(v)
 }
 
 // probe is a simple next handler that captures the context values set by Authenticate.
@@ -207,6 +228,51 @@ func TestAuthenticate_InvalidToken_Returns401(t *testing.T) {
 	}
 }
 
+func TestAuthenticate_RefreshToken_Returns401(t *testing.T) {
+	key, kid := newKey(t)
+	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
+	wsMW := newWSMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
+
+	tok := mintTyped(t, key, kid, "u", "u@x.com", "s", tokens.TypeRefresh, time.Now().Add(time.Hour))
+	for name, c := range map[string]struct {
+		mw  func(http.Handler) http.Handler
+		req *http.Request
+	}{
+		"header": {mw, func() *http.Request {
+			r := httptest.NewRequest("GET", "/", nil)
+			r.Header.Set("Authorization", "Bearer "+tok)
+			return r
+		}()},
+		"query": {wsMW, httptest.NewRequest("GET", "/?token="+tok, nil)},
+	} {
+		req := c.req
+		w := httptest.NewRecorder()
+		c.mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s: status = %d, want 401", name, w.Code)
+		}
+	}
+}
+
+func TestAuthenticate_RevokedSession_Returns401(t *testing.T) {
+	key, kid := newKey(t)
+	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free", revoked: true})
+
+	tok := mint(t, key, kid, "u", "u@x.com", "s", time.Now().Add(time.Hour))
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Bearer "+tok)
+	mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
 func TestAuthenticate_ServiceError_Returns503(t *testing.T) {
 	key, kid := newKey(t)
 	// Valid token, but the profile fetch (a cache miss) can't reach auth.
@@ -228,10 +294,22 @@ func TestAuthenticate_ServiceError_Returns503(t *testing.T) {
 	}
 }
 
-func TestAuthenticate_QueryParamFallback(t *testing.T) {
+func TestAuthenticate_QueryTokenOnlyOnTheWebSocketRoute(t *testing.T) {
+	key, kid := newKey(t)
+	tok := mint(t, key, kid, "u", "u@x.com", "s", time.Now().Add(time.Hour))
+	w := httptest.NewRecorder()
+	probe := &probeResult{}
+	newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})(probeHandler(probe)).
+		ServeHTTP(w, httptest.NewRequest("GET", "/?token="+tok, nil))
+	if w.Code != http.StatusUnauthorized || probe.called {
+		t.Errorf("?token= on a regular route: status=%d called=%v, want 401 and not called (tokens in URLs get logged)", w.Code, probe.called)
+	}
+}
+
+func TestAuthenticateWS_QueryParamFallback(t *testing.T) {
 	// WebSocket clients can't set headers — they use ?token= instead.
 	key, kid := newKey(t)
-	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
+	mw := newWSMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
 	probe := &probeResult{}
 
 	tok := mint(t, key, kid, "wsuser", "ws@x.com", "wssid", time.Now().Add(time.Hour))
@@ -244,5 +322,31 @@ func TestAuthenticate_QueryParamFallback(t *testing.T) {
 	}
 	if probe.userID != "wsuser" {
 		t.Errorf("UserID = %q, want wsuser", probe.userID)
+	}
+}
+
+func TestNotifyEmailFromContext_OnlyVerified(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		unverified bool
+		want       string
+	}{
+		{"verified", false, "u@x.com"},
+		{"unverified", true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, kid := newKey(t)
+			mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free", unverified: tc.unverified})
+			var got string
+			next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				got = middleware.NotifyEmailFromContext(r.Context())
+			})
+			r := httptest.NewRequest("GET", "/", nil)
+			r.Header.Set("Authorization", "Bearer "+mint(t, key, kid, "u", "u@x.com", "s", time.Now().Add(time.Hour)))
+			mw(next).ServeHTTP(httptest.NewRecorder(), r)
+			if got != tc.want {
+				t.Errorf("NotifyEmailFromContext = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

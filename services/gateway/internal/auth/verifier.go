@@ -4,11 +4,9 @@
 // user profile (language/plan/email-verified) is served from a short-TTL cache
 // backed by GetUserByID. gRPC is touched only on a cache miss.
 //
-// Bounded staleness: profile changes (e.g. a plan upgrade) propagate within the
-// profile cache TTL per pod. This is gateway-only and introduces no security
-// regression — auth-service has no access-token revocation today, so an access
-// token already lives until its 15-minute expiry regardless of where it's
-// verified.
+// Bounded staleness: profile changes (e.g. a plan upgrade) and session
+// revocation (logout, revoke, password reset) propagate within the profile and
+// session cache TTLs per pod, instead of the access token's 15-minute expiry.
 package auth
 
 import (
@@ -34,9 +32,11 @@ const (
 	keyTTL = time.Hour
 	// profileTTL bounds how stale a user's plan/language may be per pod.
 	profileTTL = 30 * time.Second
-	// profileSweep is the janitor interval that evicts idle profiles so the
+	// sessionTTL bounds how long a revoked session's access tokens keep working per pod.
+	sessionTTL = 30 * time.Second
+	// cacheSweep is the janitor interval that evicts idle profiles so the
 	// per-user cache cannot grow without bound.
-	profileSweep = time.Minute
+	cacheSweep = time.Minute
 	// grpcTimeout caps each fallback gRPC call made on a cache miss.
 	grpcTimeout = 2 * time.Second
 )
@@ -55,6 +55,7 @@ func (e *UnavailableError) Unwrap() error { return e.Err }
 // Profile is the per-user data denormalized from auth-service.
 type Profile struct {
 	Language      string
+	TimeZone      string
 	Plan          string
 	EmailVerified bool
 }
@@ -73,6 +74,7 @@ type Verifier struct {
 	client   authv1.AuthServiceClient
 	keys     *concurrency.TTLCache[string, *rsa.PublicKey]
 	profiles *concurrency.TTLCache[string, Profile]
+	sessions *concurrency.TTLCache[string, bool]
 }
 
 // NewVerifier builds a Verifier backed by the given auth client.
@@ -84,7 +86,11 @@ func NewVerifier(client authv1.AuthServiceClient) *Verifier {
 		// Profile cache: unbounded key space (one per user) — run a janitor.
 		profiles: concurrency.NewTTLCache[string, Profile](
 			profileTTL,
-			concurrency.WithJanitor[string, Profile](profileSweep),
+			concurrency.WithJanitor[string, Profile](cacheSweep),
+		),
+		sessions: concurrency.NewTTLCache[string, bool](
+			sessionTTL,
+			concurrency.WithJanitor[string, bool](cacheSweep),
 		),
 	}
 }
@@ -124,6 +130,18 @@ func (v *Verifier) Verify(ctx context.Context, tokenStr string) (*Identity, erro
 	if !token.Valid {
 		return nil, fmt.Errorf("%w: claims not valid", ErrInvalidToken)
 	}
+	// Refresh tokens share the key and claims; without this they would work as bearers.
+	if claims.Type != tokens.TypeAccess {
+		return nil, fmt.Errorf("%w: not an access token", ErrInvalidToken)
+	}
+
+	active, err := v.sessionActive(ctx, claims.SessionID)
+	if err != nil {
+		return nil, err // *UnavailableError → 503
+	}
+	if !active {
+		return nil, fmt.Errorf("%w: session revoked", ErrInvalidToken)
+	}
 
 	profile, err := v.profile(ctx, claims.UserID)
 	if err != nil {
@@ -146,6 +164,7 @@ func (v *Verifier) Invalidate(userID string) { v.profiles.Invalidate(userID) }
 func (v *Verifier) Stop() {
 	v.keys.Stop()
 	v.profiles.Stop()
+	v.sessions.Stop()
 }
 
 // publicKey returns the RSA public key for kid, fetching the JWKS on a miss.
@@ -167,6 +186,23 @@ func (v *Verifier) publicKey(ctx context.Context, kid string) (*rsa.PublicKey, e
 	})
 }
 
+// sessionActive reports whether the token's session is still live, asking
+// auth-service on a cache miss.
+func (v *Verifier) sessionActive(ctx context.Context, sessionID string) (bool, error) {
+	if sessionID == "" {
+		return false, nil
+	}
+	return v.sessions.GetOrFetch(ctx, sessionID, func(ctx context.Context) (bool, error) {
+		cctx, cancel := context.WithTimeout(ctx, grpcTimeout)
+		defer cancel()
+		resp, err := v.client.ValidateSession(cctx, &authv1.ValidateSessionRequest{SessionId: sessionID})
+		if err != nil {
+			return false, &UnavailableError{Err: err}
+		}
+		return resp.Active, nil
+	})
+}
+
 // profile returns the user's profile, fetching it from auth-service on a miss.
 func (v *Verifier) profile(ctx context.Context, userID string) (Profile, error) {
 	return v.profiles.GetOrFetch(ctx, userID, func(ctx context.Context) (Profile, error) {
@@ -181,6 +217,7 @@ func (v *Verifier) profile(ctx context.Context, userID string) (Profile, error) 
 		}
 		return Profile{
 			Language:      resp.User.Language,
+			TimeZone:      resp.User.TimeZone,
 			Plan:          resp.User.Plan,
 			EmailVerified: resp.User.EmailVerified,
 		}, nil

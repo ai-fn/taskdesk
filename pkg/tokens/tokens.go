@@ -4,7 +4,7 @@
 //   - auth-service holds the RSA private key → signs access + refresh tokens
 //   - gateway fetches public key via gRPC GetJWKS → verifies access tokens
 //   - Access tokens: short-lived (15m), stored in-memory by the SPA
-//   - Refresh tokens: long-lived (7d), stored in HttpOnly cookie + Redis
+//   - Refresh tokens: long-lived (7d), stored in an HttpOnly cookie; only their hash is kept, in auth.sessions
 package tokens
 
 import (
@@ -27,11 +27,21 @@ const (
 	RefreshTokenTTL = 7 * 24 * time.Hour
 )
 
+// Token types carried in the "typ" claim; only access tokens authenticate API calls.
+const (
+	TypeAccess  = "access"
+	TypeRefresh = "refresh"
+)
+
+// ErrWrongTokenType means a validly signed token was used for the wrong purpose.
+var ErrWrongTokenType = errors.New("wrong token type")
+
 // Claims are the fields embedded in every token.
 type Claims struct {
 	UserID    string `json:"sub"`
 	Email     string `json:"email"`
 	SessionID string `json:"sid"`
+	Type      string `json:"typ"`
 	jwt.RegisteredClaims
 }
 
@@ -74,7 +84,7 @@ func NewMakerFromPEM(pemBytes []byte) (*Maker, error) {
 	}
 
 	// kid = first 8 bytes of the public modulus in hex — stable across restarts
-	kid := fmt.Sprintf("%x", rsaKey.PublicKey.N.Bytes()[:8])
+	kid := fmt.Sprintf("%x", rsaKey.N.Bytes()[:8])
 	return &Maker{privateKey: rsaKey, kid: kid}, nil
 }
 
@@ -94,20 +104,21 @@ func GenerateKey() (privateKeyPEM []byte, err error) {
 
 // CreateAccessToken mints a 15-minute access JWT for userID + email + sessionID.
 func (m *Maker) CreateAccessToken(userID, email, sessionID string) (string, error) {
-	return m.create(userID, email, sessionID, AccessTokenTTL)
+	return m.create(TypeAccess, userID, email, sessionID, AccessTokenTTL)
 }
 
 // CreateRefreshToken mints a 7-day refresh JWT for userID + sessionID.
 func (m *Maker) CreateRefreshToken(userID, email, sessionID string) (string, error) {
-	return m.create(userID, email, sessionID, RefreshTokenTTL)
+	return m.create(TypeRefresh, userID, email, sessionID, RefreshTokenTTL)
 }
 
-func (m *Maker) create(userID, email, sessionID string, ttl time.Duration) (string, error) {
+func (m *Maker) create(typ, userID, email, sessionID string, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		UserID:    userID,
 		Email:     email,
 		SessionID: sessionID,
+		Type:      typ,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -139,14 +150,26 @@ func (m *Maker) Verify(tokenStr string) (*Claims, error) {
 	return claims, nil
 }
 
+// VerifyAccess is Verify plus a check that the token is an access token.
+func (m *Maker) VerifyAccess(tokenStr string) (*Claims, error) {
+	claims, err := m.Verify(tokenStr)
+	if err != nil {
+		return nil, err
+	}
+	if claims.Type != TypeAccess {
+		return nil, ErrWrongTokenType
+	}
+	return claims, nil
+}
+
 // PublicKeyN returns the base64url-encoded modulus of the public key (for JWKS).
 func (m *Maker) PublicKeyN() string {
-	return base64.RawURLEncoding.EncodeToString(m.privateKey.PublicKey.N.Bytes())
+	return base64.RawURLEncoding.EncodeToString(m.privateKey.N.Bytes())
 }
 
 // PublicKeyE returns the base64url-encoded exponent of the public key (for JWKS).
 func (m *Maker) PublicKeyE() string {
-	e := big.NewInt(int64(m.privateKey.PublicKey.E))
+	e := big.NewInt(int64(m.privateKey.E))
 	return base64.RawURLEncoding.EncodeToString(e.Bytes())
 }
 

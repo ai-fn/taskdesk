@@ -86,7 +86,7 @@ func (h *Handler) handleFileUploaded(ctx context.Context, r *kgo.Record) error {
 		h.log.Error("download for scan", "attachment_id", ev.AttachmentID, "err", err)
 		return err // retryable
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 
 	scanCtx, cancel := context.WithTimeout(ctx, scanDeadline(ev.SizeBytes))
 	defer cancel()

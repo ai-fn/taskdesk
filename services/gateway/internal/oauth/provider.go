@@ -20,9 +20,9 @@ type UserInfo struct {
 
 // Provider is the strategy contract every OAuth integration implements.
 type Provider interface {
-	Name() string                                                    // "google" | "discord"
-	AuthURL(state string) string                                     // URL to redirect the browser to
-	Exchange(ctx context.Context, code string) (*UserInfo, error)    // code → tokens → userinfo
+	Name() string                                                 // "google" | "discord"
+	AuthURL(state string) string                                  // URL to redirect the browser to
+	Exchange(ctx context.Context, code string) (*UserInfo, error) // code → tokens → userinfo
 }
 
 // Registry maps provider names to implementations. Populated at startup

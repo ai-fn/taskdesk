@@ -303,7 +303,7 @@ export function EditListsPanel({ lists, groups, onClose, onCreateNew }: Props) {
           list={editingList}
           groups={groups}
           onSave={(name, color, groupId, icon) => {
-            updateList.mutate({ id: editingList.id, input: { name, color, group_id: groupId ?? null, icon } })
+            updateList.mutate({ id: editingList.id, input: { name, color, group_id: groupId ?? null, icon: icon ?? '' } })
             setEditingList(null)
           }}
           onCancel={() => setEditingList(null)}

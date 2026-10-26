@@ -369,8 +369,6 @@ func TestBlobGC_ClaimLeaseAndDone(t *testing.T) {
 	}
 }
 
-func ptr[T any](v T) *T { return &v }
-
 func TestPurgeTask_ConcurrentWithDeleteDoesNotDoubleRelease(t *testing.T) {
 	for i := range 5 {
 		st := newStoreForAttachments(t)

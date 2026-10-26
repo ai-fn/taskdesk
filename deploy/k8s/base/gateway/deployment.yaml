@@ -38,6 +38,8 @@ spec:
           value: "ai.todo.svc.cluster.local:50054"
         - name: REDIS_ADDR
           value: "redis.data.svc.cluster.local:6379"
+        - name: COOKIE_SECURE # "true" behind TLS; also implied by an https OAUTH_BASE_URL
+          value: "false"
         - name: OAUTH_BASE_URL
           valueFrom:
             secretKeyRef:
@@ -68,10 +70,11 @@ spec:
           containerPort: 8080
         readinessProbe:
           httpGet:
-            path: /healthz
+            path: /readyz
             port: http
           initialDelaySeconds: 1
           periodSeconds: 5
+          timeoutSeconds: 3
         livenessProbe:
           httpGet:
             path: /healthz

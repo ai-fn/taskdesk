@@ -17,14 +17,21 @@ var ErrCycleDetected = errors.New("dependency would create a cycle")
 // already present (matches the PK unique-violation).
 var ErrDependencyExists = errors.New("dependency already exists")
 
-// AddDependency inserts (taskID → dependsOnID), rejecting self-loops, cycles,
-// and tasks not owned by the user. All checks run in a single transaction so
-// concurrent AddDependency calls cannot race past the cycle check.
+// AddDependency inserts (taskID → dependsOnID), rejecting self-loops, cycles and tasks not owned
+// by the user; a per-user advisory lock stops opposite edges from both passing the cycle check.
 func (s *Store) AddDependency(ctx context.Context, userID, taskID, dependsOnID string) error {
 	if taskID == dependsOnID {
 		return ErrCycleDetected
 	}
 	return withTx(ctx, s.db, func(tx pgx.Tx) error {
+		// Bounded wait so a queue of callers can't pin the pool; released at commit/rollback.
+		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '5s'`); err != nil {
+			return fmt.Errorf("set lock timeout: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('todo.task_deps:' || $1, 0))`, userID); err != nil {
+			return fmt.Errorf("lock dependency graph: %w", err)
+		}
+
 		// 1. Both tasks must exist and belong to the user.
 		var count int
 		if err := tx.QueryRow(ctx, `
@@ -120,29 +127,8 @@ func (s *Store) ListDependencies(ctx context.Context, userID, taskID string) (de
 // task-id column.
 func (s *Store) queryTasksByDep(ctx context.Context, userID, idSubquery, paramTaskID string) ([]*domain.Task, error) {
 	q := `
-		SELECT t.id, t.user_id, t.title, t.description, t.priority, t.status, t.tags,
-		       t.due_at, t.created_at, t.updated_at, t.list_id, t.flagged, t.deleted_at,
-		       t.completion_score, COALESCE(t.completion_insight, ''),
-		       t.parent_task_id,
-		       COALESCE(sc.subtask_count, 0)::int,
-		       COALESCE(sc.subtask_done_count, 0)::int,
-		       COALESCE(dep.blocked, false),
-		       COALESCE(dep.dep_ids, ARRAY[]::text[])
-		FROM todo.tasks t
-		LEFT JOIN (
-		  SELECT parent_task_id,
-		    COUNT(*) FILTER (WHERE deleted_at IS NULL) AS subtask_count,
-		    COUNT(*) FILTER (WHERE status = 3 AND deleted_at IS NULL) AS subtask_done_count
-		  FROM todo.tasks WHERE parent_task_id IS NOT NULL GROUP BY parent_task_id
-		) sc ON sc.parent_task_id = t.id
-		LEFT JOIN (
-		  SELECT d.task_id,
-		         ARRAY_AGG(d.depends_on_id) AS dep_ids,
-		         BOOL_OR(t2.status <> 3 AND t2.deleted_at IS NULL) AS blocked
-		  FROM todo.task_dependencies d
-		  JOIN todo.tasks t2 ON t2.id = d.depends_on_id
-		  GROUP BY d.task_id
-		) dep ON dep.task_id = t.id
+		SELECT ` + taskListCols + `
+		` + taskListJoins + `
 		WHERE t.id IN (` + idSubquery + `)
 		  AND t.user_id = $2
 		  AND t.deleted_at IS NULL
@@ -165,8 +151,9 @@ func (s *Store) queryTasksByDep(ctx context.Context, userID, idSubquery, paramTa
 }
 
 // TreeNode is a single entry in a transitive dependency walk.
-//   Depth=1 ⇒ direct dep of the starting task. Depth>1 ⇒ reached via ViaTaskID.
-//   ViaTaskID is the immediate predecessor on the chain — the root task at depth=1.
+//
+//	Depth=1 ⇒ direct dep of the starting task. Depth>1 ⇒ reached via ViaTaskID.
+//	ViaTaskID is the immediate predecessor on the chain — the root task at depth=1.
 type TreeNode struct {
 	Task  *domain.Task
 	Depth int
@@ -193,8 +180,9 @@ func (s *Store) GetDependencyTree(ctx context.Context, userID, taskID string) (d
 }
 
 // walkTree runs a recursive CTE in the chosen direction.
-//   upstream=true  → follow d.task_id → d.depends_on_id (what `start` is blocked by)
-//   upstream=false → follow d.depends_on_id → d.task_id (what `start` blocks)
+//
+//	upstream=true  → follow d.task_id → d.depends_on_id (what `start` is blocked by)
+//	upstream=false → follow d.depends_on_id → d.task_id (what `start` blocks)
 func (s *Store) walkTree(ctx context.Context, userID, start string, upstream bool) ([]*TreeNode, error) {
 	// Two near-identical recursive CTEs differ only in which column they
 	// "follow" through the dependencies table. Keep separate to stay readable.
@@ -283,8 +271,12 @@ func (s *Store) walkTree(ctx context.Context, userID, start string, upstream boo
 // (depends_on_id) that is not yet status=DONE (3) and not soft-deleted.
 // Used as a precondition for CompleteTask.
 func (s *Store) HasUnfinishedDependencies(ctx context.Context, taskID string) (bool, error) {
+	return hasUnfinishedDependencies(ctx, s.db, taskID)
+}
+
+func hasUnfinishedDependencies(ctx context.Context, q rowQuerier, taskID string) (bool, error) {
 	var blocked bool
-	err := s.db.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT EXISTS(
 		  SELECT 1 FROM todo.task_dependencies d
 		  JOIN todo.tasks t ON t.id = d.depends_on_id

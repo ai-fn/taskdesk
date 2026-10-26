@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS auth.users_plan_id;

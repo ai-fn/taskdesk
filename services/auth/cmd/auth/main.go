@@ -13,6 +13,7 @@ import (
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
+	"github.com/fsociety/todo/pkg/lifecycle"
 	pkglogger "github.com/fsociety/todo/pkg/logger"
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	pkgpgx "github.com/fsociety/todo/pkg/pgx"
@@ -41,11 +42,11 @@ type Config struct {
 	CodeMaxAttempts    int           `env:"CODE_MAX_ATTEMPTS"    default:"3"`
 
 	// Stripe (optional — omit STRIPE_SECRET_KEY to run without payments)
-	StripeSecretKey    string `env:"STRIPE_SECRET_KEY"    default:""`
-	StripeWebhookSec   string `env:"STRIPE_WEBHOOK_SECRET" default:""`
-	StripePriceID      string `env:"STRIPE_PRICE_ID"      default:""`
-	StripeSuccessURL   string `env:"STRIPE_SUCCESS_URL"   default:""`
-	StripeCancelURL    string `env:"STRIPE_CANCEL_URL"    default:""`
+	StripeSecretKey  string `env:"STRIPE_SECRET_KEY"    default:""`
+	StripeWebhookSec string `env:"STRIPE_WEBHOOK_SECRET" default:""`
+	StripePriceID    string `env:"STRIPE_PRICE_ID"      default:""`
+	StripeSuccessURL string `env:"STRIPE_SUCCESS_URL"   default:""`
+	StripeCancelURL  string `env:"STRIPE_CANCEL_URL"    default:""`
 }
 
 func main() {
@@ -54,6 +55,10 @@ func main() {
 	cfg, err := pkgconfig.Load[Config]()
 	if err != nil {
 		log.Error("load config", "err", err)
+		os.Exit(1)
+	}
+	if cfg.CodeMaxAttempts < 1 || cfg.CodeMaxAttempts > 100 { // 0 would lock every OTP out
+		log.Error("CODE_MAX_ATTEMPTS must be 1-100", "value", cfg.CodeMaxAttempts)
 		os.Exit(1)
 	}
 
@@ -108,6 +113,8 @@ func main() {
 
 	svc := server.New(store.New(pool), maker, log, producer, codeCfg, stripeCfg)
 
+	go svc.CleanupExpiredSessions(ctx, time.Hour)
+
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(pkgmetrics.UnaryServerInterceptor("auth", log)),
 		grpc.ChainStreamInterceptor(pkgmetrics.StreamServerInterceptor("auth", log)),
@@ -119,6 +126,8 @@ func main() {
 	healthSrv := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthSrv)
 	healthSrv.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+	lifecycle.WatchGRPC(ctx, healthSrv, lifecycle.ProbeInterval, lifecycle.ProbeTimeout, log,
+		lifecycle.Check{Name: "postgres", Fn: pool.Ping})
 
 	lis, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
@@ -143,7 +152,8 @@ func main() {
 	select {
 	case <-ctx.Done():
 		log.Info("shutting down")
-		grpcServer.GracefulStop()
+		healthSrv.Shutdown()
+		lifecycle.GracefulStop(grpcServer, lifecycle.ShutdownTimeout, log)
 	case err := <-errCh:
 		log.Error("serve", "err", fmt.Sprintf("%v", err))
 		os.Exit(1)

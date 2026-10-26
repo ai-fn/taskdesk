@@ -58,7 +58,7 @@ func (s *Scanner) Scan(ctx context.Context, r io.Reader) (clean bool, virusName 
 	if err != nil {
 		return false, "", fmt.Errorf("connect to clamd at %s: %w", s.addr, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	conn.SetDeadline(deadline) //nolint:errcheck
 
 	if _, err := fmt.Fprint(conn, "nINSTREAM\n"); err != nil {

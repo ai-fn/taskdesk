@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	pkgconfig "github.com/fsociety/todo/pkg/config"
+	"github.com/fsociety/todo/pkg/lifecycle"
 	"github.com/fsociety/todo/pkg/logger"
 	pkgmetrics "github.com/fsociety/todo/pkg/metrics"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
@@ -31,6 +33,7 @@ type Config struct {
 
 	// OAuth — providers register only when both ID and secret are present.
 	OAuthBaseURL        string `env:"OAUTH_BASE_URL"        default:"http://localhost:8080"`
+	CookieSecure        bool   `env:"COOKIE_SECURE"         default:"false"`
 	GoogleClientID      string `env:"GOOGLE_CLIENT_ID"      default:""`
 	GoogleClientSecret  string `env:"GOOGLE_CLIENT_SECRET"  default:""`
 	DiscordClientID     string `env:"DISCORD_CLIENT_ID"     default:""`
@@ -53,28 +56,44 @@ func main() {
 		log.Error("dial auth-service", "err", err)
 		os.Exit(1)
 	}
-	defer authConn.Close()
+	defer func() {
+		if err := authConn.Close(); err != nil {
+			log.Warn("close auth-service conn", "err", err)
+		}
+	}()
 
 	todoConn, err := grpc.NewClient(cfg.TodoAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Error("dial todo-service", "err", err)
 		os.Exit(1)
 	}
-	defer todoConn.Close()
+	defer func() {
+		if err := todoConn.Close(); err != nil {
+			log.Warn("close todo-service conn", "err", err)
+		}
+	}()
 
 	aiConn, err := grpc.NewClient(cfg.AIAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Error("dial ai-service", "err", err)
 		os.Exit(1)
 	}
-	defer aiConn.Close()
+	defer func() {
+		if err := aiConn.Close(); err != nil {
+			log.Warn("close ai-service conn", "err", err)
+		}
+	}()
 
 	authClient := authv1.NewAuthServiceClient(authConn)
 	todoClient := todov1.NewTodoServiceClient(todoConn)
 	aiClient := aiv1.NewAIServiceClient(aiConn)
 
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
-	defer rdb.Close()
+	defer func() {
+		if err := rdb.Close(); err != nil {
+			log.Warn("close redis client", "err", err)
+		}
+	}()
 
 	// OAuth providers — only register the ones whose credentials are configured.
 	providers := oauth.Registry{}
@@ -97,11 +116,24 @@ func main() {
 		log.Warn("oauth provider skipped: missing credentials", "name", "discord")
 	}
 
-	httpHandler, cleanup := server.New(log, authClient, todoClient, aiClient, rdb, providers)
+	// An https public URL means browsers are on TLS, so a cookie without Secure is a config mistake.
+	cookieSecure := cfg.CookieSecure || strings.HasPrefix(cfg.OAuthBaseURL, "https://")
+	if !cookieSecure {
+		log.Warn("auth cookies are not Secure: set COOKIE_SECURE=true outside plain-HTTP dev")
+	}
+
+	// Only auth and todo gate readiness: without them nothing works, whereas an ai or redis outage
+	// degrades plans/search/live toasts and must not pull every gateway pod out of rotation.
+	httpHandler, cleanup := server.New(log, authClient, todoClient, aiClient, rdb, providers, cookieSecure,
+		lifecycle.GRPCCheck("auth-service", authConn),
+		lifecycle.GRPCCheck("todo-service", todoConn),
+	)
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           httpHandler,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,  // no WriteTimeout: SSE streams and WebSockets outlive any fixed one
+		IdleTimeout:       180 * time.Second, // must exceed Caddy's 2 min upstream keep-alive, or it reuses closing conns (502)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -131,11 +163,14 @@ func main() {
 	// Stop accepting HTTP and drain in-flight requests. Hijacked WebSocket
 	// connections are NOT covered here — cleanup drains the hub explicitly.
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Error("graceful shutdown failed", "err", err)
-		os.Exit(1)
+		// Long SSE/WebSocket streams outlast the budget: cut them, but still drain the hub and run the defers.
+		log.Warn("graceful shutdown timed out, closing connections", "err", err)
+		_ = srv.Close()
 	}
-	// cleanup drains the WebSocket hub (close frames to clients) and stops
-	// background goroutines, bounded by the remaining shutdown budget.
-	cleanup(shutdownCtx)
+	// cleanup drains the WebSocket hub (close frames to clients) and stops background goroutines,
+	// on its own budget since a timed-out Shutdown has spent shutdownCtx.
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelCleanup()
+	cleanup(cleanupCtx)
 	log.Info("shutdown complete")
 }

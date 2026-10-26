@@ -107,12 +107,13 @@ export function TasksPage() {
     setModal({ type: 'edit', task })
   }
 
-  async function handleCreate(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string; list_id?: string | null; flagged?: boolean; subtasks?: string[]; files?: File[] }) {
+  async function handleCreate(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string | null; list_id?: string | null; flagged?: boolean; subtasks?: string[]; files?: File[] }) {
     setFormError('')
     try {
-      const { subtasks = [], files = [], list_id, ...rest } = values
+      const { subtasks = [], files = [], list_id, due_at, ...rest } = values
       const newTask = await createTask.mutateAsync({
         ...rest,
+        due_at: due_at ?? undefined,
         list_id: list_id ?? undefined,
       })
       if (subtasks.length > 0) {
@@ -161,7 +162,7 @@ export function TasksPage() {
     }
   }
 
-  async function handleUpdate(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string; list_id?: string | null; flagged?: boolean }) {
+  async function handleUpdate(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string | null; list_id?: string | null; flagged?: boolean }) {
     if (modal?.type !== 'edit') return
     setFormError('')
     try {

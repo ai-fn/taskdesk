@@ -42,8 +42,9 @@ import (
 // os.Exit(0) so the binary reports success rather than failure.
 func StartPostgres() (pool *pgxpool.Pool, teardown func()) {
 	// Disable the ryuk reaper — it requires a separate image that may not be
-	// pre-pulled in restricted-network environments.
-	os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+	// pre-pulled in restricted-network environments. Setenv with this literal
+	// key cannot fail.
+	_ = os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
 
 	ctx := context.Background()
 
@@ -59,7 +60,7 @@ func StartPostgres() (pool *pgxpool.Pool, teardown func()) {
 		),
 	)
 	if err != nil {
-		if isDockerUnavailable(err) {
+		if isDockerUnavailable(err) && os.Getenv("REQUIRE_DOCKER") != "1" {
 			fmt.Println("SKIP: Docker unavailable, skipping DB integration tests:", err)
 			os.Exit(0)
 		}

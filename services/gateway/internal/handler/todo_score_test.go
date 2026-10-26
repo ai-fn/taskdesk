@@ -17,8 +17,9 @@ import (
 )
 
 // fakeTodoClient implements todov1.TodoServiceClient for tests.
-// Only methods exercised by these tests need non-nil func fields; others panic.
+// Only methods exercised by these tests need non-nil func fields; others nil-panic via the embedded interface.
 type fakeTodoClient struct {
+	todov1.TodoServiceClient
 	listTasks func(ctx context.Context, req *todov1.ListTasksRequest, opts ...grpc.CallOption) (*todov1.ListTasksResponse, error)
 	getTask   func(ctx context.Context, req *todov1.GetTaskRequest, opts ...grpc.CallOption) (*todov1.GetTaskResponse, error)
 }
@@ -34,107 +35,6 @@ func (f *fakeTodoClient) GetTask(ctx context.Context, req *todov1.GetTaskRequest
 		panic("fakeTodoClient.GetTask not configured")
 	}
 	return f.getTask(ctx, req, opts...)
-}
-
-// Stubs for unused interface methods.
-func (f *fakeTodoClient) CreateTask(ctx context.Context, in *todov1.CreateTaskRequest, opts ...grpc.CallOption) (*todov1.CreateTaskResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) UpdateTask(ctx context.Context, in *todov1.UpdateTaskRequest, opts ...grpc.CallOption) (*todov1.UpdateTaskResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) DeleteTask(ctx context.Context, in *todov1.DeleteTaskRequest, opts ...grpc.CallOption) (*todov1.DeleteTaskResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) CompleteTask(ctx context.Context, in *todov1.CompleteTaskRequest, opts ...grpc.CallOption) (*todov1.CompleteTaskResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) RestoreTask(ctx context.Context, in *todov1.RestoreTaskRequest, opts ...grpc.CallOption) (*todov1.RestoreTaskResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) PurgeTask(ctx context.Context, in *todov1.PurgeTaskRequest, opts ...grpc.CallOption) (*todov1.PurgeTaskResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) CreateList(ctx context.Context, in *todov1.CreateListRequest, opts ...grpc.CallOption) (*todov1.CreateListResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) ListLists(ctx context.Context, in *todov1.ListListsRequest, opts ...grpc.CallOption) (*todov1.ListListsResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) UpdateList(ctx context.Context, in *todov1.UpdateListRequest, opts ...grpc.CallOption) (*todov1.UpdateListResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) DeleteList(ctx context.Context, in *todov1.DeleteListRequest, opts ...grpc.CallOption) (*todov1.DeleteListResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) ReorderLists(ctx context.Context, in *todov1.ReorderListsRequest, opts ...grpc.CallOption) (*todov1.ReorderListsResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) CreateGroup(ctx context.Context, in *todov1.CreateGroupRequest, opts ...grpc.CallOption) (*todov1.CreateGroupResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) ListGroups(ctx context.Context, in *todov1.ListGroupsRequest, opts ...grpc.CallOption) (*todov1.ListGroupsResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) UpdateGroup(ctx context.Context, in *todov1.UpdateGroupRequest, opts ...grpc.CallOption) (*todov1.UpdateGroupResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) DeleteGroup(ctx context.Context, in *todov1.DeleteGroupRequest, opts ...grpc.CallOption) (*todov1.DeleteGroupResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) ReorderGroups(ctx context.Context, in *todov1.ReorderGroupsRequest, opts ...grpc.CallOption) (*todov1.ReorderGroupsResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) UpsertTaskEmbedding(ctx context.Context, in *todov1.UpsertTaskEmbeddingRequest, opts ...grpc.CallOption) (*todov1.UpsertTaskEmbeddingResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) DeleteTaskEmbedding(ctx context.Context, in *todov1.DeleteTaskEmbeddingRequest, opts ...grpc.CallOption) (*todov1.DeleteTaskEmbeddingResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) SearchTasks(ctx context.Context, in *todov1.SearchTasksRequest, opts ...grpc.CallOption) (*todov1.SearchTasksResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) UpdateTaskScore(ctx context.Context, in *todov1.UpdateTaskScoreRequest, opts ...grpc.CallOption) (*todov1.UpdateTaskScoreResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) AddDependency(ctx context.Context, in *todov1.AddDependencyRequest, opts ...grpc.CallOption) (*todov1.AddDependencyResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) RemoveDependency(ctx context.Context, in *todov1.RemoveDependencyRequest, opts ...grpc.CallOption) (*todov1.RemoveDependencyResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) ListDependencies(ctx context.Context, in *todov1.ListDependenciesRequest, opts ...grpc.CallOption) (*todov1.ListDependenciesResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) GetDependencyTree(ctx context.Context, in *todov1.GetDependencyTreeRequest, opts ...grpc.CallOption) (*todov1.GetDependencyTreeResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) CreateAttachmentUploadURL(ctx context.Context, in *todov1.CreateAttachmentUploadURLRequest, opts ...grpc.CallOption) (*todov1.CreateAttachmentUploadURLResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) ConfirmAttachment(ctx context.Context, in *todov1.ConfirmAttachmentRequest, opts ...grpc.CallOption) (*todov1.ConfirmAttachmentResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) ListAttachments(ctx context.Context, in *todov1.ListAttachmentsRequest, opts ...grpc.CallOption) (*todov1.ListAttachmentsResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) GetAttachmentDownloadURL(ctx context.Context, in *todov1.GetAttachmentDownloadURLRequest, opts ...grpc.CallOption) (*todov1.GetAttachmentDownloadURLResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) DeleteAttachment(ctx context.Context, in *todov1.DeleteAttachmentRequest, opts ...grpc.CallOption) (*todov1.DeleteAttachmentResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) InitiateMultipartUpload(ctx context.Context, in *todov1.InitiateMultipartUploadRequest, opts ...grpc.CallOption) (*todov1.InitiateMultipartUploadResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) GetUploadPartURL(ctx context.Context, in *todov1.GetUploadPartURLRequest, opts ...grpc.CallOption) (*todov1.GetUploadPartURLResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) CompleteMultipartUpload(ctx context.Context, in *todov1.CompleteMultipartUploadRequest, opts ...grpc.CallOption) (*todov1.CompleteMultipartUploadResponse, error) {
-	panic("not used")
-}
-func (f *fakeTodoClient) UpdateScanStatus(ctx context.Context, in *todov1.UpdateScanStatusRequest, opts ...grpc.CallOption) (*todov1.UpdateScanStatusResponse, error) {
-	panic("not used")
 }
 
 // sampleTask returns a task with completion_score and completion_insight set,

@@ -46,8 +46,8 @@ type AuthEmailEvent struct {
 	EventID     string    `json:"event_id"`
 	UserID      string    `json:"user_id"`
 	Email       string    `json:"email"`
-	Purpose     string    `json:"purpose"`      // PurposePasswordReset | PurposeEmailVerify
-	Code        string    `json:"code"`         // raw OTP — embed in email
+	Purpose     string    `json:"purpose"` // PurposePasswordReset | PurposeEmailVerify
+	Code        string    `json:"code"`    // raw OTP — embed in email
 	Language    string    `json:"language"`
 	ExpiresMins int       `json:"expires_mins"` // for display in email body
 	OccurredAt  time.Time `json:"occurred_at"`
@@ -57,6 +57,7 @@ type AuthEmailEvent struct {
 // Key is always the user_id so events for one user land on the same partition.
 // Language is denormalized from the user's preference at production time so that
 // notification-service can localize emails without a synchronous auth lookup.
+// Email is set only for a verified address; empty means "do not email".
 type TaskEvent struct {
 	EventID    string    `json:"event_id"`
 	EventType  string    `json:"event_type"`
@@ -65,6 +66,7 @@ type TaskEvent struct {
 	TaskTitle  string    `json:"task_title"`
 	OccurredAt time.Time `json:"occurred_at"`
 	Language   string    `json:"language"`
+	Email      string    `json:"email,omitempty"`
 }
 
 // FileEvent is the JSON payload written to todo.outbox for attachment events.

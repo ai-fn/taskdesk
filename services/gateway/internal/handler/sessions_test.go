@@ -142,7 +142,9 @@ func TestSessionsRevoke_NotFound_404(t *testing.T) {
 		t.Errorf("status = %d, want 404", w.Code)
 	}
 	var body map[string]string
-	json.NewDecoder(w.Body).Decode(&body)
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
 	if body["error"] != "session not found" {
 		t.Errorf(`body["error"] = %q, want "session not found"`, body["error"])
 	}
@@ -168,7 +170,9 @@ func TestSessionsRevokeOthers_200(t *testing.T) {
 	}
 	// protojson serializes int64 as a JSON string.
 	var body map[string]any
-	json.NewDecoder(w.Body).Decode(&body)
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
 	if body["revoked"] != "3" {
 		t.Errorf(`body["revoked"] = %v (%T), want "3"`, body["revoked"], body["revoked"])
 	}

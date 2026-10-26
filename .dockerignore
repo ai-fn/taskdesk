@@ -1,0 +1,8 @@
+.git
+web
+docs
+deploy
+infra
+**/node_modules
+.claude
+/scheduler

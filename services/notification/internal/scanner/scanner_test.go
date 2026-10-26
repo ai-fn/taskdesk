@@ -21,14 +21,14 @@ func mockClamd(t *testing.T, response string) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		// Drain "nINSTREAM\n" command line (up to newline).
 		// Read one byte at a time so we stop exactly at the newline and do
@@ -59,7 +59,7 @@ func mockClamd(t *testing.T, response string) string {
 				return
 			}
 		}
-		fmt.Fprint(conn, response+"\n")
+		_, _ = fmt.Fprint(conn, response+"\n")
 	}()
 
 	return ln.Addr().String()
@@ -129,7 +129,7 @@ func TestScan_ClamdClosesMidStream_IsTooLarge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -137,8 +137,8 @@ func TestScan_ClamdClosesMidStream_IsTooLarge(t *testing.T) {
 		}
 		buf := make([]byte, 64)
 		_, _ = conn.Read(buf) // nINSTREAM + first frame start
-		fmt.Fprint(conn, "INSTREAM size limit exceeded. ERROR\n")
-		conn.Close()
+		_, _ = fmt.Fprint(conn, "INSTREAM size limit exceeded. ERROR\n")
+		_ = conn.Close()
 	}()
 	_, _, err = scanner.New(ln.Addr().String()).Scan(context.Background(), io.LimitReader(zeroReader{}, 64<<20))
 	if !errors.Is(err, scanner.ErrTooLarge) {

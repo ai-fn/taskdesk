@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"text/template"
@@ -24,32 +25,100 @@ const DailyPlanTopic = "daily-plan.generated.v1"
 // Handler consumes task.events.v1 and daily-plan.generated.v1, sends email,
 // and publishes in-app notifications to Redis pub/sub.
 type Handler struct {
-	mailer       *mailer.Mailer
-	redis        *redis.Client
-	notifyEmail  func(userID string) string
-	scanner      ScannerClient // nil = skip scan (dev without ClamAV)
+	mailer sender
+	redis  publisher
+	done   doneStore // nil = no dedupe
+	log    *slog.Logger
+	now    func() time.Time // nil = time.Now
+
+	scanner      ScannerClient // nil = skip scan (SCAN_DISABLED, dev only)
 	blob         BlobGetter
 	scanUpdater  ScanResultUpdater
 	scanMaxBytes int64 // objects above this are quarantined unscanned; 0 = no limit
-	log          *slog.Logger
 }
 
+// sender and publisher are the parts of *mailer.Mailer and *redis.Client used here; faked in tests.
+type sender interface {
+	Send(ctx context.Context, to, subject, body string) error
+}
+
+type publisher interface {
+	Publish(ctx context.Context, channel string, message any) *redis.IntCmd
+}
+
+// doneStore remembers which events were fully handled; the *redis.Client satisfies it.
+type doneStore interface {
+	Exists(ctx context.Context, keys ...string) *redis.IntCmd
+	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
+}
+
+// doneTTL outlasts any realistic redelivery (rebalance, retry, short replay) and bounds key growth.
+const doneTTL = 48 * time.Hour
+
 func New(m *mailer.Mailer, rdb *redis.Client, scanner ScannerClient, blob BlobGetter, scanUpdater ScanResultUpdater, log *slog.Logger) *Handler {
-	return &Handler{
-		mailer:      m,
-		redis:       rdb,
-		notifyEmail: stubEmail,
-		scanner:     scanner,
-		blob:        blob,
-		scanUpdater: scanUpdater,
-		log:         log,
+	return &Handler{mailer: m, redis: rdb, done: rdb, scanner: scanner, blob: blob, scanUpdater: scanUpdater, log: log}
+}
+
+// alreadyDone reports whether event id was handled before. Delivery is at-least-once, so a redelivered
+// event must not re-mail. A Redis failure fails open: a duplicate email beats a stuck consumer.
+func (h *Handler) alreadyDone(ctx context.Context, kind, id string) bool {
+	if h.done == nil || id == "" {
+		return false
+	}
+	n, err := h.done.Exists(ctx, "notif:done:"+kind+":"+id).Result()
+	if err != nil {
+		h.log.Warn("dedupe lookup failed, handling anyway", "err", err)
+		return false
+	}
+	return n > 0
+}
+
+// markDone records a fully handled event. Marking after the side effects means a crash in between
+// re-sends once; marking before would lose the email.
+func (h *Handler) markDone(ctx context.Context, kind, id string) {
+	if h.done == nil || id == "" {
+		return
+	}
+	if err := h.done.Set(ctx, "notif:done:"+kind+":"+id, 1, doneTTL).Err(); err != nil {
+		h.log.Warn("dedupe mark failed", "err", err)
 	}
 }
 
-// Topics returns the notification topics. File events use their own consumer group (ScanTopics) so
-// a long malware scan never delays emails.
+func (h *Handler) clock() time.Time {
+	if h.now != nil {
+		return h.now()
+	}
+	return time.Now()
+}
+
+// sendTo mails a verified address stamped on the event by its producer; empty means
+// the user has none, so only the in-app notification goes out. A transient failure is
+// returned for retry; a refused address is dropped, as no retry can deliver it.
+func (h *Handler) sendTo(ctx context.Context, email, userID, subject, body string) error {
+	if email == "" {
+		h.log.Info("no verified email, skipping email", "user_id", userID)
+		return nil
+	}
+	err := h.mailer.Send(ctx, email, subject, body)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, mailer.ErrRecipientRejected):
+		h.log.Warn("email address refused, dropping email", "user_id", userID, "err", err)
+		return nil
+	default:
+		return fmt.Errorf("send email: %w", err)
+	}
+}
+
+// Topics are the task and plan topics, consumed in the main consumer group.
 func Topics() []string {
-	return []string{events.Topic, DailyPlanTopic, events.AuthEmailTopic}
+	return []string{events.Topic, DailyPlanTopic}
+}
+
+// AuthTopics are the OTP topics; their own group keeps slow task traffic from delaying codes.
+func AuthTopics() []string {
+	return []string{events.AuthEmailTopic}
 }
 
 // Handle dispatches based on topic.
@@ -108,6 +177,9 @@ func (h *Handler) handleTaskEvent(ctx context.Context, r *kgo.Record) error {
 	if ev.EventType != events.TypeTaskCompleted {
 		return nil
 	}
+	if h.alreadyDone(ctx, "task", ev.EventID) {
+		return nil
+	}
 
 	tmpl := pickTaskCompletedTmpl(ev.Language)
 	data := map[string]string{
@@ -119,19 +191,28 @@ func (h *Handler) handleTaskEvent(ctx context.Context, r *kgo.Record) error {
 	_ = tmpl.Subject.Execute(&subjectBuf, data)
 	_ = tmpl.Body.Execute(&bodyBuf, data)
 
-	email := h.notifyEmail(ev.UserID)
-	if err := h.mailer.Send(email, subjectBuf.String(), bodyBuf.String()); err != nil {
-		h.log.Error("send email", "user_id", ev.UserID, "err", err)
+	// Mail first: a failed send retries the record, which must not re-push the toast each time.
+	if err := h.sendTo(ctx, ev.Email, ev.UserID, subjectBuf.String(), bodyBuf.String()); err != nil {
+		return err
 	}
+	sentMail := ev.Email != ""
 
 	// Push to Redis pub/sub so gateway WebSocket picks it up.
+	ev.Email = "" // the browser doesn't need it
 	payload, _ := json.Marshal(ev)
 	channel := fmt.Sprintf("user:%s", ev.UserID)
 	if err := h.redis.Publish(ctx, channel, payload).Err(); err != nil {
-		return fmt.Errorf("redis publish: %w", err)
+		if sentMail {
+			// The toast is ephemeral; retrying would re-send the mail each time.
+			h.log.Warn("redis publish failed after mailing, not retrying", "user_id", ev.UserID, "err", err)
+		} else {
+			return fmt.Errorf("redis publish: %w", err)
+		}
 	}
-
-	h.log.Info("task notification dispatched", "user_id", ev.UserID, "task", ev.TaskTitle)
+	if sentMail { // nothing but an ephemeral toast to protect otherwise
+		h.markDone(ctx, "task", ev.EventID)
+	}
+	h.log.Info("task notification dispatched", "user_id", ev.UserID, "task_id", ev.TaskID)
 	return nil
 }
 
@@ -148,6 +229,7 @@ type DailyPlanEvent struct {
 	Items       []DailyPlanItem `json:"items"`
 	GeneratedAt time.Time       `json:"generated_at"`
 	Language    string          `json:"language"`
+	Email       string          `json:"email"` // verified address; empty = no email
 }
 
 type DailyPlanItem struct {
@@ -191,11 +273,14 @@ func (h *Handler) handleDailyPlan(ctx context.Context, r *kgo.Record) error {
 		return nil
 	}
 
-	email := h.notifyEmail(ev.UserID)
-	subject, body := buildPlanEmail(ev)
-	if err := h.mailer.Send(email, subject, body); err != nil {
-		h.log.Error("send plan email", "user_id", ev.UserID, "err", err)
+	if h.alreadyDone(ctx, "plan", ev.EventID) {
+		return nil
 	}
+	subject, body := buildPlanEmail(ev)
+	if err := h.sendTo(ctx, ev.Email, ev.UserID, subject, body); err != nil {
+		return err
+	}
+	sentMail := ev.Email != ""
 
 	// Push to Redis pub/sub so the SPA shows an in-app notification.
 	type wsNotification struct {
@@ -210,9 +295,15 @@ func (h *Handler) handleDailyPlan(ctx context.Context, r *kgo.Record) error {
 	})
 	channel := fmt.Sprintf("user:%s", ev.UserID)
 	if err := h.redis.Publish(ctx, channel, payload).Err(); err != nil {
-		return fmt.Errorf("redis publish daily plan: %w", err)
+		if sentMail {
+			h.log.Warn("redis publish failed after mailing, not retrying", "user_id", ev.UserID, "err", err)
+		} else {
+			return fmt.Errorf("redis publish daily plan: %w", err)
+		}
 	}
-
+	if sentMail {
+		h.markDone(ctx, "plan", ev.EventID)
+	}
 	h.log.Info("daily plan notification dispatched", "user_id", ev.UserID, "plan_id", ev.PlanID)
 	return nil
 }
@@ -297,6 +388,15 @@ func (h *Handler) handleAuthEmail(ctx context.Context, r *kgo.Record) error {
 		return nil // poison pill — skip
 	}
 
+	// A code past its lifetime is useless; this also keeps a replayed topic from mailing old codes.
+	if ev.ExpiresMins > 0 && !ev.OccurredAt.IsZero() && h.clock().After(ev.OccurredAt.Add(time.Duration(ev.ExpiresMins)*time.Minute)) {
+		h.log.Warn("auth email expired before sending, dropping", "user_id", ev.UserID, "purpose", ev.Purpose)
+		return nil
+	}
+
+	if h.alreadyDone(ctx, "auth", ev.EventID) {
+		return nil
+	}
 	tmpl := pickAuthEmailTmpl(ev.Purpose, ev.Language)
 	data := map[string]any{
 		"Code":        ev.Code,
@@ -307,10 +407,11 @@ func (h *Handler) handleAuthEmail(ctx context.Context, r *kgo.Record) error {
 	_ = tmpl.Subject.Execute(&subjectBuf, data)
 	_ = tmpl.Body.Execute(&bodyBuf, data)
 
-	if err := h.mailer.Send(ev.Email, subjectBuf.String(), bodyBuf.String()); err != nil {
-		h.log.Error("send auth email", "user_id", ev.UserID, "purpose", ev.Purpose, "err", err)
+	if err := h.sendTo(ctx, ev.Email, ev.UserID, subjectBuf.String(), bodyBuf.String()); err != nil {
+		return err
 	}
 
+	h.markDone(ctx, "auth", ev.EventID)
 	h.log.Info("auth email dispatched", "user_id", ev.UserID, "purpose", ev.Purpose)
 	return nil
 }
@@ -318,8 +419,4 @@ func (h *Handler) handleAuthEmail(ctx context.Context, r *kgo.Record) error {
 // Run starts the Kafka consumer loop until ctx is cancelled.
 func Run(ctx context.Context, brokers []string, consumer *pkgkafka.Consumer, h *Handler) error {
 	return consumer.Run(ctx, h.Handle)
-}
-
-func stubEmail(userID string) string {
-	return "dev@todo.local"
 }

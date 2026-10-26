@@ -211,6 +211,9 @@ docker_build(
 # ----------------------------------------------------------------------------
 k8s_yaml(kustomize('deploy/k8s/base/caddy'))
 k8s_yaml(kustomize('deploy/k8s/base/gateway'))
+# migrations/<svc>/ is the source of truth; re-sync the kustomize copies on every load.
+watch_file('migrations')
+local('scripts/sync-migrations.sh')
 k8s_yaml(kustomize('deploy/k8s/base/auth'))
 k8s_yaml(kustomize('deploy/k8s/base/todo'))
 k8s_yaml(kustomize('deploy/k8s/base/notification'))

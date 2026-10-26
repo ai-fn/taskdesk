@@ -1,0 +1,250 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # v1.64.8 was built with Go 1.24 and refuses to run against modules that
+  # declare `go 1.25.0` (golangci-lint requires being built with a Go
+  # version >= the target module's go directive). v2.12.2 is built with
+  # Go 1.25+ and resolves it; no .golangci.yml exists in this repo so
+  # there's no v1->v2 config schema to migrate.
+  GOLANGCI_LINT_VERSION: v2.12.2
+
+jobs:
+  # proto/gen is .gitignored (hand-maintained go.mod, generated *.pb.go) but every
+  # Go module lists it in go.work, so it must exist before any build/lint/test can
+  # run. Generate it once here and share it with the other jobs via an artifact
+  # instead of re-running protoc install in every matrix leg.
+  generate-proto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+
+      - name: Generate proto/gen
+        run: ./scripts/proto-gen.sh
+
+      - name: Restore proto/gen/go.mod
+        # proto-gen.sh does `rm -rf proto/gen` before regenerating, which wipes the
+        # hand-maintained go.mod along with the generated code. Recreate it and
+        # let `go mod tidy` fill in the checksums.
+        run: |
+          cat > proto/gen/go.mod <<'EOF'
+          module github.com/fsociety/todo/proto/gen
+
+          go 1.25.0
+
+          require (
+          	google.golang.org/grpc v1.81.0
+          	google.golang.org/protobuf v1.36.11
+          )
+          EOF
+          cd proto/gen && go mod tidy
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proto-gen
+          path: proto/gen
+          retention-days: 1
+
+  lint-go:
+    needs: generate-proto
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - pkg
+          - services/ai
+          - services/auth
+          - services/gateway
+          - services/notification
+          - services/scheduler
+          - services/todo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: proto-gen
+          path: proto/gen
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            go.work.sum
+            **/go.sum
+
+      - name: gofmt
+        working-directory: ${{ matrix.module }}
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            echo "::error::gofmt found unformatted files (run 'gofmt -w .')"
+            exit 1
+          fi
+
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: ${{ matrix.module }}
+          # v7 requires --path-mode=abs when combined with working-directory,
+          # otherwise annotation paths don't resolve correctly.
+          args: --timeout=5m --path-mode=abs
+
+  build-go:
+    needs: generate-proto
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - pkg
+          - services/ai
+          - services/auth
+          - services/gateway
+          - services/notification
+          - services/scheduler
+          - services/todo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: proto-gen
+          path: proto/gen
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            go.work.sum
+            **/go.sum
+
+      - name: go build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+
+      # Advisory until the toolchain moves to Go 1.26 (the fixed x/net and x/text need it); then drop continue-on-error.
+      - name: govulncheck
+        continue-on-error: true
+        working-directory: ${{ matrix.module }}
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
+  test-go:
+    needs: generate-proto
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - pkg
+          - services/ai
+          - services/auth
+          - services/gateway
+          - services/notification
+          - services/scheduler
+          - services/todo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: proto-gen
+          path: proto/gen
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            go.work.sum
+            **/go.sum
+
+      - name: Pre-pull Postgres test images
+        if: matrix.module == 'services/todo' || matrix.module == 'services/auth'
+        run: |
+          docker pull postgres:16-alpine
+          docker pull pgvector/pgvector:pg16
+
+      - name: go test
+        working-directory: ${{ matrix.module }}
+        # Auth and todo run their testcontainers suites here; Docker is required so they
+        # can't silently skip.
+        run: |
+          case "${{ matrix.module }}" in
+            services/auth|services/todo) REQUIRE_DOCKER=1 go test -race -timeout 300s ./... ;;
+            *) go test -race -timeout 120s ./... ;;
+          esac
+
+  docker-build:
+    needs: generate-proto
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [ai, auth, gateway, notification, scheduler, todo]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: proto-gen
+          path: proto/gen
+
+      - name: docker build
+        run: docker build -f services/${{ matrix.service }}/Dockerfile -t todo/${{ matrix.service }}:ci .
+
+  migrations-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: deploy/ copies match migrations/
+        run: scripts/sync-migrations.sh --check
+
+  lint-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm audit --omit=dev --audit-level=high
+
+  build-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npm run build

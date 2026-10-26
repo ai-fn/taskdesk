@@ -1,4 +1,4 @@
-package server
+package server_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"github.com/fsociety/todo/pkg/blobstore"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/todo/internal/domain"
+	"github.com/fsociety/todo/services/todo/internal/server"
 	"github.com/fsociety/todo/services/todo/internal/store"
 	"github.com/fsociety/todo/services/todo/internal/testutil"
 	"google.golang.org/grpc/codes"
@@ -63,12 +64,15 @@ func (b *memBlob) AbortMultipart(_ context.Context, _, uploadID string) error {
 }
 func (b *memBlob) Get(context.Context, string) (io.ReadCloser, error) { return nil, errors.New("n/a") }
 
-func newFlowServer(t *testing.T) (*Server, *store.Store, *memBlob) {
+func newFlowServer(t *testing.T) (*server.Server, *store.Store, *memBlob) {
 	t.Helper()
+	if testPool == nil {
+		t.Skip("Docker unavailable")
+	}
 	testutil.Truncate(t, testPool)
 	st := store.New(testPool)
 	blob := newMemBlob()
-	return New(st, blob, "eu", slog.New(slog.NewTextHandler(io.Discard, nil))), st, blob
+	return server.New(st, blob, "eu", slog.New(slog.NewTextHandler(io.Discard, nil))), st, blob
 }
 
 func seedTask(t *testing.T, st *store.Store, userID, taskID string) {
@@ -108,7 +112,7 @@ func TestCreateUploadURL_TaskMustBeOwned(t *testing.T) {
 	_, err := s.CreateAttachmentUploadURL(t.Context(), uploadReq("intruder", "t1", 10, "pro"))
 	wantCode(t, err, codes.NotFound)
 	_, err = s.InitiateMultipartUpload(t.Context(), &todov1.InitiateMultipartUploadRequest{
-		UserId: "intruder", TaskId: "t1", Filename: "f.bin", SizeBytes: multipartThreshold, Plan: "pro"})
+		UserId: "intruder", TaskId: "t1", Filename: "f.bin", SizeBytes: server.MultipartThreshold, Plan: "pro"})
 	wantCode(t, err, codes.NotFound)
 	if len(blob.aborted) != 1 {
 		t.Errorf("multipart started for a foreign task was not aborted: %v", blob.aborted)
@@ -130,7 +134,7 @@ func TestCreateUploadURL_FreeQuotaCountsPendingUploads(t *testing.T) {
 	s, st, _ := newFlowServer(t)
 	seedTask(t, st, "u", "t1")
 	// 10 MiB each: 102 fit in 1 GiB if they were committed, but they are only reserved.
-	for i := range freeMaxFilesPerTask {
+	for i := range server.FreeMaxFilesPerTask {
 		if _, err := s.CreateAttachmentUploadURL(t.Context(), uploadReq("u", "t1", 10<<20, "free")); err != nil {
 			t.Fatalf("upload %d: %v", i, err)
 		}
@@ -155,13 +159,13 @@ func TestCreateUploadURL_PresignFailureReleasesReservation(t *testing.T) {
 func TestSinglePutThresholdMatchesMultipart(t *testing.T) {
 	s, st, _ := newFlowServer(t)
 	seedTask(t, st, "u", "t1")
-	_, err := s.CreateAttachmentUploadURL(t.Context(), uploadReq("u", "t1", multipartThreshold, "pro"))
+	_, err := s.CreateAttachmentUploadURL(t.Context(), uploadReq("u", "t1", server.MultipartThreshold, "pro"))
 	wantCode(t, err, codes.InvalidArgument)
-	if _, err := s.CreateAttachmentUploadURL(t.Context(), uploadReq("u", "t1", multipartThreshold-1, "pro")); err != nil {
+	if _, err := s.CreateAttachmentUploadURL(t.Context(), uploadReq("u", "t1", server.MultipartThreshold-1, "pro")); err != nil {
 		t.Fatalf("just below the threshold: %v", err)
 	}
 	if _, err := s.InitiateMultipartUpload(t.Context(), &todov1.InitiateMultipartUploadRequest{
-		UserId: "u", TaskId: "t1", Filename: "f.bin", SizeBytes: multipartThreshold, Plan: "pro"}); err != nil {
+		UserId: "u", TaskId: "t1", Filename: "f.bin", SizeBytes: server.MultipartThreshold, Plan: "pro"}); err != nil {
 		t.Fatalf("multipart at exactly the threshold: %v", err)
 	}
 }
@@ -195,7 +199,7 @@ func TestGetUploadPartURL_PartNumberRange(t *testing.T) {
 	s, st, _ := newFlowServer(t)
 	seedTask(t, st, "u", "t1")
 	init, err := s.InitiateMultipartUpload(t.Context(), &todov1.InitiateMultipartUploadRequest{
-		UserId: "u", TaskId: "t1", Filename: "f.bin", SizeBytes: multipartThreshold, Plan: "pro"})
+		UserId: "u", TaskId: "t1", Filename: "f.bin", SizeBytes: server.MultipartThreshold, Plan: "pro"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,12 +221,12 @@ func TestCompleteMultipart_ValidatesAndSortsParts(t *testing.T) {
 	s, st, blob := newFlowServer(t)
 	seedTask(t, st, "u", "t1")
 	init, err := s.InitiateMultipartUpload(t.Context(), &todov1.InitiateMultipartUploadRequest{
-		UserId: "u", TaskId: "t1", Filename: "f.bin", SizeBytes: multipartThreshold, Plan: "pro"})
+		UserId: "u", TaskId: "t1", Filename: "f.bin", SizeBytes: server.MultipartThreshold, Plan: "pro"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	att, _ := st.GetAttachment(t.Context(), "u", init.AttachmentId)
-	blob.sizes[att.ObjectKey] = multipartThreshold
+	blob.sizes[att.ObjectKey] = server.MultipartThreshold
 
 	complete := func(parts ...*todov1.CompletedPart) error {
 		_, err := s.CompleteMultipartUpload(t.Context(), &todov1.CompleteMultipartUploadRequest{UserId: "u", AttachmentId: init.AttachmentId, Parts: parts})
@@ -247,7 +251,7 @@ func TestDeleteAttachment_PendingMultipartIsAbortedByGC(t *testing.T) {
 	s, st, _ := newFlowServer(t)
 	seedTask(t, st, "u", "t1")
 	init, err := s.InitiateMultipartUpload(t.Context(), &todov1.InitiateMultipartUploadRequest{
-		UserId: "u", TaskId: "t1", Filename: "f.bin", SizeBytes: multipartThreshold, Plan: "pro"})
+		UserId: "u", TaskId: "t1", Filename: "f.bin", SizeBytes: server.MultipartThreshold, Plan: "pro"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +291,7 @@ func TestCreateUploadURL_RejectsBadNames(t *testing.T) {
 func TestCreateUploadURL_ProIsBoundedByPendingCap(t *testing.T) {
 	s, st, _ := newFlowServer(t)
 	seedTask(t, st, "u", "t1")
-	for i := range maxPendingUploads {
+	for i := range server.MaxPendingUploads {
 		if _, err := s.CreateAttachmentUploadURL(t.Context(), uploadReq("u", "t1", 1, "pro")); err != nil {
 			t.Fatalf("upload %d: %v", i, err)
 		}

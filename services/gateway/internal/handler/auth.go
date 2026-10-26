@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
+	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -16,24 +18,31 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const refreshCookieName = "refresh_token"
+const (
+	refreshCookieName = "refresh_token"
+	refreshCookiePath = "/api/v1/auth"
+)
 
 // AuthHandler bridges HTTP ↔ auth-service gRPC.
 type AuthHandler struct {
-	client             authv1.AuthServiceClient
-	todoClient         todov1.TodoServiceClient
-	log                *slog.Logger
-	emailLimiter       *RateLimiter // 5 attempts / minute per email (login/signup)
-	ipLimiter          *RateLimiter // 20 attempts / minute per IP (login/signup)
-	resetEmailLimiter  *RateLimiter // 3 attempts / 10 min per email (password reset)
-	resetIPLimiter     *RateLimiter // 10 attempts / 10 min per IP (password reset)
+	client            authv1.AuthServiceClient
+	todoClient        todov1.TodoServiceClient
+	log               *slog.Logger
+	cookieSecure      bool         // Secure flag on the refresh cookie; off only for plain-HTTP dev
+	emailLimiter      *RateLimiter // 5 attempts / minute per email (login/signup)
+	ipLimiter         *RateLimiter // 20 attempts / minute per IP (login/signup)
+	resetEmailLimiter *RateLimiter // 3 attempts / 10 min per email (password reset)
+	resetIPLimiter    *RateLimiter // 10 attempts / 10 min per IP (password reset)
+	// Separate from resetEmailLimiter so requesting a code doesn't spend the guessing budget.
+	resetConfirmLimiter *RateLimiter // 10 attempts / 10 min per email (reset confirm)
 }
 
-func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, log *slog.Logger) *AuthHandler {
+func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, log *slog.Logger, cookieSecure bool) *AuthHandler {
 	return &AuthHandler{
-		client:     c,
-		todoClient: todo,
-		log:        log,
+		client:       c,
+		todoClient:   todo,
+		log:          log,
+		cookieSecure: cookieSecure,
 		// 5 logins per minute per email — targets credential stuffing.
 		emailLimiter: NewRateLimiter(rate.Limit(5.0/60.0), 5, 15*time.Minute, 10*time.Minute),
 		// 20 logins per minute per IP — targets origin scanning.
@@ -42,6 +51,8 @@ func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, l
 		resetEmailLimiter: NewRateLimiter(rate.Limit(3.0/600.0), 3, 30*time.Minute, 15*time.Minute),
 		// 10 reset attempts per 10 min per IP.
 		resetIPLimiter: NewRateLimiter(rate.Limit(10.0/600.0), 10, 30*time.Minute, 15*time.Minute),
+		// 10 guesses per 10 min per email: about three codes' worth of OTP attempts.
+		resetConfirmLimiter: NewRateLimiter(rate.Limit(10.0/600.0), 10, 30*time.Minute, 15*time.Minute),
 	}
 }
 
@@ -52,6 +63,7 @@ func (h *AuthHandler) Stop() {
 	h.ipLimiter.Stop()
 	h.resetEmailLimiter.Stop()
 	h.resetIPLimiter.Stop()
+	h.resetConfirmLimiter.Stop()
 }
 
 // POST /api/v1/auth/signup
@@ -69,13 +81,13 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 	// Rate-limit before touching the database. clientInfoFromRequest is called
 	// once and reused for both the limiter check and the gRPC request.
 	info := clientInfoFromRequest(r)
-	if !h.ipLimiter.Allow(info.IpAddress) {
-		h.log.Warn("signup rate limited by IP", "ip", info.IpAddress)
+	if !h.ipLimiter.Allow(mw.ClientKey(r)) {
+		h.log.Warn("signup rate limited by IP", "ip", mw.ClientKey(r))
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
-	if !h.emailLimiter.Allow(req.Email) {
-		h.log.Warn("signup rate limited by email", "email", req.Email)
+	if !h.emailLimiter.Allow(normalizeEmail(req.Email)) {
+		h.log.Warn("signup rate limited by email")
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -99,7 +111,7 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 		h.log.Error("seed default group", "user_id", resp.UserId, "err", err)
 	}
 
-	setRefreshCookie(w, resp.RefreshToken)
+	setRefreshCookie(w, resp.RefreshToken, h.cookieSecure)
 	jsonOK(w, map[string]string{
 		"user_id":      resp.UserId,
 		"access_token": resp.AccessToken,
@@ -121,13 +133,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Both checks happen before bcrypt — which is intentionally slow — so a
 	// blocked attacker never reaches the expensive path.
 	info := clientInfoFromRequest(r)
-	if !h.ipLimiter.Allow(info.IpAddress) {
-		h.log.Warn("login rate limited by IP", "ip", info.IpAddress)
+	if !h.ipLimiter.Allow(mw.ClientKey(r)) {
+		h.log.Warn("login rate limited by IP", "ip", mw.ClientKey(r))
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
-	if !h.emailLimiter.Allow(req.Email) {
-		h.log.Warn("login rate limited by email", "email", req.Email)
+	if !h.emailLimiter.Allow(normalizeEmail(req.Email)) {
+		h.log.Warn("login rate limited by email")
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -142,7 +154,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setRefreshCookie(w, resp.RefreshToken)
+	setRefreshCookie(w, resp.RefreshToken, h.cookieSecure)
 	jsonOK(w, map[string]string{
 		"user_id":      resp.UserId,
 		"access_token": resp.AccessToken,
@@ -165,7 +177,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setRefreshCookie(w, resp.RefreshToken)
+	setRefreshCookie(w, resp.RefreshToken, h.cookieSecure)
 	jsonOK(w, map[string]string{"access_token": resp.AccessToken})
 }
 
@@ -176,15 +188,22 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		refreshToken = cookie.Value
 	}
 
-	_, _ = h.client.Logout(r.Context(), &authv1.LogoutRequest{RefreshToken: refreshToken})
+	// On failure the session is still alive: keep the cookie so the user can retry.
+	if _, err := h.client.Logout(r.Context(), &authv1.LogoutRequest{RefreshToken: refreshToken}); err != nil {
+		h.log.Error("logout failed", "err", err)
+		handleGRPCError(w, err)
+		return
+	}
 
-	// Clear the cookie regardless of backend result.
+	// Same attributes as setRefreshCookie, or the browser keeps the real cookie.
 	http.SetCookie(w, &http.Cookie{
 		Name:     refreshCookieName,
 		Value:    "",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Path:     "/",
+		Secure:   h.cookieSecure,
+		Path:     refreshCookiePath,
+		SameSite: http.SameSiteStrictMode,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -199,14 +218,14 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info := clientInfoFromRequest(r)
-	if !h.resetIPLimiter.Allow(info.IpAddress) {
-		h.log.Warn("forgot password rate limited by IP", "ip", info.IpAddress)
+	ip := mw.ClientKey(r)
+	if !h.resetIPLimiter.Allow(ip) {
+		h.log.Warn("forgot password rate limited by IP", "ip", ip)
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
-	if req.Email != "" && !h.resetEmailLimiter.Allow(req.Email) {
-		h.log.Warn("forgot password rate limited by email", "email", req.Email)
+	if req.Email != "" && !h.resetEmailLimiter.Allow(normalizeEmail(req.Email)) {
+		h.log.Warn("forgot password rate limited by email")
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -234,9 +253,15 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info := clientInfoFromRequest(r)
-	if !h.resetIPLimiter.Allow(info.IpAddress) {
-		h.log.Warn("reset password rate limited by IP", "ip", info.IpAddress)
+	ip := mw.ClientKey(r)
+	if !h.resetIPLimiter.Allow(ip) {
+		h.log.Warn("reset password rate limited by IP", "ip", ip)
+		jsonError(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+	// Rotating IPs must not lift the per-account cap on code guesses.
+	if req.Email != "" && !h.resetConfirmLimiter.Allow(normalizeEmail(req.Email)) {
+		h.log.Warn("reset password rate limited by email")
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -255,15 +280,19 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func setRefreshCookie(w http.ResponseWriter, token string) {
+// normalizeEmail is the key for per-account limiters: auth treats addresses case-insensitively,
+// so variants must share one budget.
+func normalizeEmail(e string) string { return strings.ToLower(strings.TrimSpace(e)) }
+
+func setRefreshCookie(w http.ResponseWriter, token string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     refreshCookieName,
 		Value:    token,
 		HttpOnly: true,
-		Path:     "/api/v1/auth",
+		Secure:   secure,
+		Path:     refreshCookiePath,
 		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
 		SameSite: http.SameSiteStrictMode,
-		// Secure: true — set this in production (HTTPS only)
 	})
 }
 
@@ -299,7 +328,7 @@ func handleGRPCError(w http.ResponseWriter, err error) {
 
 func jsonOK(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v) // best-effort: client may have disconnected
 }
 
 // protoOK serializes a proto message using protojson so that well-known types
@@ -316,11 +345,11 @@ func protoStatus(w http.ResponseWriter, m proto.Message, code int) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	w.Write(b)
+	_, _ = w.Write(b) // best-effort: client may have disconnected
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg}) // best-effort: client may have disconnected
 }

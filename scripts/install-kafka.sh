@@ -61,7 +61,7 @@ kubectl -n data wait kafka/todo --for=condition=Ready --timeout=8m || {
   exit 1
 }
 
-kubectl -n data wait kafkatopic/task-events-v1 --for=condition=Ready --timeout=60s
+kubectl -n data wait kafkatopic --all --for=condition=Ready --timeout=60s
 
 bold "✓ Kafka cluster + topic ready"
 echo

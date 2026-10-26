@@ -14,11 +14,11 @@ import (
 
 // DailyPlan is the stored representation of a Claude-generated plan.
 type DailyPlan struct {
-	PlanID      string     `db:"plan_id"`
-	UserID      string     `db:"user_id"`
-	Summary     string     `db:"summary"`
-	ItemsJSON   []byte     `db:"items_json"`
-	GeneratedAt time.Time  `db:"generated_at"`
+	PlanID      string    `db:"plan_id"`
+	UserID      string    `db:"user_id"`
+	Summary     string    `db:"summary"`
+	ItemsJSON   []byte    `db:"items_json"`
+	GeneratedAt time.Time `db:"generated_at"`
 }
 
 // PlanItem mirrors planner.PlanItem for DB serialization.
@@ -37,13 +37,14 @@ func New(db *pgxpool.Pool) *Store {
 	return &Store{db: db}
 }
 
-// SavePlan persists a generated plan. Replaces any existing plan for the same user+day.
-func (s *Store) SavePlan(ctx context.Context, planID, userID, summary string, items []PlanItem, generatedAt time.Time) error {
+// SavePlan persists a generated plan. Replaces any existing plan for the same user+day, where the
+// day is the calendar date in loc (the user's zone).
+func (s *Store) SavePlan(ctx context.Context, planID, userID, summary string, items []PlanItem, generatedAt time.Time, loc *time.Location) error {
 	itemsJSON, err := json.Marshal(items)
 	if err != nil {
 		return fmt.Errorf("marshal items: %w", err)
 	}
-	planDate := generatedAt.UTC().Format("2006-01-02")
+	planDate := generatedAt.In(loc).Format("2006-01-02")
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO ai.daily_plans (plan_id, user_id, plan_date, summary, items_json, generated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)

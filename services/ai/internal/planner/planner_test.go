@@ -23,13 +23,13 @@ func TestSystemPromptUnchanged(t *testing.T) {
 
 func TestLanguageDirectiveMap(t *testing.T) {
 	cases := []struct {
-		lang      string
-		wantLang  string // substring expected in the directive
+		lang     string
+		wantLang string // substring expected in the directive
 	}{
 		{"en", "English"},
 		{"zh", "Simplified Chinese"},
-		{"",   "English"},   // empty falls back to en
-		{"fr", "English"},   // unsupported falls back to en
+		{"", "English"},      // empty falls back to en
+		{"fr", "English"},    // unsupported falls back to en
 		{"zh-CN", "English"}, // not in map directly — Normalize handles this upstream
 	}
 

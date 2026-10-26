@@ -4,13 +4,13 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"os"
 	"time"
 
 	pki18n "github.com/fsociety/todo/pkg/i18n"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
+	"github.com/fsociety/todo/pkg/tz"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/ai/internal/embedder"
@@ -76,27 +76,28 @@ func (s *Server) GeneratePlan(ctx context.Context, req *aiv1.GeneratePlanRequest
 	}
 
 	now := time.Now().UTC()
+	loc := tz.Load(req.TimeZone)
 	uc := planner.UserContext{
 		UserID:            req.UserId,
-		Today:             now.Format("2006-01-02"),
-		OpenTasks:         tasksToInput(listResp.Tasks),
-		RecentlyCompleted: tasksToInput(completedResp.Tasks),
+		Today:             localDate(now, loc),
+		OpenTasks:         tasksToInput(listResp.Tasks, loc),
+		RecentlyCompleted: tasksToInput(completedResp.Tasks, loc),
 	}
 
 	lang := pki18n.Normalize(req.Language)
 	plan, err := s.planner.Generate(ctx, uc, lang)
 	if err != nil {
 		s.log.Error("generate plan", "user_id", req.UserId, "err", err)
-		return nil, status.Error(codes.Internal, fmt.Sprintf("plan generation failed: %v", err))
+		return nil, status.Error(codes.Internal, "plan generation failed")
 	}
 
 	// Build the proto response.
 	planID := uuid.New().String()
 	dp := &aiv1.DailyPlan{
-		PlanId:        planID,
-		UserId:        req.UserId,
-		Summary:       plan.Summary,
-		GeneratedAt:   timestamppb.New(now),
+		PlanId:      planID,
+		UserId:      req.UserId,
+		Summary:     plan.Summary,
+		GeneratedAt: timestamppb.New(now),
 	}
 	for _, item := range plan.Items {
 		dp.Items = append(dp.Items, &aiv1.PlanItem{
@@ -118,13 +119,13 @@ func (s *Server) GeneratePlan(ctx context.Context, req *aiv1.GeneratePlanRequest
 			Rationale: it.Rationale,
 		}
 	}
-	if err := s.store.SavePlan(ctx, planID, req.UserId, plan.Summary, storeItems, now); err != nil {
+	if err := s.store.SavePlan(ctx, planID, req.UserId, plan.Summary, storeItems, now, loc); err != nil {
 		s.log.Error("save plan", "plan_id", planID, "err", err)
 		// Don't fail — still publish the event.
 	}
 
 	// Publish to Kafka.
-	if err := s.publish(ctx, planID, req.UserId, lang, dp); err != nil {
+	if err := s.publish(ctx, planID, req.UserId, lang, req.Email, dp); err != nil {
 		s.log.Error("publish plan event", "plan_id", planID, "err", err)
 	}
 
@@ -164,11 +165,12 @@ func (s *Server) GeneratePlanStream(req *aiv1.GeneratePlanRequest, stream aiv1.A
 	}
 
 	now := time.Now().UTC()
+	loc := tz.Load(req.TimeZone)
 	uc := planner.UserContext{
 		UserID:            req.UserId,
-		Today:             now.Format("2006-01-02"),
-		OpenTasks:         tasksToInput(listResp.Tasks),
-		RecentlyCompleted: tasksToInput(completedResp.Tasks),
+		Today:             localDate(now, loc),
+		OpenTasks:         tasksToInput(listResp.Tasks, loc),
+		RecentlyCompleted: tasksToInput(completedResp.Tasks, loc),
 	}
 
 	onText := func(delta string) {
@@ -182,9 +184,9 @@ func (s *Server) GeneratePlanStream(req *aiv1.GeneratePlanRequest, stream aiv1.A
 	if err != nil {
 		s.log.Error("generate plan stream", "user_id", req.UserId, "err", err)
 		_ = stream.Send(&aiv1.PlanStreamChunk{
-			Payload: &aiv1.PlanStreamChunk_Error{Error: err.Error()},
+			Payload: &aiv1.PlanStreamChunk_Error{Error: "plan generation failed"},
 		})
-		return status.Error(codes.Internal, fmt.Sprintf("plan generation failed: %v", err))
+		return status.Error(codes.Internal, "plan generation failed")
 	}
 
 	planID := uuid.New().String()
@@ -213,11 +215,11 @@ func (s *Server) GeneratePlanStream(req *aiv1.GeneratePlanRequest, stream aiv1.A
 			Rationale: it.Rationale,
 		}
 	}
-	if err := s.store.SavePlan(ctx, planID, req.UserId, plan.Summary, storeItems, now); err != nil {
+	if err := s.store.SavePlan(ctx, planID, req.UserId, plan.Summary, storeItems, now, loc); err != nil {
 		s.log.Error("save plan (stream)", "plan_id", planID, "err", err)
 	}
 
-	if err := s.publish(ctx, planID, req.UserId, lang, dp); err != nil {
+	if err := s.publish(ctx, planID, req.UserId, lang, req.Email, dp); err != nil {
 		s.log.Error("publish plan event (stream)", "plan_id", planID, "err", err)
 	}
 
@@ -272,9 +274,14 @@ type DailyPlanEvent struct {
 	Items       []planner.PlanItem `json:"items"`
 	GeneratedAt time.Time          `json:"generated_at"`
 	Language    string             `json:"language"`
+	Email       string             `json:"email,omitempty"` // verified address only
 }
 
-func (s *Server) publish(ctx context.Context, planID, userID, lang string, dp *aiv1.DailyPlan) error {
+func (s *Server) publish(ctx context.Context, planID, userID, lang, email string, dp *aiv1.DailyPlan) error {
+	return s.kafka.Publish(ctx, DailyPlanTopic, userID, newPlanEvent(planID, userID, lang, email, dp))
+}
+
+func newPlanEvent(planID, userID, lang, email string, dp *aiv1.DailyPlan) DailyPlanEvent {
 	items := make([]planner.PlanItem, len(dp.Items))
 	for i, it := range dp.Items {
 		items[i] = planner.PlanItem{
@@ -284,7 +291,7 @@ func (s *Server) publish(ctx context.Context, planID, userID, lang string, dp *a
 			Rationale: it.Rationale,
 		}
 	}
-	ev := DailyPlanEvent{
+	return DailyPlanEvent{
 		EventID:     uuid.New().String(),
 		UserID:      userID,
 		PlanID:      planID,
@@ -292,12 +299,15 @@ func (s *Server) publish(ctx context.Context, planID, userID, lang string, dp *a
 		Items:       items,
 		GeneratedAt: dp.GeneratedAt.AsTime(),
 		Language:    lang,
+		Email:       email,
 	}
-	return s.kafka.Publish(ctx, DailyPlanTopic, userID, ev)
 }
 
-// tasksToInput converts proto tasks to the planner input shape.
-func tasksToInput(tasks []*todov1.Task) []planner.TaskInput {
+// localDate formats t as a calendar date in loc, the user's "today" for plans and parsing.
+func localDate(t time.Time, loc *time.Location) string { return t.In(loc).Format("2006-01-02") }
+
+// tasksToInput converts proto tasks to the planner input shape; due dates are calendar dates in loc.
+func tasksToInput(tasks []*todov1.Task, loc *time.Location) []planner.TaskInput {
 	out := make([]planner.TaskInput, 0, len(tasks))
 	for _, t := range tasks {
 		ti := planner.TaskInput{
@@ -309,7 +319,7 @@ func tasksToInput(tasks []*todov1.Task) []planner.TaskInput {
 			Tags:        t.Tags,
 		}
 		if t.DueAt != nil {
-			s := t.DueAt.AsTime().Format("2006-01-02")
+			s := localDate(t.DueAt.AsTime(), loc)
 			ti.DueAt = &s
 		}
 		out = append(out, ti)
@@ -341,12 +351,13 @@ func (s *Server) ParseTask(ctx context.Context, req *aiv1.ParseTaskRequest) (*ai
 		}}, nil
 	}
 
+	zone := tz.Normalize(req.TimeZone)
 	today := req.Today
 	if today == "" {
-		today = time.Now().UTC().Format("2006-01-02")
+		today = localDate(time.Now(), tz.Load(zone))
 	}
 
-	result, err := s.parser.Parse(ctx, req.Text, today, pki18n.Normalize(req.Language), req.ListNames)
+	result, err := s.parser.Parse(ctx, req.Text, today, zone, pki18n.Normalize(req.Language), req.ListNames)
 	if err != nil {
 		s.log.Error("parse task", "err", err)
 		return nil, status.Error(codes.Internal, "parse failed")
@@ -361,11 +372,11 @@ func (s *Server) ParseTask(ctx context.Context, req *aiv1.ParseTaskRequest) (*ai
 		Flagged:     result.Flagged,
 		Subtasks:    result.Subtasks,
 	}
-	if t := result.DueAtTime(); t != nil {
+	if t := result.DueAtTime(tz.Load(zone)); t != nil {
 		pt.DueAt = timestamppb.New(*t)
 	}
 
-	s.log.Info("task parsed", "title", result.Title, "priority", result.Priority, "due_at", result.DueAt)
+	s.log.Info("task parsed", "priority", result.Priority, "has_due", result.DueAt != "")
 	return &aiv1.ParseTaskResponse{Task: pt}, nil
 }
 

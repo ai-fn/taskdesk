@@ -11,12 +11,13 @@ import (
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
 
+// The embedded interfaces make any RPC a test does not set up nil-panic, and keep new RPCs from breaking this file.
 type fakeAuthClient struct {
+	authv1.AuthServiceClient
 	getUserByID func(ctx context.Context, req *authv1.GetUserByIDRequest, opts ...grpc.CallOption) (*authv1.GetUserByIDResponse, error)
 	listUserIDs func(ctx context.Context, req *authv1.ListUserIDsRequest, opts ...grpc.CallOption) (*authv1.ListUserIDsResponse, error)
 }
@@ -34,73 +35,12 @@ func (f *fakeAuthClient) ListUserIDs(ctx context.Context, req *authv1.ListUserID
 	return f.listUserIDs(ctx, req, opts...)
 }
 
-// Stubs for the rest of the interface.
-func (f *fakeAuthClient) SignUp(ctx context.Context, in *authv1.SignUpRequest, opts ...grpc.CallOption) (*authv1.SignUpResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) Login(ctx context.Context, in *authv1.LoginRequest, opts ...grpc.CallOption) (*authv1.LoginResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) RefreshToken(ctx context.Context, in *authv1.RefreshTokenRequest, opts ...grpc.CallOption) (*authv1.RefreshTokenResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) Logout(ctx context.Context, in *authv1.LogoutRequest, opts ...grpc.CallOption) (*authv1.LogoutResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) GetJWKS(ctx context.Context, in *authv1.GetJWKSRequest, opts ...grpc.CallOption) (*authv1.GetJWKSResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) ValidateToken(ctx context.Context, in *authv1.ValidateTokenRequest, opts ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) OAuthSignIn(ctx context.Context, in *authv1.OAuthSignInRequest, opts ...grpc.CallOption) (*authv1.OAuthSignInResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) ListSessions(ctx context.Context, in *authv1.ListSessionsRequest, opts ...grpc.CallOption) (*authv1.ListSessionsResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) RevokeSession(ctx context.Context, in *authv1.RevokeSessionRequest, opts ...grpc.CallOption) (*authv1.RevokeSessionResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) RevokeOtherSessions(ctx context.Context, in *authv1.RevokeOtherSessionsRequest, opts ...grpc.CallOption) (*authv1.RevokeOtherSessionsResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) RequestPasswordReset(ctx context.Context, in *authv1.RequestPasswordResetRequest, opts ...grpc.CallOption) (*authv1.RequestPasswordResetResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) ResetPassword(ctx context.Context, in *authv1.ResetPasswordRequest, opts ...grpc.CallOption) (*authv1.ResetPasswordResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) RequestEmailVerification(ctx context.Context, in *authv1.RequestEmailVerificationRequest, opts ...grpc.CallOption) (*authv1.RequestEmailVerificationResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) ConfirmEmail(ctx context.Context, in *authv1.ConfirmEmailRequest, opts ...grpc.CallOption) (*authv1.ConfirmEmailResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) UpdateUserLanguage(ctx context.Context, in *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) RedeemPromoCode(ctx context.Context, in *authv1.RedeemPromoCodeRequest, opts ...grpc.CallOption) (*authv1.RedeemPromoCodeResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) GetSubscription(ctx context.Context, in *authv1.GetSubscriptionRequest, opts ...grpc.CallOption) (*authv1.GetSubscriptionResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) CreateStripeCheckoutSession(ctx context.Context, in *authv1.CreateStripeCheckoutSessionRequest, opts ...grpc.CallOption) (*authv1.CreateStripeCheckoutSessionResponse, error) {
-	panic("not used")
-}
-func (f *fakeAuthClient) HandleStripeWebhook(ctx context.Context, in *authv1.HandleStripeWebhookRequest, opts ...grpc.CallOption) (*authv1.HandleStripeWebhookResponse, error) {
-	panic("not used")
-}
-
-// Unconfigured RPCs hit the nil embedded client and panic, so a new RPC never breaks the build.
 type fakeTodoClient struct {
 	todov1.TodoServiceClient
 	getTask          func(ctx context.Context, req *todov1.GetTaskRequest, opts ...grpc.CallOption) (*todov1.GetTaskResponse, error)
 	listTasks        func(ctx context.Context, req *todov1.ListTasksRequest, opts ...grpc.CallOption) (*todov1.ListTasksResponse, error)
 	listDependencies func(ctx context.Context, req *todov1.ListDependenciesRequest, opts ...grpc.CallOption) (*todov1.ListDependenciesResponse, error)
 	updateTaskScore  func(ctx context.Context, req *todov1.UpdateTaskScoreRequest, opts ...grpc.CallOption) (*todov1.UpdateTaskScoreResponse, error)
-	listUserIDs      func(ctx context.Context, req *authv1.ListUserIDsRequest, opts ...grpc.CallOption) (*authv1.ListUserIDsResponse, error)
 }
 
 func (f *fakeTodoClient) GetTask(ctx context.Context, req *todov1.GetTaskRequest, opts ...grpc.CallOption) (*todov1.GetTaskResponse, error) {
@@ -139,16 +79,6 @@ func userByPlan(plan string) func(context.Context, *authv1.GetUserByIDRequest, .
 		return &authv1.GetUserByIDResponse{
 			User: &authv1.UserSummary{Plan: plan},
 		}, nil
-	}
-}
-
-func minimalTask() *todov1.Task {
-	return &todov1.Task{
-		Id:        "task-1",
-		UserId:    "user-1",
-		Title:     "Write docs",
-		CreatedAt: timestamppb.Now(),
-		UpdatedAt: timestamppb.Now(),
 	}
 }
 

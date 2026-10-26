@@ -35,8 +35,7 @@
       "forgotPassword": "Forgot password?",
       "emailRequired": "Email is required",
       "passwordRequired": "Password is required",
-      "invalidCredentials": "Email or password is incorrect.",
-      "oauthAccount": "This account uses social sign-in. Please use Google or Discord to log in.",
+      "invalidCredentials": "Email or password is incorrect. If you signed up with Google or Discord, use that button instead.",
       "tooManyRequests": "Too many attempts. Please wait before trying again.",
       "failed": "Login failed. Please try again."
     },
@@ -127,7 +126,8 @@
     "list": {
       "failedToLoad": "Failed to load tasks",
       "noDeletedTasks": "No recently deleted tasks.",
-      "empty": "No tasks yet. Create your first one above."
+      "empty": "No tasks yet. Create your first one above.",
+      "truncated": "Showing the first {{limit}} tasks. Use filters or search to narrow the list."
     },
     "subtasks": {
       "addPlaceholder": "Add subtask…",

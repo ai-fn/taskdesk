@@ -2,6 +2,7 @@ package password
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -40,11 +41,14 @@ func TestValidate(t *testing.T) {
 	}{
 		{"too short", "Ab1!", ErrTooShort},
 		{"7 chars rejected", "Abc123!", ErrTooShort},
-		{"8 lowercase only too weak", "abcdefgh", ErrTooWeak}, // score 1
-		{"8 with upper ok", "Abcdefgh", nil},                  // score 2 (fair)
-		{"8 digits ok", "12345678", nil},                      // score 2 (fair)
-		{"strong ok", "Abcdef1!", nil},                        // score 4
-		{"long lowercase ok", "abcdefghijkl", nil},            // score 2 via length
+		{"72 bytes accepted", strings.Repeat("aB1!", 18), nil},
+		{"73 bytes rejected", strings.Repeat("aB1!", 18) + "x", ErrTooLong},
+		{"multibyte over 72 bytes rejected", strings.Repeat("密", 25) + "aB1", ErrTooLong}, // 25 runes, 78 bytes
+		{"8 lowercase only too weak", "abcdefgh", ErrTooWeak},                             // score 1
+		{"8 with upper ok", "Abcdefgh", nil},                                              // score 2 (fair)
+		{"8 digits ok", "12345678", nil},                                                  // score 2 (fair)
+		{"strong ok", "Abcdef1!", nil},                                                    // score 4
+		{"long lowercase ok", "abcdefghijkl", nil},                                        // score 2 via length
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

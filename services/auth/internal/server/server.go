@@ -17,6 +17,7 @@ import (
 	"github.com/fsociety/todo/pkg/i18n"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
 	"github.com/fsociety/todo/pkg/tokens"
+	"github.com/fsociety/todo/pkg/tz"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	"github.com/fsociety/todo/services/auth/internal/domain"
 	"github.com/fsociety/todo/services/auth/internal/password"
@@ -24,7 +25,6 @@ import (
 	"github.com/google/uuid"
 	ua "github.com/mileusna/useragent"
 	stripe "github.com/stripe/stripe-go/v82"
-	stripeclient "github.com/stripe/stripe-go/v82/client"
 	"github.com/stripe/stripe-go/v82/webhook"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
@@ -41,11 +41,11 @@ type CodeConfig struct {
 
 // StripeConfig holds credentials and identifiers for the Stripe integration.
 type StripeConfig struct {
-	SecretKey      string // STRIPE_SECRET_KEY
-	WebhookSecret  string // STRIPE_WEBHOOK_SECRET — used to verify webhook signatures
-	PriceID        string // STRIPE_PRICE_ID — the recurring price to subscribe users to
-	SuccessURL     string // STRIPE_SUCCESS_URL — redirect after successful checkout
-	CancelURL      string // STRIPE_CANCEL_URL  — redirect when user cancels checkout
+	SecretKey     string // STRIPE_SECRET_KEY
+	WebhookSecret string // STRIPE_WEBHOOK_SECRET — used to verify webhook signatures
+	PriceID       string // STRIPE_PRICE_ID — the recurring price to subscribe users to
+	SuccessURL    string // STRIPE_SUCCESS_URL — redirect after successful checkout
+	CancelURL     string // STRIPE_CANCEL_URL  — redirect when user cancels checkout
 }
 
 type Server struct {
@@ -56,7 +56,7 @@ type Server struct {
 	producer     *pkgkafka.Producer // nil if Kafka is not configured
 	codeCfg      CodeConfig
 	stripe       StripeConfig
-	stripeClient *stripeclient.API // per-server Stripe client; avoids mutating stripe.Key global
+	stripeClient *stripe.Client // per-server Stripe client; avoids mutating stripe.Key global
 }
 
 func New(st *store.Store, tm *tokens.Maker, log *slog.Logger, producer *pkgkafka.Producer, codeCfg CodeConfig, stripeCfg StripeConfig) *Server {
@@ -67,14 +67,14 @@ func New(st *store.Store, tm *tokens.Maker, log *slog.Logger, producer *pkgkafka
 		producer:     producer,
 		codeCfg:      codeCfg,
 		stripe:       stripeCfg,
-		stripeClient: stripeclient.New(stripeCfg.SecretKey, nil),
+		stripeClient: stripe.NewClient(stripeCfg.SecretKey),
 	}
 }
 
 // ── SignUp ────────────────────────────────────────────────────────────────────
 
 func (s *Server) SignUp(ctx context.Context, req *authv1.SignUpRequest) (*authv1.SignUpResponse, error) {
-	if req.Email == "" || req.Password == "" || req.Name == "" {
+	if store.NormalizeEmail(req.Email) == "" || req.Password == "" || req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "email, password and name are required")
 	}
 	if err := password.Validate(req.Password); err != nil {
@@ -112,7 +112,7 @@ func (s *Server) SignUp(ctx context.Context, req *authv1.SignUpRequest) (*authv1
 		return nil, err
 	}
 
-	if err := s.createSession(ctx, sessionID, user.ID, refresh, req.ClientInfo); err != nil {
+	if err := s.createLoginSession(ctx, sessionID, user.ID, refresh, req.ClientInfo, hashStr); err != nil {
 		return nil, err
 	}
 
@@ -125,25 +125,33 @@ func (s *Server) SignUp(ctx context.Context, req *authv1.SignUpRequest) (*authv1
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 
+// dummyHash is compared against when there is no real hash, to equalise Login timing.
+var dummyHash = func() string {
+	h, err := bcrypt.GenerateFromPassword([]byte("dummy-password"), bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	return string(h)
+}()
+
 func (s *Server) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.LoginResponse, error) {
-	if req.Email == "" || req.Password == "" {
+	if store.NormalizeEmail(req.Email) == "" || req.Password == "" {
 		return nil, status.Error(codes.InvalidArgument, "email and password are required")
 	}
 
 	user, err := s.store.GetUserByEmail(ctx, req.Email)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, status.Error(codes.Unauthenticated, "invalid credentials")
-		}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.log.Error("get user by email", "err", err)
 		return nil, status.Error(codes.Internal, "login failed")
 	}
 
-	if user.PasswordHash == nil {
-		// OAuth-only account — no password to compare against.
-		return nil, status.Error(codes.Unauthenticated, "no password set for this account; use OAuth to sign in")
+	// Unknown emails and OAuth-only accounts (no hash) take the same bcrypt time and
+	// return the same error, so neither leaks whether an account exists.
+	hash, ok := []byte(dummyHash), err == nil && user.PasswordHash != nil
+	if ok {
+		hash = []byte(*user.PasswordHash)
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.Password)); err != nil {
+	if bcrypt.CompareHashAndPassword(hash, []byte(req.Password)) != nil || !ok {
 		return nil, status.Error(codes.Unauthenticated, "invalid credentials")
 	}
 
@@ -153,7 +161,7 @@ func (s *Server) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.L
 		return nil, err
 	}
 
-	if err := s.createSession(ctx, sessionID, user.ID, refresh, req.ClientInfo); err != nil {
+	if err := s.createLoginSession(ctx, sessionID, user.ID, refresh, req.ClientInfo, *user.PasswordHash); err != nil {
 		return nil, err
 	}
 
@@ -162,6 +170,36 @@ func (s *Server) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.L
 		AccessToken:  access,
 		RefreshToken: refresh,
 	}, nil
+}
+
+// CleanupExpiredSessions periodically deletes expired sessions until ctx ends. Replicas may race;
+// that only costs a redundant DELETE.
+func (s *Server) CleanupExpiredSessions(ctx context.Context, every time.Duration) {
+	const batch = 1000
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		for { // drain in batches
+			n, err := s.store.DeleteExpiredSessions(ctx, batch)
+			if err != nil {
+				if ctx.Err() == nil {
+					s.log.Warn("cleanup expired sessions", "err", err)
+				}
+				break
+			}
+			if n > 0 {
+				s.log.Info("expired sessions removed", "count", n)
+			}
+			if n < batch {
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // ── RefreshToken ──────────────────────────────────────────────────────────────
@@ -206,7 +244,11 @@ func (s *Server) Logout(ctx context.Context, req *authv1.LogoutRequest) (*authv1
 	if req.RefreshToken == "" {
 		return &authv1.LogoutResponse{}, nil
 	}
-	_ = s.store.DeleteSessionByTokenHash(ctx, hashToken(req.RefreshToken))
+	// A failed delete leaves the session alive; say so, or the user believes they are signed out.
+	if err := s.store.DeleteSessionByTokenHash(ctx, hashToken(req.RefreshToken)); err != nil {
+		s.log.Error("logout: delete session", "err", err)
+		return nil, status.Error(codes.Internal, "logout failed")
+	}
 	return &authv1.LogoutResponse{}, nil
 }
 
@@ -233,9 +275,9 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 	if req.AccessToken == "" {
 		return nil, status.Error(codes.InvalidArgument, "access_token is required")
 	}
-	claims, err := s.tokens.Verify(req.AccessToken)
+	claims, err := s.tokens.VerifyAccess(req.AccessToken)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("invalid token: %v", err))
+		return nil, status.Error(codes.Unauthenticated, "invalid token")
 	}
 	user, err := s.store.GetUserByID(ctx, claims.UserID)
 	if err != nil {
@@ -247,6 +289,7 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 			SessionId:        claims.SessionID,
 			Language:         lang,
 			SubscriptionPlan: "free",
+			TimeZone:         tz.Default,
 		}, nil
 	}
 	return &authv1.ValidateTokenResponse{
@@ -256,27 +299,86 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 		Language:         user.Language,
 		EmailVerified:    user.EmailVerified,
 		SubscriptionPlan: user.Plan,
+		TimeZone:         tz.Normalize(user.TimeZone),
 	}, nil
+}
+
+// linkExisting links the OAuth identity to an existing account, claiming it first if unverified.
+func (s *Server) linkExisting(ctx context.Context, existing *domain.User, req *authv1.OAuthSignInRequest) error {
+	if err := s.claimIfUnverified(ctx, existing, req.Provider); err != nil {
+		return err
+	}
+	return s.store.LinkOAuth(ctx, existing.ID, req.Provider, req.ProviderUserId, req.Email)
+}
+
+// claimIfUnverified: the provider proved email ownership, so an unverified (possibly
+// attacker pre-registered) account is taken over instead of shared.
+func (s *Server) claimIfUnverified(ctx context.Context, u *domain.User, provider string) error {
+	if u.EmailVerified {
+		return nil
+	}
+	claimed, err := s.store.ClaimUnverifiedAccount(ctx, u.ID)
+	if err != nil {
+		return err
+	}
+	if claimed {
+		s.log.Warn("oauth claimed unverified account", "user_id", u.ID, "provider", provider)
+	}
+	return nil
+}
+
+// ── ValidateSession ───────────────────────────────────────────────────────────
+
+func (s *Server) ValidateSession(ctx context.Context, req *authv1.ValidateSessionRequest) (*authv1.ValidateSessionResponse, error) {
+	if req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	// A non-UUID id can't match a row; querying it would fail the uuid cast instead.
+	sid, err := uuid.Parse(req.SessionId)
+	if err != nil {
+		return &authv1.ValidateSessionResponse{Active: false}, nil
+	}
+	active, err := s.store.SessionActive(ctx, sid.String())
+	if err != nil {
+		s.log.Error("validate session", "err", err)
+		return nil, status.Error(codes.Internal, "validate session failed")
+	}
+	return &authv1.ValidateSessionResponse{Active: active}, nil
 }
 
 // ── ListUserIDs ───────────────────────────────────────────────────────────────
 
+const (
+	defaultUserPage = 500
+	maxUserPage     = 1000
+)
+
 func (s *Server) ListUserIDs(ctx context.Context, req *authv1.ListUserIDsRequest) (*authv1.ListUserIDsResponse, error) {
-	users, err := s.store.ListUsers(ctx, req.PlanFilter)
+	limit := int(req.PageSize)
+	if limit <= 0 {
+		limit = defaultUserPage
+	}
+	limit = min(limit, maxUserPage)
+
+	users, more, err := s.store.ListUserSummaries(ctx, req.PlanFilter, req.PageToken, limit)
 	if err != nil {
 		s.log.Error("list users", "err", err)
 		return nil, status.Error(codes.Internal, "list users failed")
 	}
-	resp := &authv1.ListUserIDsResponse{}
+	resp := &authv1.ListUserIDsResponse{Users: make([]*authv1.UserSummary, 0, len(users))}
 	for _, u := range users {
 		resp.Users = append(resp.Users, &authv1.UserSummary{
 			UserId:        u.ID,
 			Email:         u.Email,
 			Name:          u.Name,
 			Language:      u.Language,
+			TimeZone:      tz.Normalize(u.TimeZone),
 			EmailVerified: u.EmailVerified,
 			Plan:          u.Plan,
 		})
+	}
+	if more {
+		resp.NextPageToken = users[len(users)-1].ID
 	}
 	return resp, nil
 }
@@ -301,6 +403,7 @@ func (s *Server) GetUserByID(ctx context.Context, req *authv1.GetUserByIDRequest
 			Email:         u.Email,
 			Name:          u.Name,
 			Language:      u.Language,
+			TimeZone:      tz.Normalize(u.TimeZone),
 			EmailVerified: u.EmailVerified,
 			Plan:          u.Plan,
 		},
@@ -312,10 +415,11 @@ func (s *Server) GetUserByID(ctx context.Context, req *authv1.GetUserByIDRequest
 // OAuthSignIn handles a verified OAuth identity from the gateway.
 // Decision tree:
 //  1. Identity already linked → return existing user, created=false.
-//  2. Email matches existing user → link identity, created=false.
+//  2. Email matches existing user → link identity, created=false. An account with an
+//     unverified email is claimed first (see linkExisting).
 //  3. Otherwise → create user (no password) + link identity, created=true.
 func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest) (*authv1.OAuthSignInResponse, error) {
-	if req.Provider == "" || req.ProviderUserId == "" || req.Email == "" {
+	if req.Provider == "" || req.ProviderUserId == "" || store.NormalizeEmail(req.Email) == "" {
 		return nil, status.Error(codes.InvalidArgument, "provider, provider_user_id, email are required")
 	}
 
@@ -325,6 +429,11 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 	// 1. Existing OAuth link?
 	u, err := s.store.FindByOAuth(ctx, req.Provider, req.ProviderUserId)
 	if err == nil {
+		// Also heals accounts linked before unverified ones were claimed.
+		if err := s.claimIfUnverified(ctx, u, req.Provider); err != nil {
+			s.log.Error("claim unverified (oauth link)", "err", err)
+			return nil, status.Error(codes.Internal, "oauth signin failed")
+		}
 		user = u
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.log.Error("find by oauth", "err", err)
@@ -335,7 +444,7 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 	if user == nil {
 		existing, err := s.store.GetUserByEmail(ctx, req.Email)
 		if err == nil {
-			if err := s.store.LinkOAuth(ctx, existing.ID, req.Provider, req.ProviderUserId, req.Email); err != nil {
+			if err := s.linkExisting(ctx, existing, req); err != nil {
 				s.log.Error("link oauth (existing user)", "err", err)
 				return nil, status.Error(codes.Internal, "oauth link failed")
 			}
@@ -365,7 +474,7 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 					s.log.Error("get user after race", "err", gerr)
 					return nil, status.Error(codes.Internal, "oauth signin failed")
 				}
-				if err := s.store.LinkOAuth(ctx, existing.ID, req.Provider, req.ProviderUserId, req.Email); err != nil {
+				if err := s.linkExisting(ctx, existing, req); err != nil {
 					s.log.Error("link oauth (race resolution)", "err", err)
 					return nil, status.Error(codes.Internal, "oauth link failed")
 				}
@@ -404,6 +513,25 @@ func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest
 		RefreshToken: refresh,
 		Created:      created,
 	}, nil
+}
+
+// ── UpdateUserTimeZone ────────────────────────────────────────────────────────
+
+func (s *Server) UpdateUserTimeZone(ctx context.Context, req *authv1.UpdateUserTimeZoneRequest) (*authv1.UpdateUserTimeZoneResponse, error) {
+	if req.UserId == "" || req.TimeZone == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and time_zone are required")
+	}
+	if !tz.Valid(req.TimeZone) {
+		return nil, status.Error(codes.InvalidArgument, "unknown time zone")
+	}
+	if err := s.store.UpdateUserTimeZone(ctx, req.UserId, req.TimeZone); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "user not found")
+		}
+		s.log.Error("update user time zone", "err", err)
+		return nil, status.Error(codes.Internal, "update time zone failed")
+	}
+	return &authv1.UpdateUserTimeZoneResponse{}, nil
 }
 
 // ── UpdateUserLanguage ────────────────────────────────────────────────────────
@@ -505,17 +633,34 @@ func (s *Server) mintTokens(userID, email, sessionID string) (access, refresh st
 }
 
 func (s *Server) createSession(ctx context.Context, sessionID, userID, refreshToken string, info *authv1.ClientInfo) error {
-	expiresAt := time.Now().UTC().Add(tokens.RefreshTokenTTL)
-	ip, agent := "", ""
-	if info != nil {
-		ip = info.IpAddress
-		agent = info.UserAgent
-	}
+	ip, agent, expiresAt := sessionMeta(info)
 	if err := s.store.CreateSession(ctx, sessionID, userID, hashToken(refreshToken), ip, agent, expiresAt); err != nil {
 		s.log.Error("create session", "err", err)
 		return status.Error(codes.Internal, "save session failed")
 	}
 	return nil
+}
+
+// createLoginSession is createSession for password logins: it fails Unauthenticated if the
+// password changed or was cleared (e.g. by an OAuth account claim) since it was verified.
+func (s *Server) createLoginSession(ctx context.Context, sessionID, userID, refreshToken string, info *authv1.ClientInfo, passwordHash string) error {
+	ip, agent, expiresAt := sessionMeta(info)
+	err := s.store.CreateLoginSession(ctx, sessionID, userID, hashToken(refreshToken), ip, agent, expiresAt, passwordHash)
+	if errors.Is(err, store.ErrNotFound) {
+		return status.Error(codes.Unauthenticated, "invalid credentials")
+	}
+	if err != nil {
+		s.log.Error("create session", "err", err)
+		return status.Error(codes.Internal, "save session failed")
+	}
+	return nil
+}
+
+func sessionMeta(info *authv1.ClientInfo) (ip, agent string, expiresAt time.Time) {
+	if info != nil {
+		ip, agent = info.IpAddress, info.UserAgent
+	}
+	return ip, agent, time.Now().UTC().Add(tokens.RefreshTokenTTL)
 }
 
 // deviceLabel returns a short human-readable label for the UA's device type.
@@ -539,17 +684,24 @@ func deviceLabel(parsed ua.UserAgent) string {
 
 // RequestPasswordReset always returns OK to avoid user enumeration via email.
 func (s *Server) RequestPasswordReset(ctx context.Context, req *authv1.RequestPasswordResetRequest) (*authv1.RequestPasswordResetResponse, error) {
-	if req.Email == "" {
+	if store.NormalizeEmail(req.Email) == "" {
 		return nil, status.Error(codes.InvalidArgument, "email is required")
 	}
 
 	user, err := s.store.GetUserByEmail(ctx, req.Email)
 	if err != nil {
-		// User not found — return OK silently.
+		// Unknown email answers OK silently; a real DB failure is still logged.
+		if !errors.Is(err, store.ErrNotFound) {
+			s.log.Error("get user by email (password reset)", "err", err)
+		}
 		return &authv1.RequestPasswordResetResponse{}, nil
 	}
 
 	if err := s.issueCode(ctx, user, events.PurposePasswordReset); err != nil {
+		// The cooldown answer must look like the unknown-email one, or it reveals the account.
+		if status.Code(err) == codes.ResourceExhausted {
+			return &authv1.RequestPasswordResetResponse{}, nil
+		}
 		return nil, err
 	}
 	return &authv1.RequestPasswordResetResponse{}, nil
@@ -558,7 +710,7 @@ func (s *Server) RequestPasswordReset(ctx context.Context, req *authv1.RequestPa
 // ── ResetPassword ─────────────────────────────────────────────────────────────
 
 func (s *Server) ResetPassword(ctx context.Context, req *authv1.ResetPasswordRequest) (*authv1.ResetPasswordResponse, error) {
-	if req.Email == "" || req.Code == "" || req.NewPassword == "" {
+	if store.NormalizeEmail(req.Email) == "" || req.Code == "" || req.NewPassword == "" {
 		return nil, status.Error(codes.InvalidArgument, "email, code and new_password are required")
 	}
 	if err := password.Validate(req.NewPassword); err != nil {
@@ -570,15 +722,17 @@ func (s *Server) ResetPassword(ctx context.Context, req *authv1.ResetPasswordReq
 		return nil, status.Error(codes.Unauthenticated, "invalid or expired code")
 	}
 
-	// Reject reuse of the current password. Checked before consuming the OTP
-	// code (so a rejected reuse doesn't burn the code); this leaks nothing new
-	// since Login is already an equivalent (email, password) oracle.
+	// The code is checked first so only its holder can learn whether a password is the
+	// current one; a rejected reuse leaves the code unconsumed for a retry.
+	vc, err := s.verifyCode(ctx, user.ID, events.PurposePasswordReset, req.Code)
+	if err != nil {
+		return nil, err
+	}
 	if user.PasswordHash != nil &&
 		bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.NewPassword)) == nil {
 		return nil, status.Error(codes.InvalidArgument, "new password must be different from your current password")
 	}
-
-	if err := s.verifyAndConsumeCode(ctx, user.ID, events.PurposePasswordReset, req.Code); err != nil {
+	if err := s.consumeCode(ctx, vc.ID); err != nil {
 		return nil, err
 	}
 
@@ -682,7 +836,7 @@ func (s *Server) RedeemPromoCode(ctx context.Context, req *authv1.RedeemPromoCod
 		}
 	}
 
-	s.log.Info("promo code redeemed", "user_id", req.UserId, "code", pc.Code)
+	s.log.Info("promo code redeemed", "user_id", req.UserId, "promo_id", pc.ID)
 	return &authv1.RedeemPromoCodeResponse{Plan: "pro"}, nil
 }
 
@@ -749,9 +903,8 @@ func (s *Server) CreateStripeCheckoutSession(ctx context.Context, req *authv1.Cr
 	} else {
 		customerCtx, customerCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer customerCancel()
-		c, err := s.stripeClient.Customers.New(&stripe.CustomerParams{
-			Params:   stripe.Params{Context: customerCtx},
-			Email:    stripe.String(req.Email),
+		c, err := s.stripeClient.V1Customers.Create(customerCtx, &stripe.CustomerCreateParams{
+			Email:    stripe.String(user.Email),
 			Metadata: map[string]string{"user_id": req.UserId},
 		})
 		if err != nil {
@@ -759,25 +912,32 @@ func (s *Server) CreateStripeCheckoutSession(ctx context.Context, req *authv1.Cr
 			return nil, status.Error(codes.Internal, "checkout failed")
 		}
 		customerID = c.ID
-		if err := s.store.SetStripeCustomerID(ctx, req.UserId, customerID); err != nil {
+		// A parallel checkout may have won; use its customer so the user keeps one.
+		stored, err := s.store.SetStripeCustomerIDIfUnset(ctx, req.UserId, customerID)
+		if err != nil {
+			// Non-fatal: the webhook resolves the user from client_reference_id.
 			s.log.Error("store stripe customer id", "err", err)
-			// Non-fatal: the customer was created in Stripe; we'll find it via webhook.
+		} else {
+			customerID = stored
 		}
 	}
 
 	sessionCtx, sessionCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer sessionCancel()
-	params := &stripe.CheckoutSessionParams{
-		Params:   stripe.Params{Context: sessionCtx},
+	params := &stripe.CheckoutSessionCreateParams{
 		Customer: stripe.String(customerID),
 		Mode:     stripe.String(string(stripe.CheckoutSessionModeSubscription)),
-		LineItems: []*stripe.CheckoutSessionLineItemParams{
+		LineItems: []*stripe.CheckoutSessionCreateLineItemParams{
 			{Price: stripe.String(s.stripe.PriceID), Quantity: stripe.Int64(1)},
 		},
 		SuccessURL: stripe.String(s.stripe.SuccessURL),
 		CancelURL:  stripe.String(s.stripe.CancelURL),
+		// The webhook finds the user from these even if the customer id was never stored.
+		ClientReferenceID: stripe.String(req.UserId),
+		Metadata:          map[string]string{"user_id": req.UserId},
+		SubscriptionData:  &stripe.CheckoutSessionCreateSubscriptionDataParams{Metadata: map[string]string{"user_id": req.UserId}},
 	}
-	sess, err := s.stripeClient.CheckoutSessions.New(params)
+	sess, err := s.stripeClient.V1CheckoutSessions.Create(sessionCtx, params)
 	if err != nil {
 		s.log.Error("create stripe checkout session", "err", err)
 		return nil, status.Error(codes.Internal, "checkout failed")
@@ -800,9 +960,9 @@ func (s *Server) HandleStripeWebhook(ctx context.Context, req *authv1.HandleStri
 	}
 
 	switch event.Type {
-	case "checkout.session.completed":
+	case "checkout.session.completed", "checkout.session.async_payment_succeeded":
 		if err := s.handleCheckoutCompleted(ctx, &event); err != nil {
-			s.log.Error("handle checkout.session.completed", "err", err)
+			s.log.Error("handle checkout session", "type", event.Type, "err", err)
 			return nil, status.Error(codes.Internal, "webhook processing failed")
 		}
 	case "customer.subscription.updated":
@@ -831,10 +991,16 @@ func (s *Server) handleCheckoutCompleted(ctx context.Context, event *stripe.Even
 	if sess.Subscription == nil || sess.Customer == nil {
 		return nil
 	}
+	// Async methods complete the session before the money arrives; async_payment_succeeded follows.
+	if sess.PaymentStatus != stripe.CheckoutSessionPaymentStatusPaid &&
+		sess.PaymentStatus != stripe.CheckoutSessionPaymentStatusNoPaymentRequired {
+		s.log.Info("stripe checkout not paid yet, waiting", "session_id", sess.ID, "payment_status", sess.PaymentStatus)
+		return nil
+	}
 
-	user, err := s.store.GetUserByStripeCustomerID(ctx, sess.Customer.ID)
+	user, err := s.stripeCheckoutUser(ctx, &sess)
 	if err != nil {
-		return fmt.Errorf("get user by stripe customer id %s: %w", sess.Customer.ID, err)
+		return err
 	}
 
 	sub := &domain.Subscription{
@@ -857,16 +1023,57 @@ func (s *Server) handleCheckoutCompleted(ctx context.Context, event *stripe.Even
 	return nil
 }
 
+// stripeCheckoutUser resolves the paying user from the id we put on the session, falling back
+// to the customer id for sessions created before that. It backfills a missing customer id.
+func (s *Server) stripeCheckoutUser(ctx context.Context, sess *stripe.CheckoutSession) (*domain.User, error) {
+	userID := sess.ClientReferenceID
+	if userID == "" {
+		userID = sess.Metadata["user_id"]
+	}
+	if userID == "" {
+		user, err := s.store.GetUserByStripeCustomerID(ctx, sess.Customer.ID)
+		if err != nil {
+			return nil, fmt.Errorf("get user by stripe customer id %s: %w", sess.Customer.ID, err)
+		}
+		return user, nil
+	}
+
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get user %s from checkout reference: %w", userID, err)
+	}
+	if user.StripeCustomerID == nil {
+		if _, err := s.store.SetStripeCustomerIDIfUnset(ctx, user.ID, sess.Customer.ID); err != nil {
+			s.log.Warn("backfill stripe customer id", "user_id", user.ID, "err", err)
+		}
+	}
+	return user, nil
+}
+
 func (s *Server) handleSubscriptionUpdated(ctx context.Context, event *stripe.Event) error {
 	var sub stripe.Subscription
 	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
 		return fmt.Errorf("unmarshal subscription: %w", err)
 	}
-	// Active and trialing statuses keep the user on pro; anything else cancels.
-	if sub.Status == stripe.SubscriptionStatusActive || sub.Status == stripe.SubscriptionStatusTrialing {
-		return nil
+	switch sub.Status {
+	case stripe.SubscriptionStatusActive, stripe.SubscriptionStatusTrialing, stripe.SubscriptionStatusPastDue:
+		// past_due is a grace period: Stripe keeps retrying the charge, and moves to unpaid/canceled if it fails.
+		return s.reactivateStripeSubscription(ctx, sub.ID)
+	default:
+		return s.cancelStripeSubscription(ctx, sub.ID)
 	}
-	return s.cancelStripeSubscription(ctx, sub.ID)
+}
+
+func (s *Server) reactivateStripeSubscription(ctx context.Context, stripeSubID string) error {
+	userID, err := s.store.ReactivateSubscriptionBySourceRef(ctx, stripeSubID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil // already active or unknown
+		}
+		return fmt.Errorf("reactivate subscription %s: %w", stripeSubID, err)
+	}
+	s.log.Info("stripe subscription reactivated", "user_id", userID, "subscription_id", stripeSubID)
+	return nil
 }
 
 func (s *Server) handleSubscriptionDeleted(ctx context.Context, event *stripe.Event) error {
@@ -884,9 +1091,6 @@ func (s *Server) cancelStripeSubscription(ctx context.Context, stripeSubID strin
 			return nil // already cancelled or unknown — safe to ignore
 		}
 		return fmt.Errorf("cancel subscription %s: %w", stripeSubID, err)
-	}
-	if err := s.store.RecalculateUserPlan(ctx, userID); err != nil {
-		return fmt.Errorf("recalculate plan for user %s: %w", userID, err)
 	}
 	s.log.Info("stripe subscription cancelled", "user_id", userID, "subscription_id", stripeSubID)
 	return nil
@@ -944,40 +1148,48 @@ func (s *Server) issueCode(ctx context.Context, user *domain.User, purpose strin
 	return nil
 }
 
-// verifyAndConsumeCode checks the submitted code against the latest active code.
-// Wrong code: increments attempts; if maxAttempts reached, consumes (invalidates) the code.
-// Returns Unauthenticated on wrong/expired code, ResourceExhausted after max attempts.
-func (s *Server) verifyAndConsumeCode(ctx context.Context, userID, purpose, submitted string) error {
-	vc, err := s.store.GetActiveVerificationCode(ctx, userID, purpose)
+// verifyCode spends an attempt on the latest live code, then compares the hash, so concurrent
+// guesses cannot exceed MaxAttempts. A wrong final guess burns the code. It does not consume a
+// correct one. Returns Unauthenticated on wrong/expired code, ResourceExhausted on the last wrong attempt.
+func (s *Server) verifyCode(ctx context.Context, userID, purpose, submitted string) (*domain.VerificationCode, error) {
+	vc, err := s.store.ClaimCodeAttempt(ctx, userID, purpose, s.codeCfg.MaxAttempts)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return status.Error(codes.Unauthenticated, "invalid or expired code")
+			return nil, status.Error(codes.Unauthenticated, "invalid or expired code")
 		}
-		s.log.Error("get active code", "err", err)
-		return status.Error(codes.Internal, "verification failed")
+		s.log.Error("claim code attempt", "err", err)
+		return nil, status.Error(codes.Internal, "verification failed")
 	}
 
 	if hashToken(submitted) != vc.CodeHash {
-		attempts, err := s.store.IncrementCodeAttempts(ctx, vc.ID)
-		if err != nil {
-			s.log.Error("increment code attempts", "err", err)
-		}
-		if int(attempts) >= s.codeCfg.MaxAttempts {
+		if int(vc.Attempts) >= s.codeCfg.MaxAttempts {
 			_ = s.store.ConsumeCode(ctx, vc.ID)
-			return status.Error(codes.ResourceExhausted, "too many incorrect attempts — request a new code")
+			return nil, status.Error(codes.ResourceExhausted, "too many incorrect attempts — request a new code")
 		}
-		return status.Error(codes.Unauthenticated, "invalid or expired code")
+		return nil, status.Error(codes.Unauthenticated, "invalid or expired code")
 	}
+	return vc, nil
+}
 
-	if err := s.store.ConsumeCode(ctx, vc.ID); err != nil {
+// consumeCode marks a verified code used; losing the race to a concurrent request is a bad code.
+func (s *Server) consumeCode(ctx context.Context, codeID string) error {
+	if err := s.store.ConsumeCode(ctx, codeID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			// Another concurrent request already consumed this code.
 			return status.Error(codes.Unauthenticated, "invalid or expired code")
 		}
 		s.log.Error("consume code", "err", err)
 		return status.Error(codes.Internal, "verification failed")
 	}
 	return nil
+}
+
+// verifyAndConsumeCode is verifyCode followed by consumeCode.
+func (s *Server) verifyAndConsumeCode(ctx context.Context, userID, purpose, submitted string) error {
+	vc, err := s.verifyCode(ctx, userID, purpose, submitted)
+	if err != nil {
+		return err
+	}
+	return s.consumeCode(ctx, vc.ID)
 }
 
 // generateOTP returns a zero-padded 6-digit numeric code from crypto/rand.

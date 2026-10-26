@@ -32,7 +32,8 @@ import (
 //
 // Errors are not cached: a failed fetch leaves the key absent so the next call
 // retries. Per-caller context is honored — a hung fetch lets each caller bail
-// with its own deadline while the shared fetch keeps running for whoever waits.
+// with its own deadline. The shared fetch is detached from caller cancellation but
+// keeps ctx values, and is bounded by maxFetch.
 type TTLCache[K comparable, V any] struct {
 	mu      sync.RWMutex
 	entries map[K]entry[V]
@@ -69,6 +70,9 @@ func WithJanitor[K comparable, V any](sweep time.Duration) Option[K, V] {
 	}
 }
 
+// maxFetch bounds a shared fetch that no caller's context governs.
+const maxFetch = 30 * time.Second
+
 // NewTTLCache builds a cache whose entries live for ttl after they are written.
 func NewTTLCache[K comparable, V any](ttl time.Duration, opts ...Option[K, V]) *TTLCache[K, V] {
 	c := &TTLCache[K, V]{
@@ -90,7 +94,8 @@ func NewTTLCache[K comparable, V any](ttl time.Duration, opts ...Option[K, V]) *
 // Slow path: delegate to singleflight.DoChan; the callback double-checks the
 // map (another goroutine may have filled it) and on a real miss runs fetch and
 // stores the result under Lock. Each caller selects on its own ctx so a slow
-// fetch never pins a caller past its deadline.
+// fetch never pins a caller past its deadline. fetch receives a detached ctx
+// capped at maxFetch, not the caller's.
 func (c *TTLCache[K, V]) GetOrFetch(ctx context.Context, key K, fetch func(context.Context) (V, error)) (V, error) {
 	if v, ok := c.Get(key); ok {
 		return v, nil
@@ -105,7 +110,10 @@ func (c *TTLCache[K, V]) GetOrFetch(ctx context.Context, key K, fetch func(conte
 		if v, ok := c.Get(key); ok {
 			return v, nil
 		}
-		v, err := fetch(ctx)
+		// The first caller's cancellation must not fail the callers sharing this flight.
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), maxFetch)
+		defer cancel()
+		v, err := fetch(fctx)
 		if err != nil {
 			return *new(V), err // not cached
 		}

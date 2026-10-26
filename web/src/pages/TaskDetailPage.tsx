@@ -76,7 +76,7 @@ export function TaskDetailPage() {
 
   const list = useMemo(() => lists.find((l) => l.id === task?.list_id), [lists, task])
 
-  async function handleSave(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string; list_id?: string | null; flagged?: boolean }) {
+  async function handleSave(values: { title: string; description: string; priority: number; status?: number; tags: string[]; due_at?: string | null; list_id?: string | null; flagged?: boolean }) {
     if (!task) return
     setEditError('')
     try {

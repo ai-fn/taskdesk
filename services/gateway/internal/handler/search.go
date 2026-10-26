@@ -3,11 +3,15 @@ package handler
 import (
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	mw "github.com/fsociety/todo/services/gateway/internal/middleware"
 )
+
+// maxSearchRunes caps the query that gets embedded (Voyage bills per token).
+const maxSearchRunes = 500
 
 // SearchHandler handles task search.
 // Pro users get semantic vector search (Voyage AI embedding + pgvector).
@@ -26,6 +30,10 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
 		jsonError(w, "q is required", http.StatusBadRequest)
+		return
+	}
+	if utf8.RuneCountInString(query) > maxSearchRunes {
+		jsonError(w, "q too long", http.StatusBadRequest)
 		return
 	}
 
@@ -61,9 +69,7 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 		handleGRPCError(w, err)
 		return
 	}
-	if plan != "pro" {
-		stripCompletionScore(searchResp.Tasks)
-	}
+	stripUnlessPro(r, searchResp.Tasks...)
 
 	protoOK(w, searchResp)
 }

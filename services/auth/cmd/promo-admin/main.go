@@ -103,7 +103,9 @@ func cmdList(ctx context.Context, s *store.Store) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "CODE\tEMAIL\tMAX_USES\tPER_USER\tUSED\tDISABLED\tNOTES")
+	if _, err := fmt.Fprintln(w, "CODE\tEMAIL\tMAX_USES\tPER_USER\tUSED\tDISABLED\tNOTES"); err != nil {
+		fatalf("list: write header: %v\n", err)
+	}
 	for _, pc := range codes {
 		email := "-"
 		if pc.AllowedEmail != nil {
@@ -117,10 +119,14 @@ func cmdList(ctx context.Context, s *store.Store) {
 		if notes == "" {
 			notes = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%v\t%s\n",
-			pc.Code, email, maxUses, pc.MaxUsagePerUser, redemptions[pc.ID], pc.Disabled, notes)
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%v\t%s\n",
+			pc.Code, email, maxUses, pc.MaxUsagePerUser, redemptions[pc.ID], pc.Disabled, notes); err != nil {
+			fatalf("list: write row: %v\n", err)
+		}
 	}
-	w.Flush()
+	if err := w.Flush(); err != nil {
+		fatalf("list: flush: %v\n", err)
+	}
 }
 
 func cmdDisable(ctx context.Context, s *store.Store) {

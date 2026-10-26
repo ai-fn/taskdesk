@@ -33,6 +33,8 @@ service TodoService {
   rpc UpsertTaskEmbedding(UpsertTaskEmbeddingRequest) returns (UpsertTaskEmbeddingResponse);
   rpc DeleteTaskEmbedding(DeleteTaskEmbeddingRequest) returns (DeleteTaskEmbeddingResponse);
   rpc SearchTasks(SearchTasksRequest)                 returns (SearchTasksResponse);
+  // ListUnembeddedTasks pages a user's live tasks that have no embedding yet (embedder backfill).
+  rpc ListUnembeddedTasks(ListUnembeddedTasksRequest) returns (ListTasksResponse);
 
   // UpdateTaskScore stores the AI-generated completion probability for a task.
   rpc UpdateTaskScore(UpdateTaskScoreRequest) returns (UpdateTaskScoreResponse);
@@ -172,6 +174,13 @@ message ListTasksRequest {
   bool   has_due_date    = 10;
   string parent_task_id  = 11; // when set: list subtasks of this task
   bool   exclude_blocked = 12; // if true, omit tasks with unfinished dependencies
+  string time_zone       = 13; // IANA name deciding "today" for due_today_only; empty = UTC
+}
+
+message ListUnembeddedTasksRequest {
+  string user_id    = 1;
+  int32  page_size  = 2; // default 50, max 200
+  string page_token = 3; // opaque; empty = first page
 }
 
 message ListTasksResponse {
@@ -191,10 +200,12 @@ message UpdateTaskRequest {
   repeated string tags = 7;
   google.protobuf.Timestamp due_at = 8;
   // update_mask lists fields that should be explicitly set even if zero-value.
-  // Supported: "flagged", "list_id"
+  // Supported: "flagged", "list_id", "description", "tags", "due_at" (nil due_at clears it)
   repeated string update_mask = 9;
   string list_id = 10;
   bool   flagged = 11;
+  string language = 12; // stamped onto the task.completed outbox event
+  string email    = 13; // verified address to notify on completion; empty = no email
 }
 
 message UpdateTaskResponse {
@@ -216,6 +227,7 @@ message CompleteTaskRequest {
   string user_id  = 1;
   string task_id  = 2;
   string language = 3; // user's preferred language, stamped onto the outbox event
+  string email    = 4; // verified address to notify, stamped onto the outbox event; empty = no email
 }
 
 message CompleteTaskResponse {

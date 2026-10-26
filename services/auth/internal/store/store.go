@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fsociety/todo/services/auth/internal/domain"
@@ -15,9 +16,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-
 var ErrNotFound = errors.New("not found")
 var ErrEmailTaken = errors.New("email already registered")
+var ErrInvalidEmail = errors.New("invalid email")
 var ErrSubscriptionAlreadyExists = errors.New("subscription already exists")
 var ErrPromoCodeNotFound = errors.New("promo code not found")
 var ErrPromoCodeDisabled = errors.New("promo code is disabled")
@@ -34,10 +35,20 @@ func New(db *pgxpool.Pool) *Store {
 	return &Store{db: db}
 }
 
+// NormalizeEmail is the canonical form of an address: accounts are matched case-insensitively.
+func NormalizeEmail(email string) string { return strings.ToLower(strings.TrimSpace(email)) }
+
+// CreateUser stores the user with a lowercased email (u.Email is updated to match). The NOT EXISTS
+// also refuses an address held under another casing by a pre-normalization row.
 func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
-	_, err := s.db.Exec(ctx, `
+	u.Email = NormalizeEmail(u.Email)
+	if u.Email == "" {
+		return ErrInvalidEmail
+	}
+	tag, err := s.db.Exec(ctx, `
 		INSERT INTO auth.users (id, email, name, password_hash, language, email_verified, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8
+		WHERE NOT EXISTS (SELECT 1 FROM auth.users WHERE lower(email) = $2)`,
 		u.ID, u.Email, u.Name, u.PasswordHash, u.Language, u.EmailVerified, u.CreatedAt, u.UpdatedAt,
 	)
 	// plan and stripe_customer_id default to 'free'/NULL via column defaults
@@ -47,15 +58,23 @@ func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
 		}
 		return fmt.Errorf("insert user: %w", err)
 	}
+	if tag.RowsAffected() == 0 {
+		return ErrEmailTaken
+	}
 	return nil
 }
 
+// GetUserByEmail matches case-insensitively; if legacy rows differ only by case, the lowercase
+// row wins, then the oldest. Operators must merge such duplicates (see migration 000012).
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
 	var u domain.User
+	email = NormalizeEmail(email)
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at
-		FROM auth.users WHERE email = $1`, email,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
+		SELECT id, email, name, password_hash, language, time_zone, email_verified, plan, stripe_customer_id, created_at, updated_at
+		FROM auth.users WHERE lower(email) = $1
+		ORDER BY (email = $1) DESC, created_at
+		LIMIT 1`, email,
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.TimeZone, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -68,9 +87,9 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*domain.User,
 func (s *Store) GetUserByID(ctx context.Context, id string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at
+		SELECT id, email, name, password_hash, language, time_zone, email_verified, plan, stripe_customer_id, created_at, updated_at
 		FROM auth.users WHERE id = $1`, id,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.TimeZone, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -84,40 +103,83 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*domain.User, error
 func (s *Store) CreateSession(ctx context.Context, id, userID, tokenHash, ipAddress, userAgent string, expiresAt time.Time) error {
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO auth.sessions (id, user_id, token_hash, ip_address, user_agent, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
+		VALUES ($1, $2, $3, NULLIF($4::text, '')::inet, $5, $6)`,
 		id, userID, tokenHash, ipAddress, userAgent, expiresAt,
 	)
 	return err
+}
+
+// CreateLoginSession is CreateSession guarded on the password hash the caller verified.
+// FOR SHARE makes it wait for a concurrent ClaimUnverifiedAccount, so no session outlives the claim.
+func (s *Store) CreateLoginSession(ctx context.Context, id, userID, tokenHash, ipAddress, userAgent string, expiresAt time.Time, passwordHash string) error {
+	tag, err := s.db.Exec(ctx, `
+		INSERT INTO auth.sessions (id, user_id, token_hash, ip_address, user_agent, expires_at)
+		SELECT $1::uuid, id, $3::text, NULLIF($4::text, '')::inet, $5::text, $6::timestamptz
+		FROM auth.users WHERE id = $2 AND password_hash = $7
+		FOR SHARE`,
+		id, userID, tokenHash, ipAddress, userAgent, expiresAt, passwordHash,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // RotateSession atomically rotates a session's token hash in-place (on refresh).
 // The session id stays stable; last_active_at is bumped. Returns the session id
 // and user id from the matched row, or ErrNotFound if no live row matched.
 func (s *Store) RotateSession(ctx context.Context, oldHash, newHash string, newExpiry time.Time) (sessionID, userID string, err error) {
-	var expiresAt time.Time
+	// The expiry is checked against the OLD value; an expired session must not be revived by rotating it.
 	err = s.db.QueryRow(ctx, `
 		UPDATE auth.sessions
 		SET token_hash = $2, last_active_at = now(), expires_at = $3
-		WHERE token_hash = $1
-		RETURNING id, user_id, expires_at`,
+		WHERE token_hash = $1 AND expires_at > now()
+		RETURNING id, user_id`,
 		oldHash, newHash, newExpiry,
-	).Scan(&sessionID, &userID, &expiresAt)
+	).Scan(&sessionID, &userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", "", ErrNotFound
 		}
 		return "", "", fmt.Errorf("rotate session: %w", err)
 	}
-	if time.Now().After(expiresAt) {
-		return "", "", ErrNotFound
-	}
 	return sessionID, userID, nil
+}
+
+// DeleteExpiredSessions removes up to limit sessions that are past their expiry and returns how many
+// it deleted; batching keeps each statement short. Served by idx_sessions_expires_at.
+func (s *Store) DeleteExpiredSessions(ctx context.Context, limit int) (int64, error) {
+	tag, err := s.db.Exec(ctx, `
+		DELETE FROM auth.sessions
+		WHERE id IN (SELECT id FROM auth.sessions WHERE expires_at < now() ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED)`,
+		limit,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete expired sessions: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 // DeleteSessionByTokenHash deletes a session by its current token hash (logout).
 func (s *Store) DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error {
 	_, err := s.db.Exec(ctx, `DELETE FROM auth.sessions WHERE token_hash = $1`, tokenHash)
 	return err
+}
+
+// SessionActive reports whether a non-expired session with this id exists.
+func (s *Store) SessionActive(ctx context.Context, sessionID string) (bool, error) {
+	var active bool
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM auth.sessions WHERE id = $1 AND expires_at > now())`,
+		sessionID,
+	).Scan(&active)
+	if err != nil {
+		return false, fmt.Errorf("session active: %w", err)
+	}
+	return active, nil
 }
 
 // ListSessions returns all non-expired sessions for a user, newest-active first.
@@ -179,32 +241,42 @@ func (s *Store) RevokeOtherSessions(ctx context.Context, userID, currentSessionI
 	return tag.RowsAffected(), nil
 }
 
-// ListUsers returns users, optionally filtered by plan ("" = all).
-// Used by scheduler for fan-out (planFilter="pro") and by ListUserIDs RPC.
-func (s *Store) ListUsers(ctx context.Context, planFilter string) ([]*domain.User, error) {
-	q := `SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at FROM auth.users`
-	var args []any
-	if planFilter != "" {
-		q += ` WHERE plan = $1`
-		args = append(args, planFilter)
-	}
-	q += ` ORDER BY created_at`
+// UserSummary is the listing view of a user: no credentials or billing ids.
+type UserSummary struct {
+	ID, Email, Name, Language, TimeZone, Plan string
+	EmailVerified                             bool
+}
 
-	rows, err := s.db.Query(ctx, q, args...)
+// ListUserSummaries returns up to limit users with id > afterID in id order, optionally filtered
+// by plan ("" = all), plus whether more remain. Used by the scheduler and AI backfills.
+func (s *Store) ListUserSummaries(ctx context.Context, planFilter, afterID string, limit int) ([]UserSummary, bool, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, email, name, language, time_zone, email_verified, plan
+		FROM auth.users
+		WHERE id > $1 AND ($2 = '' OR plan = $2)
+		ORDER BY id
+		LIMIT $3`, afterID, planFilter, limit+1)
 	if err != nil {
-		return nil, fmt.Errorf("list users: %w", err)
+		return nil, false, fmt.Errorf("list users: %w", err)
 	}
 	defer rows.Close()
 
-	var users []*domain.User
+	users := make([]UserSummary, 0, limit)
 	for rows.Next() {
-		var u domain.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan user: %w", err)
+		var u UserSummary
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Language, &u.TimeZone, &u.EmailVerified, &u.Plan); err != nil {
+			return nil, false, fmt.Errorf("scan user: %w", err)
 		}
-		users = append(users, &u)
+		users = append(users, u)
 	}
-	return users, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(users) > limit
+	if more {
+		users = users[:limit]
+	}
+	return users, more, nil
 }
 
 // GetUserLanguage returns only the language preference for the given user.
@@ -236,13 +308,39 @@ func (s *Store) UpdateUserLanguage(ctx context.Context, userID, lang string) err
 	return nil
 }
 
+// UpdateUserTimeZone sets the IANA time zone for the given user; callers validate it.
+func (s *Store) UpdateUserTimeZone(ctx context.Context, userID, zone string) error {
+	tag, err := s.db.Exec(ctx, `
+		UPDATE auth.users SET time_zone = $2, updated_at = now() WHERE id = $1 AND time_zone IS DISTINCT FROM $2`,
+		userID, zone,
+	)
+	if err != nil {
+		return fmt.Errorf("update user time zone: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		var exists bool
+		if err := s.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM auth.users WHERE id = $1)`, userID).Scan(&exists); err != nil {
+			return fmt.Errorf("update user time zone: %w", err)
+		}
+		if !exists {
+			return ErrNotFound
+		}
+	}
+	return nil
+}
+
 // ── OAuth identities ──────────────────────────────────────────────────────────
 
 // CreateUserNoPassword inserts an OAuth-only user (password_hash NULL).
 func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error {
-	_, err := s.db.Exec(ctx, `
-		INSERT INTO auth.users (id, email, name, password_hash, language, created_at, updated_at)
-		VALUES ($1, $2, $3, NULL, $4, $5, $6)`,
+	u.Email = NormalizeEmail(u.Email)
+	if u.Email == "" {
+		return ErrInvalidEmail
+	}
+	tag, err := s.db.Exec(ctx, `
+		INSERT INTO auth.users (id, email, name, password_hash, language, email_verified, created_at, updated_at)
+		SELECT $1, $2, $3, NULL, $4, true, $5, $6
+		WHERE NOT EXISTS (SELECT 1 FROM auth.users WHERE lower(email) = $2)`,
 		u.ID, u.Email, u.Name, u.Language, u.CreatedAt, u.UpdatedAt,
 	)
 	// plan defaults to 'free' via column default
@@ -252,6 +350,9 @@ func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error 
 		}
 		return fmt.Errorf("insert oauth user: %w", err)
 	}
+	if tag.RowsAffected() == 0 {
+		return ErrEmailTaken
+	}
 	return nil
 }
 
@@ -260,12 +361,12 @@ func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error 
 func (s *Store) FindByOAuth(ctx context.Context, provider, providerUserID string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT u.id, u.email, u.name, u.password_hash, u.language, u.email_verified, u.plan, u.stripe_customer_id, u.created_at, u.updated_at
+		SELECT u.id, u.email, u.name, u.password_hash, u.language, u.time_zone, u.email_verified, u.plan, u.stripe_customer_id, u.created_at, u.updated_at
 		FROM auth.oauth_identities oi
 		JOIN auth.users u ON u.id = oi.user_id
 		WHERE oi.provider = $1 AND oi.provider_user_id = $2`,
 		provider, providerUserID,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.TimeZone, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -282,7 +383,7 @@ func (s *Store) LinkOAuth(ctx context.Context, userID, provider, providerUserID,
 		INSERT INTO auth.oauth_identities (provider, provider_user_id, user_id, email)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (provider, provider_user_id) DO NOTHING`,
-		provider, providerUserID, userID, email,
+		provider, providerUserID, userID, NormalizeEmail(email),
 	)
 	if err != nil {
 		return fmt.Errorf("link oauth: %w", err)
@@ -348,22 +449,30 @@ func (s *Store) GetActiveVerificationCode(ctx context.Context, userID, purpose s
 	return &c, nil
 }
 
-// IncrementCodeAttempts atomically increments attempts and returns the new count.
-// Returns ErrNotFound if the code row is gone.
-func (s *Store) IncrementCodeAttempts(ctx context.Context, codeID string) (int16, error) {
-	var attempts int16
+// ClaimCodeAttempt spends one attempt on the latest live code for user+purpose and returns it
+// with the new count. The attempts cap sits in the UPDATE's own WHERE so concurrent guesses
+// re-check it after the row lock: at most maxAttempts callers ever get the hash.
+// Returns ErrNotFound if there is no live code or its attempts are used up.
+func (s *Store) ClaimCodeAttempt(ctx context.Context, userID, purpose string, maxAttempts int) (*domain.VerificationCode, error) {
+	var c domain.VerificationCode
 	err := s.db.QueryRow(ctx, `
 		UPDATE auth.verification_codes SET attempts = attempts + 1
-		WHERE id = $1 RETURNING attempts`,
-		codeID,
-	).Scan(&attempts)
+		WHERE id = (
+			SELECT id FROM auth.verification_codes
+			WHERE user_id = $1 AND purpose = $2 AND consumed_at IS NULL AND expires_at > now()
+			ORDER BY created_at DESC
+			LIMIT 1)
+		  AND consumed_at IS NULL AND attempts < $3
+		RETURNING id, user_id, purpose, code_hash, attempts, expires_at, consumed_at, created_at`,
+		userID, purpose, maxAttempts,
+	).Scan(&c.ID, &c.UserID, &c.Purpose, &c.CodeHash, &c.Attempts, &c.ExpiresAt, &c.ConsumedAt, &c.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ErrNotFound
+			return nil, ErrNotFound
 		}
-		return 0, fmt.Errorf("increment code attempts: %w", err)
+		return nil, fmt.Errorf("claim code attempt: %w", err)
 	}
-	return attempts, nil
+	return &c, nil
 }
 
 // ConsumeCode atomically marks a verification code as used.
@@ -395,6 +504,49 @@ func (s *Store) SetEmailVerified(ctx context.Context, userID string) error {
 	return err
 }
 
+// ClaimUnverifiedAccount hands an account with an unverified email to the OAuth provider
+// that proved ownership: drops the password, its sessions and pending codes, marks it verified.
+// It reports false if the email was verified meanwhile.
+func (s *Store) ClaimUnverifiedAccount(ctx context.Context, userID string) (bool, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("claim account: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+
+	var hadPassword bool
+	err = tx.QueryRow(ctx, `
+		SELECT password_hash IS NOT NULL FROM auth.users WHERE id = $1 AND NOT email_verified FOR UPDATE`,
+		userID,
+	).Scan(&hadPassword)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("claim account: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.users SET password_hash = NULL, email_verified = true, updated_at = now() WHERE id = $1`,
+		userID,
+	); err != nil {
+		return false, fmt.Errorf("claim account: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM auth.verification_codes WHERE user_id = $1`, userID); err != nil {
+		return false, fmt.Errorf("claim account: clear codes: %w", err)
+	}
+	// An OAuth-only account has no password for an attacker to know; keep its sessions.
+	if hadPassword {
+		if _, err := tx.Exec(ctx, `DELETE FROM auth.sessions WHERE user_id = $1`, userID); err != nil {
+			return false, fmt.Errorf("claim account: revoke sessions: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("claim account: %w", err)
+	}
+	return true, nil
+}
+
 // UpdatePassword sets a new bcrypt password hash for the user.
 func (s *Store) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
 	tag, err := s.db.Exec(ctx, `
@@ -421,19 +573,22 @@ func (s *Store) RevokeAllSessions(ctx context.Context, userID string) (int64, er
 
 // ── Stripe ────────────────────────────────────────────────────────────────────
 
-// SetStripeCustomerID stores the Stripe customer ID for a user.
-func (s *Store) SetStripeCustomerID(ctx context.Context, userID, customerID string) error {
-	tag, err := s.db.Exec(ctx, `
-		UPDATE auth.users SET stripe_customer_id = $2, updated_at = now() WHERE id = $1`,
+// SetStripeCustomerIDIfUnset stores customerID unless the user already has one, and returns
+// the id in effect. Concurrent checkouts thus converge on a single Stripe customer.
+func (s *Store) SetStripeCustomerIDIfUnset(ctx context.Context, userID, customerID string) (string, error) {
+	var stored string
+	err := s.db.QueryRow(ctx, `
+		UPDATE auth.users SET stripe_customer_id = COALESCE(stripe_customer_id, $2), updated_at = now()
+		WHERE id = $1 RETURNING stripe_customer_id`,
 		userID, customerID,
-	)
+	).Scan(&stored)
 	if err != nil {
-		return fmt.Errorf("set stripe customer id: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("set stripe customer id: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return stored, nil
 }
 
 // GetUserByStripeCustomerID looks up a user by their Stripe customer ID.
@@ -441,9 +596,9 @@ func (s *Store) SetStripeCustomerID(ctx context.Context, userID, customerID stri
 func (s *Store) GetUserByStripeCustomerID(ctx context.Context, customerID string) (*domain.User, error) {
 	var u domain.User
 	err := s.db.QueryRow(ctx, `
-		SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at
+		SELECT id, email, name, password_hash, language, time_zone, email_verified, plan, stripe_customer_id, created_at, updated_at
 		FROM auth.users WHERE stripe_customer_id = $1`, customerID,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.TimeZone, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -539,20 +694,56 @@ func (s *Store) GetSubscriptionBySourceRef(ctx context.Context, sourceRef string
 	return &sub, nil
 }
 
-// CancelSubscriptionBySourceRef marks a subscription as cancelled by its source_ref.
+const recalculatePlanSQL = `
+	UPDATE auth.users SET
+	  plan = CASE
+	    WHEN EXISTS (
+	      SELECT 1 FROM auth.subscriptions
+	      WHERE user_id = $1 AND status = 'active'
+	    ) THEN 'pro'
+	    ELSE 'free'
+	  END,
+	  updated_at = now()
+	WHERE id = $1`
+
+// CancelSubscriptionBySourceRef cancels a Stripe subscription and recalculates the user's plan
+// in one transaction, so a retried webhook never finds the row changed but the plan stale.
+// Returns the user id, or ErrNotFound if there is no active subscription to cancel.
 func (s *Store) CancelSubscriptionBySourceRef(ctx context.Context, sourceRef string) (string, error) {
+	return s.moveSubscription(ctx, sourceRef, "active", "cancelled")
+}
+
+// ReactivateSubscriptionBySourceRef is the inverse, for a payment that recovers.
+// Returns ErrNotFound if there is no cancelled subscription to reactivate.
+func (s *Store) ReactivateSubscriptionBySourceRef(ctx context.Context, sourceRef string) (string, error) {
+	return s.moveSubscription(ctx, sourceRef, "cancelled", "active")
+}
+
+func (s *Store) moveSubscription(ctx context.Context, sourceRef, from, to string) (string, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+
 	var userID string
-	err := s.db.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE auth.subscriptions
-		SET status = 'cancelled', updated_at = now()
-		WHERE source_ref = $1 AND status = 'active'
-		RETURNING user_id`, sourceRef,
+		SET status = $3, updated_at = now()
+		WHERE source = 'stripe' AND source_ref = $1 AND status = $2
+		RETURNING user_id`, sourceRef, from, to,
 	).Scan(&userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound
 		}
-		return "", fmt.Errorf("cancel subscription: %w", err)
+		return "", fmt.Errorf("move subscription %s -> %s: %w", from, to, err)
+	}
+	if _, err := tx.Exec(ctx, recalculatePlanSQL, userID); err != nil {
+		return "", fmt.Errorf("recalculate user plan: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit: %w", err)
 	}
 	return userID, nil
 }
@@ -561,19 +752,7 @@ func (s *Store) CancelSubscriptionBySourceRef(ctx context.Context, sourceRef str
 // exists for the user, otherwise downgrades to 'free'. Safe to call after any
 // subscription status change.
 func (s *Store) RecalculateUserPlan(ctx context.Context, userID string) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE auth.users SET
-		  plan = CASE
-		    WHEN EXISTS (
-		      SELECT 1 FROM auth.subscriptions
-		      WHERE user_id = $1 AND status = 'active'
-		    ) THEN 'pro'
-		    ELSE 'free'
-		  END,
-		  updated_at = now()
-		WHERE id = $1`, userID,
-	)
-	if err != nil {
+	if _, err := s.db.Exec(ctx, recalculatePlanSQL, userID); err != nil {
 		return fmt.Errorf("recalculate user plan: %w", err)
 	}
 	return nil
@@ -622,7 +801,7 @@ func (s *Store) RedeemPromoCode(ctx context.Context, pc *domain.PromoCode, userI
 	if locked.Disabled {
 		return ErrPromoCodeDisabled
 	}
-	if locked.AllowedEmail != nil && *locked.AllowedEmail != userEmail {
+	if locked.AllowedEmail != nil && NormalizeEmail(*locked.AllowedEmail) != NormalizeEmail(userEmail) {
 		return ErrPromoCodeEmailMismatch
 	}
 
