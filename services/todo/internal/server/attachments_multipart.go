@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/fsociety/todo/pkg/blobstore"
@@ -14,16 +15,20 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const partURLTTL time.Duration = 15 * time.Minute
+const (
+	partURLTTL time.Duration = 15 * time.Minute
+	// S3 allows at most 10000 parts per multipart upload.
+	maxMultipartParts = 10000
+)
 
 func (s *Server) InitiateMultipartUpload(ctx context.Context, req *todov1.InitiateMultipartUploadRequest) (*todov1.InitiateMultipartUploadResponse, error) {
 	if req.UserId == "" || req.TaskId == "" || req.Filename == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id, task_id, and filename are required")
 	}
-	if req.Plan != "pro" {
+	if req.Plan != planPro {
 		return nil, status.Error(codes.PermissionDenied, "multipart upload is available on pro plan only")
 	}
-	if req.SizeBytes <= multipartThreshold {
+	if req.SizeBytes < multipartThreshold {
 		return nil, status.Errorf(codes.InvalidArgument,
 			"file is below multipart threshold; use single-PUT upload instead")
 	}
@@ -54,10 +59,11 @@ func (s *Server) InitiateMultipartUpload(ctx context.Context, req *todov1.Initia
 		ObjectKey:   objectKey,
 		CreatedAt:   time.Now().UTC(),
 	}
-	if err := s.store.CreateMultipartPending(ctx, att, uploadID); err != nil {
-		_ = s.blob.AbortMultipart(ctx, objectKey, uploadID)
-		s.log.Error("create multipart pending", "err", err)
-		return nil, status.Error(codes.Internal, "failed to create attachment record")
+	if err := s.store.ReserveAttachment(ctx, att, uploadID, store.ReserveLimits{}); err != nil {
+		if aerr := s.blob.AbortMultipart(context.WithoutCancel(ctx), objectKey, uploadID); aerr != nil {
+			s.log.Warn("abort multipart after failed reserve", "key", objectKey, "err", aerr)
+		}
+		return nil, s.reserveError(err, "reserve multipart attachment")
 	}
 
 	return &todov1.InitiateMultipartUploadResponse{
@@ -70,8 +76,8 @@ func (s *Server) GetUploadPartURL(ctx context.Context, req *todov1.GetUploadPart
 	if req.UserId == "" || req.AttachmentId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id and attachment_id are required")
 	}
-	if req.PartNumber < 1 {
-		return nil, status.Error(codes.InvalidArgument, "part_number must be >= 1")
+	if req.PartNumber < 1 || req.PartNumber > maxMultipartParts {
+		return nil, status.Errorf(codes.InvalidArgument, "part_number must be between 1 and %d", maxMultipartParts)
 	}
 
 	att, err := s.store.GetAttachment(ctx, req.UserId, req.AttachmentId)
@@ -92,6 +98,12 @@ func (s *Server) GetUploadPartURL(ctx context.Context, req *todov1.GetUploadPart
 	if err != nil {
 		s.log.Error("presign upload part", "err", err)
 		return nil, status.Error(codes.Internal, "failed to generate part upload URL")
+	}
+	if err := s.store.TouchAttachment(ctx, req.UserId, req.AttachmentId); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Error(codes.FailedPrecondition, "attachment is no longer pending")
+		}
+		s.log.Warn("touch attachment", "attachment_id", req.AttachmentId, "err", err)
 	}
 	return &todov1.GetUploadPartURLResponse{UploadUrl: url}, nil
 }
@@ -119,9 +131,9 @@ func (s *Server) CompleteMultipartUpload(ctx context.Context, req *todov1.Comple
 		return nil, status.Error(codes.FailedPrecondition, "not a multipart upload")
 	}
 
-	parts := make([]blobstore.CompletedPart, len(req.Parts))
-	for i, p := range req.Parts {
-		parts[i] = blobstore.CompletedPart{PartNumber: p.PartNumber, ETag: p.Etag}
+	parts, err := completedParts(req.Parts)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.blob.CompleteMultipart(ctx, att.ObjectKey, att.UploadID, parts); err != nil {
 		s.log.Error("complete multipart", "err", err)
@@ -133,17 +145,33 @@ func (s *Server) CompleteMultipartUpload(ctx context.Context, req *todov1.Comple
 		return nil, status.Error(codes.Internal, "HEAD after complete failed")
 	}
 
-	confirmed, err := s.store.ConfirmAttachment(ctx, req.UserId, req.AttachmentId, storedSize, req.Language)
-	if errors.Is(err, store.ErrNotFound) {
-		// Race: another request confirmed it first; re-fetch the committed row.
-		if att, _ = s.store.GetAttachment(ctx, req.UserId, req.AttachmentId); att != nil {
-			return &todov1.CompleteMultipartUploadResponse{Attachment: attachmentToProto(att)}, nil
-		}
-		return nil, status.Error(codes.NotFound, "attachment not found")
-	}
+	confirmed, err := s.commit(ctx, att, storedSize, req.Language)
 	if err != nil {
-		s.log.Error("confirm attachment after multipart", "err", err)
-		return nil, status.Error(codes.Internal, "failed to confirm attachment")
+		return nil, err
 	}
 	return &todov1.CompleteMultipartUploadResponse{Attachment: attachmentToProto(confirmed)}, nil
+}
+
+// completedParts validates the client's part list and returns it sorted by part number, as S3 requires.
+func completedParts(in []*todov1.CompletedPart) ([]blobstore.CompletedPart, error) {
+	if len(in) > maxMultipartParts {
+		return nil, status.Errorf(codes.InvalidArgument, "at most %d parts", maxMultipartParts)
+	}
+	parts := make([]blobstore.CompletedPart, len(in))
+	for i, p := range in {
+		if p.PartNumber < 1 || p.PartNumber > maxMultipartParts {
+			return nil, status.Errorf(codes.InvalidArgument, "part_number must be between 1 and %d", maxMultipartParts)
+		}
+		if p.Etag == "" {
+			return nil, status.Errorf(codes.InvalidArgument, "part %d has no etag", p.PartNumber)
+		}
+		parts[i] = blobstore.CompletedPart{PartNumber: p.PartNumber, ETag: p.Etag}
+	}
+	sort.Slice(parts, func(i, j int) bool { return parts[i].PartNumber < parts[j].PartNumber })
+	for i := 1; i < len(parts); i++ {
+		if parts[i].PartNumber == parts[i-1].PartNumber {
+			return nil, status.Errorf(codes.InvalidArgument, "duplicate part %d", parts[i].PartNumber)
+		}
+	}
+	return parts, nil
 }

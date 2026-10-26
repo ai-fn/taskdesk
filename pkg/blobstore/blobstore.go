@@ -7,6 +7,7 @@ package blobstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -21,9 +22,8 @@ import (
 // Store is the subset of object-store operations the todo service needs.
 type Store interface {
 	// PresignPut returns a URL the client can PUT to for up to ttl. The signed
-	// request pins Content-Type. Size enforcement is deferred to the confirm
-	// step, which calls Head to verify the stored byte count.
-	PresignPut(ctx context.Context, key, contentType string, ttl time.Duration) (string, error)
+	// request pins Content-Type and Content-Length, so the store rejects any other size.
+	PresignPut(ctx context.Context, key, contentType string, size int64, ttl time.Duration) (string, error)
 	// PresignGet returns a short-lived download URL.
 	PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error)
 	// Head returns the stored object's size, or an error if it does not exist.
@@ -84,11 +84,12 @@ func New(cfg Config) *S3Store {
 	return &S3Store{client: client, presign: s3.NewPresignClient(client), bucket: cfg.Bucket}
 }
 
-func (s *S3Store) PresignPut(ctx context.Context, key, contentType string, ttl time.Duration) (string, error) {
+func (s *S3Store) PresignPut(ctx context.Context, key, contentType string, size int64, ttl time.Duration) (string, error) {
 	req, err := s.presign.PresignPutObject(ctx, &s3.PutObjectInput{
-		Bucket:      aws.String(s.bucket),
-		Key:         aws.String(key),
-		ContentType: aws.String(contentType),
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(key),
+		ContentType:   aws.String(contentType),
+		ContentLength: aws.Int64(size),
 	}, s3.WithPresignExpires(ttl))
 	if err != nil {
 		return "", fmt.Errorf("presign put: %w", err)
@@ -180,7 +181,8 @@ func (s *S3Store) AbortMultipart(ctx context.Context, key, uploadID string) erro
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
 	})
-	if err != nil {
+	var gone *types.NoSuchUpload
+	if err != nil && !errors.As(err, &gone) { // already completed or aborted
 		return fmt.Errorf("abort multipart: %w", err)
 	}
 	return nil

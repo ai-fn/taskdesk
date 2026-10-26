@@ -54,7 +54,7 @@ func TestAttachments_PendingAndConfirm(t *testing.T) {
 		CreatedAt:   now,
 	}
 
-	if err := st.CreateAttachmentPending(ctx, a); err != nil {
+	if err := st.ReserveAttachment(ctx, a, "", store.ReserveLimits{}); err != nil {
 		t.Fatalf("CreateAttachmentPending: %v", err)
 	}
 
@@ -68,7 +68,7 @@ func TestAttachments_PendingAndConfirm(t *testing.T) {
 	}
 
 	// Task counter should not be bumped yet.
-	count, err := st.TaskCommittedAttachmentCount(ctx, taskID)
+	count, err := st.TaskCommittedAttachmentCount(ctx, userID, taskID)
 	if err != nil {
 		t.Fatalf("TaskCommittedAttachmentCount: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestAttachments_PendingAndConfirm(t *testing.T) {
 		t.Fatalf("want used=%d, got %d", a.SizeBytes, used)
 	}
 
-	count, err = st.TaskCommittedAttachmentCount(ctx, taskID)
+	count, err = st.TaskCommittedAttachmentCount(ctx, userID, taskID)
 	if err != nil {
 		t.Fatalf("TaskCommittedAttachmentCount after confirm: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestAttachments_ScanStatusPendingAfterConfirm(t *testing.T) {
 		Filename: "doc.pdf", ContentType: "application/pdf",
 		SizeBytes: 512, ObjectKey: "key/sc1", CreatedAt: now,
 	}
-	if err := st.CreateAttachmentPending(ctx, a); err != nil {
+	if err := st.ReserveAttachment(ctx, a, "", store.ReserveLimits{}); err != nil {
 		t.Fatalf("CreateAttachmentPending: %v", err)
 	}
 
@@ -147,7 +147,7 @@ func TestUpdateScanStatus(t *testing.T) {
 		Filename: "img.png", ContentType: "image/png",
 		SizeBytes: 200, ObjectKey: "key/sc2", CreatedAt: now,
 	}
-	if err := st.CreateAttachmentPending(ctx, a); err != nil {
+	if err := st.ReserveAttachment(ctx, a, "", store.ReserveLimits{}); err != nil {
 		t.Fatalf("CreateAttachmentPending: %v", err)
 	}
 	if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes, "en"); err != nil {
@@ -197,7 +197,7 @@ func TestAttachments_ConfirmIdempotentNotFound(t *testing.T) {
 		Filename: "f.pdf", ContentType: "application/pdf",
 		SizeBytes: 100, ObjectKey: "key", CreatedAt: now,
 	}
-	if err := st.CreateAttachmentPending(ctx, a); err != nil {
+	if err := st.ReserveAttachment(ctx, a, "", store.ReserveLimits{}); err != nil {
 		t.Fatalf("CreateAttachmentPending: %v", err)
 	}
 	if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes, "en"); err != nil {
@@ -228,7 +228,7 @@ func TestAttachments_ListAndGet(t *testing.T) {
 			Filename: fmt.Sprintf("f%d.pdf", i), ContentType: "application/pdf",
 			SizeBytes: 100, ObjectKey: fmt.Sprintf("key/%d", i), CreatedAt: now,
 		}
-		if err := st.CreateAttachmentPending(ctx, a); err != nil {
+		if err := st.ReserveAttachment(ctx, a, "", store.ReserveLimits{}); err != nil {
 			t.Fatalf("CreateAttachmentPending %d: %v", i, err)
 		}
 		if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes, "en"); err != nil {
@@ -285,7 +285,7 @@ func TestAttachments_Delete(t *testing.T) {
 		Filename: "f.pdf", ContentType: "application/pdf",
 		SizeBytes: 500, ObjectKey: "key", CreatedAt: now,
 	}
-	if err := st.CreateAttachmentPending(ctx, a); err != nil {
+	if err := st.ReserveAttachment(ctx, a, "", store.ReserveLimits{}); err != nil {
 		t.Fatalf("CreateAttachmentPending: %v", err)
 	}
 	if _, err := st.ConfirmAttachment(ctx, userID, attID, a.SizeBytes, "en"); err != nil {
@@ -305,7 +305,7 @@ func TestAttachments_Delete(t *testing.T) {
 		t.Fatalf("want used=0 after delete, got %d", used)
 	}
 
-	count, err := st.TaskCommittedAttachmentCount(ctx, taskID)
+	count, err := st.TaskCommittedAttachmentCount(ctx, userID, taskID)
 	if err != nil {
 		t.Fatalf("TaskCommittedAttachmentCount: %v", err)
 	}
@@ -317,61 +317,6 @@ func TestAttachments_Delete(t *testing.T) {
 	_, err = st.DeleteAttachment(ctx, userID, attID)
 	if err != store.ErrNotFound {
 		t.Fatalf("want ErrNotFound on double-delete, got %v", err)
-	}
-}
-
-func TestAttachments_ListAbandoned(t *testing.T) {
-	st := newStoreForAttachments(t)
-	ctx := context.Background()
-	const (
-		userID = "user_1"
-		taskID = "task_1"
-	)
-	seedTask(t, st, userID, taskID)
-
-	// Insert a pending attachment with a backdated created_at.
-	old := &domain.Attachment{
-		ID: "att_old", UserID: userID, TaskID: taskID,
-		Filename: "old.pdf", ContentType: "application/pdf",
-		SizeBytes: 100, ObjectKey: "k/old",
-		CreatedAt: time.Now().UTC().Add(-2 * time.Hour),
-	}
-	if err := st.CreateAttachmentPending(ctx, old); err != nil {
-		t.Fatalf("CreateAttachmentPending old: %v", err)
-	}
-
-	// Insert a recent pending attachment.
-	recent := &domain.Attachment{
-		ID: "att_new", UserID: userID, TaskID: taskID,
-		Filename: "new.pdf", ContentType: "application/pdf",
-		SizeBytes: 100, ObjectKey: "k/new",
-		CreatedAt: time.Now().UTC(),
-	}
-	if err := st.CreateAttachmentPending(ctx, recent); err != nil {
-		t.Fatalf("CreateAttachmentPending new: %v", err)
-	}
-
-	abandoned, err := st.ListAbandonedAttachments(ctx, time.Hour, 50)
-	if err != nil {
-		t.Fatalf("ListAbandonedAttachments: %v", err)
-	}
-	if len(abandoned) != 1 {
-		t.Fatalf("want 1 abandoned, got %d", len(abandoned))
-	}
-	if abandoned[0].ID != "att_old" {
-		t.Fatalf("want att_old, got %s", abandoned[0].ID)
-	}
-
-	// PurgeAttachmentRow removes the row without touching counters.
-	if err := st.PurgeAttachmentRow(ctx, "att_old"); err != nil {
-		t.Fatalf("PurgeAttachmentRow: %v", err)
-	}
-	abandoned2, err := st.ListAbandonedAttachments(ctx, time.Hour, 50)
-	if err != nil {
-		t.Fatalf("ListAbandonedAttachments after purge: %v", err)
-	}
-	if len(abandoned2) != 0 {
-		t.Fatalf("want 0 abandoned after purge, got %d", len(abandoned2))
 	}
 }
 
@@ -397,7 +342,7 @@ func TestMultipart_CreateAndGetUploadID(t *testing.T) {
 		ObjectKey:   "eu/user_1/task_1/att_mp1/bigfile.mp4",
 		CreatedAt:   now,
 	}
-	if err := st.CreateMultipartPending(ctx, att, uploadID); err != nil {
+	if err := st.ReserveAttachment(ctx, att, uploadID, store.ReserveLimits{}); err != nil {
 		t.Fatalf("CreateMultipartPending: %v", err)
 	}
 

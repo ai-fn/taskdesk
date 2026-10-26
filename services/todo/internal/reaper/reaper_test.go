@@ -2,86 +2,117 @@ package reaper
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/fsociety/todo/services/todo/internal/domain"
+	"github.com/fsociety/todo/services/todo/internal/store"
 )
 
-// fakeStore satisfies Store for tests.
 type fakeStore struct {
-	atts []*domain.Attachment
+	reaped  int
+	queue   []store.BlobGCEntry
+	done    []int64
+	claimed int
 }
 
-func (f *fakeStore) ListAbandonedAttachments(_ context.Context, _ time.Duration, _ int) ([]*domain.Attachment, error) {
-	return f.atts, nil
+func (f *fakeStore) ReapAbandoned(_ context.Context, _, _ time.Duration, _ int) (int, error) {
+	return f.reaped, nil
 }
 
-func (f *fakeStore) PurgeAttachmentRow(_ context.Context, attID string) error {
-	for i, a := range f.atts {
-		if a.ID == attID {
-			f.atts = append(f.atts[:i], f.atts[i+1:]...)
-			return nil
-		}
+func (f *fakeStore) ClaimBlobGC(_ context.Context, n int, _ time.Duration) ([]store.BlobGCEntry, error) {
+	f.claimed++
+	if n > len(f.queue) {
+		n = len(f.queue)
 	}
+	out := f.queue[:n]
+	f.queue = f.queue[n:]
+	return out, nil
+}
+
+func (f *fakeStore) DoneBlobGC(_ context.Context, ids []int64) error {
+	f.done = append(f.done, ids...)
 	return nil
 }
 
-// fakeBlob records which operations were called.
 type fakeBlob struct {
-	deleted []string
-	aborted []struct{ key, uploadID string }
+	deleted  []string
+	aborted  []string
+	deleteFn func(key string) error
 }
 
 func (f *fakeBlob) Delete(_ context.Context, key string) error {
+	if f.deleteFn != nil {
+		if err := f.deleteFn(key); err != nil {
+			return err
+		}
+	}
 	f.deleted = append(f.deleted, key)
 	return nil
 }
 
-func (f *fakeBlob) AbortMultipart(_ context.Context, key, uploadID string) error {
-	f.aborted = append(f.aborted, struct{ key, uploadID string }{key, uploadID})
+func (f *fakeBlob) AbortMultipart(_ context.Context, _, uploadID string) error {
+	f.aborted = append(f.aborted, uploadID)
 	return nil
 }
 
-func TestReap_SinglePUT_Delete(t *testing.T) {
-	att := &domain.Attachment{
-		ID: "att_1", ObjectKey: "eu/u/t/a/file.pdf", UploadID: "",
-	}
-	store := &fakeStore{atts: []*domain.Attachment{att}}
-	blob := &fakeBlob{}
-	r := New(store, blob, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+func newReaper(st *fakeStore, b *fakeBlob) *Reaper {
+	return New(st, b, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+}
 
-	if err := r.reap(context.Background()); err != nil {
-		t.Fatalf("reap: %v", err)
+func TestDrain_SinglePUT_Deletes(t *testing.T) {
+	st := &fakeStore{queue: []store.BlobGCEntry{{ID: 1, ObjectKey: "eu/u/t/a/file.pdf"}}}
+	b := &fakeBlob{}
+	if err := newReaper(st, b).drain(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if len(blob.deleted) != 1 || blob.deleted[0] != att.ObjectKey {
-		t.Fatalf("want Delete(%q), got deleted=%v", att.ObjectKey, blob.deleted)
+	if len(b.deleted) != 1 || len(b.aborted) != 0 {
+		t.Fatalf("deleted=%v aborted=%v", b.deleted, b.aborted)
 	}
-	if len(blob.aborted) != 0 {
-		t.Fatalf("want no AbortMultipart calls, got %v", blob.aborted)
+	if len(st.done) != 1 || st.done[0] != 1 {
+		t.Fatalf("done = %v", st.done)
 	}
 }
 
-func TestReap_Multipart_Abort(t *testing.T) {
-	att := &domain.Attachment{
-		ID: "att_2", ObjectKey: "eu/u/t/a/big.mp4", UploadID: "upload-abc-123",
+func TestDrain_Multipart_AbortsThenDeletes(t *testing.T) {
+	st := &fakeStore{queue: []store.BlobGCEntry{{ID: 7, ObjectKey: "k", UploadID: "up-1"}}}
+	b := &fakeBlob{}
+	if err := newReaper(st, b).drain(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	store := &fakeStore{atts: []*domain.Attachment{att}}
-	blob := &fakeBlob{}
-	r := New(store, blob, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	if len(b.aborted) != 1 || b.aborted[0] != "up-1" || len(b.deleted) != 1 {
+		t.Fatalf("aborted=%v deleted=%v", b.aborted, b.deleted)
+	}
+}
 
-	if err := r.reap(context.Background()); err != nil {
-		t.Fatalf("reap: %v", err)
+func TestDrain_FailedBlobStaysQueued(t *testing.T) {
+	st := &fakeStore{queue: []store.BlobGCEntry{{ID: 1, ObjectKey: "bad"}, {ID: 2, ObjectKey: "ok"}}}
+	b := &fakeBlob{deleteFn: func(k string) error {
+		if k == "bad" {
+			return errors.New("storage down")
+		}
+		return nil
+	}}
+	if err := newReaper(st, b).drain(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if len(blob.aborted) != 1 {
-		t.Fatalf("want 1 AbortMultipart call, got %d", len(blob.aborted))
+	if len(st.done) != 1 || st.done[0] != 2 {
+		t.Fatalf("only the removed blob may be marked done, got %v", st.done)
 	}
-	if blob.aborted[0].key != att.ObjectKey || blob.aborted[0].uploadID != att.UploadID {
-		t.Fatalf("AbortMultipart args wrong: got %+v", blob.aborted[0])
+}
+
+func TestDrain_ProcessesBacklogInBatches(t *testing.T) {
+	st := &fakeStore{}
+	for i := range 250 {
+		st.queue = append(st.queue, store.BlobGCEntry{ID: int64(i + 1), ObjectKey: "k"})
 	}
-	if len(blob.deleted) != 0 {
-		t.Fatalf("want no Delete calls, got %v", blob.deleted)
+	b := &fakeBlob{}
+	if err := newReaper(st, b).drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.deleted) != 250 {
+		t.Fatalf("deleted %d of 250", len(b.deleted))
 	}
 }

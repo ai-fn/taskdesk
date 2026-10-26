@@ -22,7 +22,7 @@ import (
 )
 
 // StartPostgres starts one ephemeral postgres:16-alpine container, applies
-// all todo migrations (000001–000011), and returns the pool and a teardown
+// all todo migrations (000001–000016), and returns the pool and a teardown
 // function. Designed for use in TestMain so the container is shared across all
 // tests in a package — far cheaper than one container per test.
 //
@@ -99,7 +99,7 @@ func StartPostgres() (pool *pgxpool.Pool, teardown func()) {
 func Truncate(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(),
-		`TRUNCATE todo.user_storage, todo.attachments, todo.outbox, todo.tasks, todo.lists, todo.list_groups CASCADE`)
+		`TRUNCATE todo.user_storage, todo.attachments, todo.blob_gc, todo.outbox, todo.tasks, todo.lists, todo.list_groups CASCADE`)
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}

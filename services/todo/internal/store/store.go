@@ -235,21 +235,6 @@ func (s *Store) RestoreTask(ctx context.Context, userID, taskID string) (*domain
 	return &t, nil
 }
 
-// ── PurgeTask (hard delete) ───────────────────────────────────────────────────
-
-func (s *Store) PurgeTask(ctx context.Context, userID, taskID string) error {
-	tag, err := s.db.Exec(ctx,
-		`DELETE FROM todo.tasks WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`,
-		taskID, userID)
-	if err != nil {
-		return fmt.Errorf("purge task: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 // ── List CRUD ─────────────────────────────────────────────────────────────────
 
 func (s *Store) CreateList(ctx context.Context, l *domain.List) error {
