@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
@@ -21,6 +22,9 @@ func NewTodoHandler(c todov1.TodoServiceClient) *TodoHandler {
 	return &TodoHandler{client: c}
 }
 
+// maxTaskPageSize is the documented cap on ?page_size.
+const maxTaskPageSize = 200
+
 // GET /api/v1/tasks
 func (h *TodoHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID := mw.UserIDFromContext(r.Context())
@@ -29,6 +33,9 @@ func (h *TodoHandler) List(w http.ResponseWriter, r *http.Request) {
 	req := &todov1.ListTasksRequest{
 		UserId:    userID,
 		PageToken: q.Get("page_token"),
+	}
+	if n, err := strconv.Atoi(q.Get("page_size")); err == nil && n > 0 {
+		req.PageSize = int32(min(n, maxTaskPageSize))
 	}
 	if s := q.Get("status"); s != "" {
 		var n int32

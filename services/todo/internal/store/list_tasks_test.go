@@ -175,3 +175,11 @@ func TestListTasks_PlanProbesSubtasksAndDependenciesByIndex(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizePageSize_Boundaries(t *testing.T) {
+	for in, want := range map[int32]int32{-1: 50, 0: 50, 1: 1, 50: 50, 200: 200, 201: 200, 5000: 200} {
+		if got := store.NormalizePageSize(in); got != want {
+			t.Errorf("NormalizePageSize(%d) = %d, want %d", in, got, want)
+		}
+	}
+}

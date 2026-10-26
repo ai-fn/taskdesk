@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { listTasks } from '@/api/tasks'
+import { listAllTasks } from '@/api/tasks'
 import { taskKeys } from '@/api/queryKeys'
 import type { Task } from '@/types'
 import { Status } from '@/types'
@@ -18,7 +18,7 @@ export function SubtaskList({ parentTask }: Props) {
 
   const { data, isLoading } = useQuery({
     queryKey: taskKeys.list(subtaskKey),
-    queryFn: () => listTasks({ parent_task_id: parentTask.id }),
+    queryFn: ({ signal }) => listAllTasks({ parent_task_id: parentTask.id }, signal),
     staleTime: 30_000,
   })
 

@@ -126,7 +126,8 @@
     "list": {
       "failedToLoad": "加载任务失败",
       "noDeletedTasks": "没有最近删除的任务。",
-      "empty": "暂无任务，在上方创建第一个吧。"
+      "empty": "暂无任务，在上方创建第一个吧。",
+      "truncated": "仅显示前 {{limit}} 个任务。请使用筛选或搜索缩小范围。"
     },
     "subtasks": {
       "addPlaceholder": "添加子任务…",

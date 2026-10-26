@@ -247,3 +247,28 @@ func TestCreateTask_ForeignOrMissingReferencesAreNotFound(t *testing.T) {
 		t.Errorf("list with a missing group: code = %v, want NotFound", status.Code(err))
 	}
 }
+
+func TestListTasks_TokenFollowsTheEffectivePageSize(t *testing.T) {
+	svc, st := newServer(t)
+	seedTasks(t, st, "u", 250)
+	ctx := context.Background()
+
+	var seen int
+	token := ""
+	for i := range 5 {
+		resp, err := svc.ListTasks(ctx, &todov1.ListTasksRequest{UserId: "u", PageSize: 5000, PageToken: token})
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen += len(resp.Tasks)
+		if i == 0 && (len(resp.Tasks) != 200 || resp.NextPageToken == "") {
+			t.Fatalf("first page: %d tasks, token %q; an oversized request must clamp to 200 and still page", len(resp.Tasks), resp.NextPageToken)
+		}
+		if token = resp.NextPageToken; token == "" {
+			break
+		}
+	}
+	if seen != 250 {
+		t.Errorf("walked %d tasks, want 250", seen)
+	}
+}

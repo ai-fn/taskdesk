@@ -144,11 +144,8 @@ func (s *Server) ListTasks(ctx context.Context, req *todov1.ListTasksRequest) (*
 		resp.Tasks = append(resp.Tasks, toProto(t))
 	}
 
-	pageSize := int(req.PageSize)
-	if pageSize <= 0 {
-		pageSize = 50
-	}
-	if len(tasks) == pageSize {
+	// Compare with the size the store applied, not the requested one, or an oversized request never gets a token.
+	if len(tasks) == int(store.NormalizePageSize(req.PageSize)) {
 		last := tasks[len(tasks)-1]
 		resp.NextPageToken = encodeCursor(last.CreatedAt, last.ID)
 	}

@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { listTasks, searchTasks } from '@/api/tasks'
+import { listAllTasks, searchTasks } from '@/api/tasks'
 import { taskKeys } from '@/api/queryKeys'
 import { useAuth } from '@/hooks/useAuth'
 import type { Task, TaskList } from '@/types'
@@ -49,7 +49,7 @@ export function SearchBar({ lists }: Props) {
 
   const { data: localData } = useQuery({
     queryKey: taskKeys.list('search-all'),
-    queryFn: () => listTasks(),
+    queryFn: ({ signal }) => listAllTasks(undefined, signal),
     staleTime: 60_000,
   })
 

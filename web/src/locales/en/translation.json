@@ -127,7 +127,8 @@
     "list": {
       "failedToLoad": "Failed to load tasks",
       "noDeletedTasks": "No recently deleted tasks.",
-      "empty": "No tasks yet. Create your first one above."
+      "empty": "No tasks yet. Create your first one above.",
+      "truncated": "Showing the first {{limit}} tasks. Use filters or search to narrow the list."
     },
     "subtasks": {
       "addPlaceholder": "Add subtask…",

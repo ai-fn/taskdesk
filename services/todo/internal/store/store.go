@@ -196,10 +196,19 @@ const taskListJoins = `FROM todo.tasks t
 		  WHERE d.task_id = t.id AND d.user_id = t.user_id AND t2.user_id = t.user_id
 		) dep ON TRUE`
 
-func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, error) {
-	if f.PageSize <= 0 || f.PageSize > 200 {
-		f.PageSize = 50
+// NormalizePageSize is the page size ListTasks actually uses: default 50, max 200.
+func NormalizePageSize(n int32) int32 {
+	switch {
+	case n <= 0:
+		return 50
+	case n > 200:
+		return 200
 	}
+	return n
+}
+
+func (s *Store) ListTasks(ctx context.Context, f ListFilter) ([]*domain.Task, error) {
+	f.PageSize = NormalizePageSize(f.PageSize)
 
 	rows, err := s.db.Query(ctx, `
 		SELECT `+taskListCols+`

@@ -56,6 +56,11 @@ export function TaskList({ onEdit, filter, filterKey, isDeletedView, searchQuery
 
   return (
     <div className="flex flex-col gap-3">
+      {data?.next_page_token && (
+        <p role="status" className="text-center text-sm text-amber-700 dark:text-amber-400">
+          {t('tasks.list.truncated', { limit: allTasks.length })}
+        </p>
+      )}
       {tasks.map((task) => (
         <TaskCard
           key={task.id}

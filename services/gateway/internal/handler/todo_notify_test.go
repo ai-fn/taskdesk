@@ -19,6 +19,12 @@ import (
 type recordingTodo struct {
 	todov1.TodoServiceClient
 	language, email string
+	listReq         *todov1.ListTasksRequest
+}
+
+func (f *recordingTodo) ListTasks(_ context.Context, in *todov1.ListTasksRequest, _ ...grpc.CallOption) (*todov1.ListTasksResponse, error) {
+	f.listReq = in
+	return &todov1.ListTasksResponse{}, nil
 }
 
 func (f *recordingTodo) CompleteTask(_ context.Context, in *todov1.CompleteTaskRequest, _ ...grpc.CallOption) (*todov1.CompleteTaskResponse, error) {
@@ -72,5 +78,40 @@ func TestCompleteAndUpdate_ForwardOnlyVerifiedEmail(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestListTasks_ForwardsAndClampsPageSize(t *testing.T) {
+	for query, want := range map[string]int32{
+		"":                0, // server default
+		"?page_size=25":   25,
+		"?page_size=200":  200,
+		"?page_size=5000": 200,
+		"?page_size=0":    0,
+		"?page_size=-3":   0,
+		"?page_size=lots": 0,
+	} {
+		t.Run(query, func(t *testing.T) {
+			fa := &fakeAuthClient{getUserByID: func(_ context.Context, req *authv1.GetUserByIDRequest, _ ...grpc.CallOption) (*authv1.GetUserByIDResponse, error) {
+				return &authv1.GetUserByIDResponse{User: &authv1.UserSummary{UserId: req.UserId, Plan: "free"}}, nil
+			}}
+			todo := &recordingTodo{}
+			h := handler.NewTodoHandler(todo)
+			r := chi.NewRouter()
+			r.Use(middleware.Authenticate(authVerifier(fa)))
+			r.Get("/api/v1/tasks", h.List)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks"+query, nil)
+			req.Header.Set("Authorization", u1Token())
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK || todo.listReq == nil {
+				t.Fatalf("status %d, body %s", rec.Code, rec.Body)
+			}
+			if todo.listReq.PageSize != want {
+				t.Errorf("forwarded page_size = %d, want %d", todo.listReq.PageSize, want)
+			}
+		})
 	}
 }
