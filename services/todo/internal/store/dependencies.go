@@ -17,14 +17,21 @@ var ErrCycleDetected = errors.New("dependency would create a cycle")
 // already present (matches the PK unique-violation).
 var ErrDependencyExists = errors.New("dependency already exists")
 
-// AddDependency inserts (taskID → dependsOnID), rejecting self-loops, cycles,
-// and tasks not owned by the user. All checks run in a single transaction so
-// concurrent AddDependency calls cannot race past the cycle check.
+// AddDependency inserts (taskID → dependsOnID), rejecting self-loops, cycles and tasks not owned
+// by the user; a per-user advisory lock stops opposite edges from both passing the cycle check.
 func (s *Store) AddDependency(ctx context.Context, userID, taskID, dependsOnID string) error {
 	if taskID == dependsOnID {
 		return ErrCycleDetected
 	}
 	return withTx(ctx, s.db, func(tx pgx.Tx) error {
+		// Bounded wait so a queue of callers can't pin the pool; released at commit/rollback.
+		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '5s'`); err != nil {
+			return fmt.Errorf("set lock timeout: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('todo.task_deps:' || $1, 0))`, userID); err != nil {
+			return fmt.Errorf("lock dependency graph: %w", err)
+		}
+
 		// 1. Both tasks must exist and belong to the user.
 		var count int
 		if err := tx.QueryRow(ctx, `
