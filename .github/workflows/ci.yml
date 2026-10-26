@@ -161,16 +161,21 @@ jobs:
           go-version-file: go.work
           cache-dependency-path: go.work.sum
 
+      - name: Pre-pull Postgres test image
+        if: matrix.module == 'services/todo'
+        run: docker pull pgvector/pgvector:pg16
+
       - name: go test
         working-directory: ${{ matrix.module }}
-        # Fast, Docker-free layer only (see CLAUDE.md "Testing" section). auth's
-        # internal/server and internal/store packages spin up a real Postgres via
-        # testcontainers in TestMain and are intentionally excluded here — they
-        # belong to the (not-yet-wired) integration layer.
+        # Docker-free layer (see CLAUDE.md "Testing"). auth's internal/server and
+        # internal/store start Postgres via testcontainers and are excluded; todo's
+        # DB tests do run here, with Docker required so they can't silently skip.
         run: |
           if [ "${{ matrix.module }}" = "services/auth" ]; then
             pkgs=$(go list ./... | grep -v '/internal/server$' | grep -v '/internal/store$')
             go test -timeout 60s $pkgs
+          elif [ "${{ matrix.module }}" = "services/todo" ]; then
+            REQUIRE_DOCKER=1 go test -timeout 180s ./...
           else
             go test -timeout 60s ./...
           fi

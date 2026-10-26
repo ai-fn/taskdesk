@@ -41,6 +41,7 @@ type Config struct {
 	AuthServiceAddr string `env:"AUTH_SERVICE_ADDR" default:"auth.todo.svc.cluster.local:50051"`
 	AnthropicAPIKey string `env:"ANTHROPIC_API_KEY"`
 	VoyageAPIKey    string `env:"VOYAGE_API_KEY"`
+	EmbedRPM        int    `env:"EMBED_RPM"         default:"3"` // Voyage requests/min per pod; raise for a paid key
 	pkgpgx.Config
 }
 
@@ -111,7 +112,7 @@ func main() {
 	st := store.New(pool)
 	svc := server.New(p, pa, emb, st, todoClient, producer, log)
 
-	embHandler := consumer.New(emb, todoClient, authClient, log)
+	embHandler := consumer.New(emb, todoClient, authClient, log, cfg.EmbedRPM)
 	embConsumer, err := consumer.NewRunner(brokers, embHandler, log)
 	if err != nil {
 		log.Error("create embedding consumer", "err", err)

@@ -46,6 +46,44 @@ func (s *Store) DeleteTaskEmbedding(ctx context.Context, taskID, userID string) 
 	return nil
 }
 
+// ListUnembeddedTasks pages a user's live tasks without an embedding by id (keyset on afterID,
+// empty = first page). Index: idx_tasks_user_id narrows to the user; task_embeddings PK anti-joins.
+func (s *Store) ListUnembeddedTasks(ctx context.Context, userID, afterID string, limit int) ([]*domain.Task, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT `+qualifiedTaskCols+`
+		 FROM todo.tasks t
+		 LEFT JOIN todo.task_embeddings e ON e.task_id = t.id
+		 WHERE t.user_id = $1
+		   AND t.deleted_at IS NULL
+		   AND e.task_id IS NULL
+		   AND t.id > $2
+		 ORDER BY t.id
+		 LIMIT $3`,
+		userID, afterID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list unembedded tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []*domain.Task
+	for rows.Next() {
+		var t domain.Task
+		if err := scanTask(rows, &t); err != nil {
+			return nil, fmt.Errorf("scan task: %w", err)
+		}
+		tasks = append(tasks, &t)
+	}
+	return tasks, rows.Err()
+}
+
+// qualifiedTaskCols is taskCols for queries that alias tasks as t; scanTask reads it.
+const qualifiedTaskCols = `t.id, t.user_id, t.title, t.description, t.priority, t.status, t.tags,
+		        t.due_at, t.created_at, t.updated_at, t.list_id, t.flagged, t.deleted_at,
+		        t.completion_score, COALESCE(t.completion_insight, ''),
+		        t.parent_task_id, 0::int, 0::int,
+		        false, ARRAY[]::text[]`
+
 // SearchTasksByEmbedding returns the top-k tasks for a user ordered by cosine
 // similarity to the query embedding. Soft-deleted tasks are excluded.
 // <=> is pgvector's cosine distance operator; ORDER BY ASC = most similar first.

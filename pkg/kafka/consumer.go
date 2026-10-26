@@ -18,7 +18,7 @@ const (
 	defaultBaseBackoff = 200 * time.Millisecond
 	maxBackoff         = 5 * time.Second
 	commitTimeout      = 2 * time.Second
-	maxPollRecords     = 100 // bounds the redelivery window after a crash
+	maxPollRecords     = 100 // default; bounds the redelivery window after a crash
 	maxErrLen          = 256
 )
 
@@ -39,35 +39,66 @@ type client interface {
 type Consumer struct {
 	client      client
 	groupID     string
+	maxPoll     int
 	log         *slog.Logger
 	maxAttempts int
 	baseBackoff time.Duration
 }
 
+// ConsumerOption tunes a Consumer for slow handlers.
+type ConsumerOption func(*consumerOpts)
+
+type consumerOpts struct {
+	maxPoll          int
+	rebalanceTimeout time.Duration
+}
+
+// WithMaxPollRecords caps records per batch; a batch must finish within the rebalance timeout.
+func WithMaxPollRecords(n int) ConsumerOption {
+	return func(o *consumerOpts) { o.maxPoll = n }
+}
+
+// WithRebalanceTimeout is how long a rebalance may wait for the in-flight batch.
+func WithRebalanceTimeout(d time.Duration) ConsumerOption {
+	return func(o *consumerOpts) { o.rebalanceTimeout = d }
+}
+
 // NewConsumer creates a consumer joining groupID and subscribing to topics.
-func NewConsumer(brokers []string, groupID string, topics []string, log *slog.Logger) (*Consumer, error) {
-	cl, err := kgo.NewClient(
+func NewConsumer(brokers []string, groupID string, topics []string, log *slog.Logger, opts ...ConsumerOption) (*Consumer, error) {
+	o := consumerOpts{maxPoll: maxPollRecords}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	kopts := []kgo.Opt{
 		kgo.SeedBrokers(brokers...),
 		kgo.ConsumerGroup(groupID),
 		kgo.ConsumeTopics(topics...),
 		kgo.DisableAutoCommit(),    // we commit manually after handler succeeds
 		kgo.BlockRebalanceOnPoll(), // commits must not touch partitions revoked mid-batch
-	)
+	}
+	if o.rebalanceTimeout > 0 {
+		kopts = append(kopts, kgo.RebalanceTimeout(o.rebalanceTimeout))
+	}
+	cl, err := kgo.NewClient(kopts...)
 	if err != nil {
 		return nil, fmt.Errorf("kafka consumer: %w", err)
 	}
-	return newConsumer(cl, groupID, log), nil
+	c := newConsumer(cl, groupID, log)
+	if o.maxPoll > 0 {
+		c.maxPoll = o.maxPoll
+	}
+	return c, nil
 }
 
 func newConsumer(cl client, groupID string, log *slog.Logger) *Consumer {
-	return &Consumer{client: cl, groupID: groupID, log: log, maxAttempts: defaultMaxAttempts, baseBackoff: defaultBaseBackoff}
+	return &Consumer{client: cl, groupID: groupID, maxPoll: maxPollRecords, log: log, maxAttempts: defaultMaxAttempts, baseBackoff: defaultBaseBackoff}
 }
 
 // Run calls h per record in partition order; a record is committed only once handled
 // or dead-lettered. A DLQ outage past the rebalance timeout evicts the member.
 func (c *Consumer) Run(ctx context.Context, h Handler) error {
 	for {
-		fetches := c.client.PollRecords(ctx, maxPollRecords)
+		fetches := c.client.PollRecords(ctx, c.maxPoll)
 		if fetches.IsClientClosed() {
 			return nil
 		}

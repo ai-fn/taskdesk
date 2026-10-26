@@ -409,8 +409,9 @@ go test ./pkg/... && go test ./services/auth/... -timeout 120s && go test ./serv
 - RS256 JWTs are **deterministic** for the same claims + key + second — two tokens minted in
   the same second are identical. Tests that rely on token distinctness (e.g. replay protection)
   should use logout-then-refresh instead of back-to-back refreshes.
-- The same pattern (testutil harness + TestMain + Truncate) can be copied to `services/todo`
-  and `services/ai` when those stores need integration coverage.
+- `services/todo` has the same harness (`internal/testutil`), on `pgvector/pgvector:pg16` (must be
+  pre-pulled; migrations need `vector` and `pg_trgm`). Without Docker its DB tests skip; set
+  `REQUIRE_DOCKER=1` to fail instead. `services/ai` can copy the pattern when it needs one.
 
 ---
 

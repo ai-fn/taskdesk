@@ -14,11 +14,13 @@ import (
 )
 
 type fakeClient struct {
-	mu       sync.Mutex
-	fetches  []kgo.Fetches
-	cancel   context.CancelFunc
-	commits  [][]*kgo.Record
-	produced []*kgo.Record
+	// polledMax records the maxPollRecords the consumer asked for.
+	polledMax int
+	mu        sync.Mutex
+	fetches   []kgo.Fetches
+	cancel    context.CancelFunc
+	commits   [][]*kgo.Record
+	produced  []*kgo.Record
 	// produceErrs are returned by successive ProduceSync calls before it succeeds.
 	produceErrs []error
 	// cancelAfterProduceErrs cancels once the last scripted produce error is returned.
@@ -29,9 +31,10 @@ type fakeClient struct {
 	rebalances    int
 }
 
-func (f *fakeClient) PollRecords(context.Context, int) kgo.Fetches {
+func (f *fakeClient) PollRecords(_ context.Context, n int) kgo.Fetches {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.polledMax = n
 	if len(f.fetches) == 0 {
 		f.cancel()
 		return nil
@@ -369,5 +372,20 @@ func TestBackoff_CappedAndOverflowSafe(t *testing.T) {
 		if got := c.backoff(attempt); got != maxBackoff {
 			t.Errorf("backoff(%d) = %v, want %v", attempt, got, maxBackoff)
 		}
+	}
+}
+
+func TestRun_PollsConfiguredBatchSize(t *testing.T) {
+	fc := &fakeClient{}
+	c, ctx := newTestConsumer(t, fc)
+	if c.maxPoll != maxPollRecords {
+		t.Fatalf("default maxPoll = %d, want %d", c.maxPoll, maxPollRecords)
+	}
+	c.maxPoll = 3
+	if err := c.Run(ctx, func(context.Context, *kgo.Record) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if fc.polledMax != 3 {
+		t.Errorf("PollRecords asked for %d, want 3", fc.polledMax)
 	}
 }

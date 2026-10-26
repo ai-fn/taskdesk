@@ -686,6 +686,33 @@ func (s *Server) UpsertTaskEmbedding(ctx context.Context, req *todov1.UpsertTask
 	return &todov1.UpsertTaskEmbeddingResponse{}, nil
 }
 
+func (s *Server) ListUnembeddedTasks(ctx context.Context, req *todov1.ListUnembeddedTasksRequest) (*todov1.ListTasksResponse, error) {
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+	pageSize := int(req.PageSize)
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+	// The page token is the last task id of the previous page.
+	tasks, err := s.store.ListUnembeddedTasks(ctx, req.UserId, req.PageToken, pageSize)
+	if err != nil {
+		s.log.Error("list unembedded tasks", "err", err)
+		return nil, status.Error(codes.Internal, "list unembedded tasks failed")
+	}
+	resp := &todov1.ListTasksResponse{}
+	for _, t := range tasks {
+		resp.Tasks = append(resp.Tasks, toProto(t))
+	}
+	if len(tasks) == pageSize {
+		resp.NextPageToken = tasks[len(tasks)-1].ID
+	}
+	return resp, nil
+}
+
 func (s *Server) DeleteTaskEmbedding(ctx context.Context, req *todov1.DeleteTaskEmbeddingRequest) (*todov1.DeleteTaskEmbeddingResponse, error) {
 	if req.UserId == "" || req.TaskId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
