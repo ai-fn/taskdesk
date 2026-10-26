@@ -205,7 +205,11 @@ func (s *Server) Logout(ctx context.Context, req *authv1.LogoutRequest) (*authv1
 	if req.RefreshToken == "" {
 		return &authv1.LogoutResponse{}, nil
 	}
-	_ = s.store.DeleteSessionByTokenHash(ctx, hashToken(req.RefreshToken))
+	// A failed delete leaves the session alive; say so, or the user believes they are signed out.
+	if err := s.store.DeleteSessionByTokenHash(ctx, hashToken(req.RefreshToken)); err != nil {
+		s.log.Error("logout: delete session", "err", err)
+		return nil, status.Error(codes.Internal, "logout failed")
+	}
 	return &authv1.LogoutResponse{}, nil
 }
 

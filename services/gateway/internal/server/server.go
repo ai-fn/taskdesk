@@ -36,6 +36,7 @@ func New(
 	aiClient aiv1.AIServiceClient,
 	rdb *redis.Client,
 	oauthProviders oauth.Registry,
+	cookieSecure bool,
 ) (http.Handler, func(context.Context)) {
 	r := chi.NewRouter()
 
@@ -76,7 +77,7 @@ func New(
 	hub := ws.NewHub(rdb.Subscribe(context.Background()), log)
 	hub.Run()
 
-	auth := handler.NewAuthHandler(authClient, todoClient, log)
+	auth := handler.NewAuthHandler(authClient, todoClient, log, cookieSecure)
 	cleanup := func(ctx context.Context) {
 		// Drain hijacked WebSockets first (http.Server.Shutdown does not), then
 		// stop the cache janitors.
@@ -87,7 +88,7 @@ func New(
 			l.Stop()
 		}
 	}
-	oauthH := handler.NewOAuthHandler(authClient, oauthProviders, log)
+	oauthH := handler.NewOAuthHandler(authClient, oauthProviders, log, cookieSecure)
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.With(authIP).Post("/signup", auth.SignUp)
 		r.With(authIP).Post("/login", auth.Login)

@@ -17,13 +17,17 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const refreshCookieName = "refresh_token"
+const (
+	refreshCookieName = "refresh_token"
+	refreshCookiePath = "/api/v1/auth"
+)
 
 // AuthHandler bridges HTTP ↔ auth-service gRPC.
 type AuthHandler struct {
 	client            authv1.AuthServiceClient
 	todoClient        todov1.TodoServiceClient
 	log               *slog.Logger
+	cookieSecure      bool         // Secure flag on the refresh cookie; off only for plain-HTTP dev
 	emailLimiter      *RateLimiter // 5 attempts / minute per email (login/signup)
 	ipLimiter         *RateLimiter // 20 attempts / minute per IP (login/signup)
 	resetEmailLimiter *RateLimiter // 3 attempts / 10 min per email (password reset)
@@ -32,11 +36,12 @@ type AuthHandler struct {
 	resetConfirmLimiter *RateLimiter // 10 attempts / 10 min per email (reset confirm)
 }
 
-func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, log *slog.Logger) *AuthHandler {
+func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, log *slog.Logger, cookieSecure bool) *AuthHandler {
 	return &AuthHandler{
-		client:     c,
-		todoClient: todo,
-		log:        log,
+		client:       c,
+		todoClient:   todo,
+		log:          log,
+		cookieSecure: cookieSecure,
 		// 5 logins per minute per email — targets credential stuffing.
 		emailLimiter: NewRateLimiter(rate.Limit(5.0/60.0), 5, 15*time.Minute, 10*time.Minute),
 		// 20 logins per minute per IP — targets origin scanning.
@@ -105,7 +110,7 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 		h.log.Error("seed default group", "user_id", resp.UserId, "err", err)
 	}
 
-	setRefreshCookie(w, resp.RefreshToken)
+	setRefreshCookie(w, resp.RefreshToken, h.cookieSecure)
 	jsonOK(w, map[string]string{
 		"user_id":      resp.UserId,
 		"access_token": resp.AccessToken,
@@ -148,7 +153,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setRefreshCookie(w, resp.RefreshToken)
+	setRefreshCookie(w, resp.RefreshToken, h.cookieSecure)
 	jsonOK(w, map[string]string{
 		"user_id":      resp.UserId,
 		"access_token": resp.AccessToken,
@@ -171,7 +176,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setRefreshCookie(w, resp.RefreshToken)
+	setRefreshCookie(w, resp.RefreshToken, h.cookieSecure)
 	jsonOK(w, map[string]string{"access_token": resp.AccessToken})
 }
 
@@ -182,15 +187,22 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		refreshToken = cookie.Value
 	}
 
-	_, _ = h.client.Logout(r.Context(), &authv1.LogoutRequest{RefreshToken: refreshToken})
+	// On failure the session is still alive: keep the cookie so the user can retry.
+	if _, err := h.client.Logout(r.Context(), &authv1.LogoutRequest{RefreshToken: refreshToken}); err != nil {
+		h.log.Error("logout failed", "err", err)
+		handleGRPCError(w, err)
+		return
+	}
 
-	// Clear the cookie regardless of backend result.
+	// Same attributes as setRefreshCookie, or the browser keeps the real cookie.
 	http.SetCookie(w, &http.Cookie{
 		Name:     refreshCookieName,
 		Value:    "",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Path:     "/",
+		Secure:   h.cookieSecure,
+		Path:     refreshCookiePath,
+		SameSite: http.SameSiteStrictMode,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -267,15 +279,15 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func setRefreshCookie(w http.ResponseWriter, token string) {
+func setRefreshCookie(w http.ResponseWriter, token string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     refreshCookieName,
 		Value:    token,
 		HttpOnly: true,
-		Path:     "/api/v1/auth",
+		Secure:   secure,
+		Path:     refreshCookiePath,
 		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
 		SameSite: http.SameSiteStrictMode,
-		// Secure: true — set this in production (HTTPS only)
 	})
 }
 

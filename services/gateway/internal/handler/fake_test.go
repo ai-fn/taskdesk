@@ -74,6 +74,8 @@ type fakeAuthClient struct {
 	revokeSession       func(ctx context.Context, req *authv1.RevokeSessionRequest, opts ...grpc.CallOption) (*authv1.RevokeSessionResponse, error)
 	revokeOtherSessions func(ctx context.Context, req *authv1.RevokeOtherSessionsRequest, opts ...grpc.CallOption) (*authv1.RevokeOtherSessionsResponse, error)
 	updateUserLanguage  func(ctx context.Context, req *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error)
+	logout              func(ctx context.Context, req *authv1.LogoutRequest, opts ...grpc.CallOption) (*authv1.LogoutResponse, error)
+	refreshToken        func(ctx context.Context, req *authv1.RefreshTokenRequest, opts ...grpc.CallOption) (*authv1.RefreshTokenResponse, error)
 	resetPassword       func(ctx context.Context, req *authv1.ResetPasswordRequest, opts ...grpc.CallOption) (*authv1.ResetPasswordResponse, error)
 	getUserByID         func(ctx context.Context, req *authv1.GetUserByIDRequest, opts ...grpc.CallOption) (*authv1.GetUserByIDResponse, error)
 }
@@ -115,10 +117,16 @@ func (f *fakeAuthClient) Login(ctx context.Context, in *authv1.LoginRequest, opt
 	panic("not used in handler tests")
 }
 func (f *fakeAuthClient) RefreshToken(ctx context.Context, in *authv1.RefreshTokenRequest, opts ...grpc.CallOption) (*authv1.RefreshTokenResponse, error) {
-	panic("not used in handler tests")
+	if f.refreshToken == nil {
+		panic("not used in handler tests")
+	}
+	return f.refreshToken(ctx, in, opts...)
 }
 func (f *fakeAuthClient) Logout(ctx context.Context, in *authv1.LogoutRequest, opts ...grpc.CallOption) (*authv1.LogoutResponse, error) {
-	panic("not used in handler tests")
+	if f.logout == nil {
+		panic("not used in handler tests")
+	}
+	return f.logout(ctx, in, opts...)
 }
 func (f *fakeAuthClient) GetJWKS(ctx context.Context, in *authv1.GetJWKSRequest, opts ...grpc.CallOption) (*authv1.GetJWKSResponse, error) {
 	return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{{

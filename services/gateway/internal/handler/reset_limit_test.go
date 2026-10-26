@@ -22,7 +22,7 @@ func TestResetPassword_GuessesAreCappedPerEmailAcrossIPs(t *testing.T) {
 		calls++
 		return &authv1.ResetPasswordResponse{}, nil
 	}}
-	h := handler.NewAuthHandler(fake, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h := handler.NewAuthHandler(fake, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), false)
 	defer h.Stop()
 	r := chi.NewRouter()
 	r.Post("/api/v1/auth/password/reset", h.ResetPassword)

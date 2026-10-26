@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +32,7 @@ type Config struct {
 
 	// OAuth — providers register only when both ID and secret are present.
 	OAuthBaseURL        string `env:"OAUTH_BASE_URL"        default:"http://localhost:8080"`
+	CookieSecure        bool   `env:"COOKIE_SECURE"         default:"false"`
 	GoogleClientID      string `env:"GOOGLE_CLIENT_ID"      default:""`
 	GoogleClientSecret  string `env:"GOOGLE_CLIENT_SECRET"  default:""`
 	DiscordClientID     string `env:"DISCORD_CLIENT_ID"     default:""`
@@ -113,7 +115,13 @@ func main() {
 		log.Warn("oauth provider skipped: missing credentials", "name", "discord")
 	}
 
-	httpHandler, cleanup := server.New(log, authClient, todoClient, aiClient, rdb, providers)
+	// An https public URL means browsers are on TLS, so a cookie without Secure is a config mistake.
+	cookieSecure := cfg.CookieSecure || strings.HasPrefix(cfg.OAuthBaseURL, "https://")
+	if !cookieSecure {
+		log.Warn("auth cookies are not Secure: set COOKIE_SECURE=true outside plain-HTTP dev")
+	}
+
+	httpHandler, cleanup := server.New(log, authClient, todoClient, aiClient, rdb, providers, cookieSecure)
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           httpHandler,
