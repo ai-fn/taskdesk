@@ -5,3 +5,34 @@ resources:
   - deployment.yaml
   - service.yaml
   - secret.yaml
+configMapGenerator:
+  - name: todo-migrations
+    files:
+      - 000001_init.up.sql
+      - 000001_init.down.sql
+      - 000002_outbox.up.sql
+      - 000002_outbox.down.sql
+      - 000003_task_lists.up.sql
+      - 000003_task_lists.down.sql
+      - 000004_list_groups.up.sql
+      - 000004_list_groups.down.sql
+      - 000005_list_icon.up.sql
+      - 000005_list_icon.down.sql
+      - 000006_task_embeddings.up.sql
+      - 000006_task_embeddings.down.sql
+      - 000007_completion_score.up.sql
+      - 000007_completion_score.down.sql
+      - 000008_subtasks.up.sql
+      - 000008_subtasks.down.sql
+      - 000009_task_dependencies.up.sql
+      - 000009_task_dependencies.down.sql
+      - 000010_fulltext_search.up.sql
+      - 000010_fulltext_search.down.sql
+      - 000011_outbox_claim.up.sql
+      - 000011_outbox_claim.down.sql
+      - 000012_outbox_pending_index.up.sql
+      - 000012_outbox_pending_index.down.sql
+      - 000013_outbox_published_index.up.sql
+      - 000013_outbox_published_index.down.sql
+generatorOptions:
+  disableNameSuffixHash: true

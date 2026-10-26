@@ -238,8 +238,8 @@ Event type field in `task.events.v1`: `task.created`, `task.updated`, `task.comp
 
 ### Schema migrations
 Migrations must be **backward-compatible** — old binary runs against new schema, new binary runs against old schema. Steps for any DDL change:
-1. Write `.up.sql` / `.down.sql` in `migrations/{service}/`.
-2. Copy to `deploy/k8s/base/{service}/` and list in `kustomization.yaml` `configMapGenerator`.
+1. Write `.up.sql` / `.down.sql` in `migrations/{service}/` (the only place to edit).
+2. Run `scripts/sync-migrations.sh`: it copies them to `deploy/k8s/base/{service}/` and rewrites the `configMapGenerator` list (Tilt runs it on load; CI runs `--check`).
 3. Column additions: nullable or with a default only — never `NOT NULL` without a default on an existing table.
 4. Column removals: two-step — first deploy removes all code references, second deploy drops the column.
 5. Never run migrations manually in prod; the k8s init container runs them on pod start.
@@ -440,7 +440,7 @@ The project is fully multilingual (English + Simplified Chinese, extensible). **
 - Use `pkg/i18n.Normalize(lang)` to canonicalize any incoming language string. Use `pkg/i18n.Supported(lang)` to validate before accepting user input.
 - **AI service**: inject language as a directive in the **user message** (never the cached system prompt — that would bust the Claude cache). See `planner.go` / `parser.go`.
 - **Kafka events**: denormalize language into the event payload at production time so consumers (notification-service) can localize without a sync auth lookup. Add `Language string \`json:"language"\`` to any new event struct in both the producer and consumer.
-- **New auth migrations**: add the `.up.sql` / `.down.sql` files to `migrations/auth/`, `deploy/k8s/base/auth/`, AND list them in `deploy/k8s/base/auth/kustomization.yaml` `configMapGenerator` — all three places, otherwise the cluster never runs the migration.
+- **New auth migrations**: add the files to `migrations/auth/` and run `scripts/sync-migrations.sh`; otherwise the cluster never runs the migration.
 
 ### Checklist for any new UI feature
 

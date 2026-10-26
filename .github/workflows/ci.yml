@@ -180,6 +180,13 @@ jobs:
             go test -timeout 60s ./...
           fi
 
+  migrations-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: deploy/ copies match migrations/
+        run: scripts/sync-migrations.sh --check
+
   lint-web:
     runs-on: ubuntu-latest
     defaults:
