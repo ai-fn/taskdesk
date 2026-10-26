@@ -42,6 +42,7 @@ type Config struct {
 	TodoServiceAddr string `env:"TODO_SERVICE_ADDR" default:"todo.todo.svc.cluster.local:50052"`
 	AuthServiceAddr string `env:"AUTH_SERVICE_ADDR" default:"auth.todo.svc.cluster.local:50051"`
 	AnthropicAPIKey string `env:"ANTHROPIC_API_KEY"`
+	ClaudeModel     string `env:"CLAUDE_MODEL"      default:"claude-sonnet-4-6"`
 	VoyageAPIKey    string `env:"VOYAGE_API_KEY"`
 	EmbedRPM        int    `env:"EMBED_RPM"         default:"3"` // Voyage requests/min per pod; raise for a paid key
 	pkgpgx.Config
@@ -109,9 +110,9 @@ func main() {
 	authClient := authv1.NewAuthServiceClient(authConn)
 
 	emb := embedder.New(cfg.VoyageAPIKey)
-	p := planner.New(cfg.AnthropicAPIKey)
-	pa := parser.New(cfg.AnthropicAPIKey)
-	sc := scorer.New(cfg.AnthropicAPIKey)
+	p := planner.New(cfg.AnthropicAPIKey, cfg.ClaudeModel, log)
+	pa := parser.New(cfg.AnthropicAPIKey, cfg.ClaudeModel)
+	sc := scorer.New(cfg.AnthropicAPIKey, cfg.ClaudeModel, log)
 	st := store.New(pool)
 	svc := server.New(p, pa, emb, st, todoClient, producer, log)
 

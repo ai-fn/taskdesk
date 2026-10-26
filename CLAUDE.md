@@ -108,7 +108,7 @@ Calls Claude API. Owns its own DB table for storing plans.
 - `GetLatestPlan(GetLatestPlanRequest) → GetLatestPlanResponse`
 
 **AI implementation details:**
-- Model: `claude-sonnet-4-6`
+- Model: `claude-sonnet-4-6` by default; override with `CLAUDE_MODEL`. Token and prompt-cache usage is logged per call (`claude usage`).
 - Prompt caching: system prompt cached with `CacheControlEphemeral` (large, stable across users)
 - Tool use: `submit_daily_plan` tool with strict schema forces structured output; Claude writes narrative text first (streamed), then calls the tool
 - `GenerateStream` accumulates streamed narrative via `strings.Builder`; overwrites tool-call summary before returning (so DB stores the streamed text, not the dry tool summary)

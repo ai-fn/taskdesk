@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/fsociety/todo/services/ai/internal/llm"
 )
 
 // systemPrompt is stable across all users — cached by Claude on the first call.
@@ -29,7 +30,7 @@ OUTPUT RULES — follow exactly:
   4. High-priority upcoming (next 1-2 items for forward visibility)
   Skip routine/low-impact items if total exceeds 7.
 
-- rationale: 10-15 words per task. Human-readable. Show *why* it matters today.
+- rationale: up to 15 words per task. Human-readable. Show *why* it matters today.
   Good examples:
     • "Overdue 5 days, affects team capacity" (when + impact)
     • "Due today, high priority, unblocks feature launch" (deadline + consequence)
@@ -97,16 +98,18 @@ func languageDirective(lang string) string {
 // Planner wraps the Anthropic client.
 type Planner struct {
 	client *anthropic.Client
+	model  anthropic.Model
+	log    *slog.Logger
 }
 
 // New creates a Planner. apiKey is read from ANTHROPIC_API_KEY env if empty.
-func New(apiKey string) *Planner {
+func New(apiKey, model string, log *slog.Logger) *Planner {
 	opts := []option.RequestOption{}
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}
 	c := anthropic.NewClient(opts...)
-	return &Planner{client: &c}
+	return &Planner{client: &c, model: anthropic.Model(model), log: log}
 }
 
 // Generate calls Claude and returns a prioritized plan for the user.
@@ -122,9 +125,9 @@ func (p *Planner) Generate(ctx context.Context, uc UserContext, lang string) (*S
 	userText := string(userJSON) + "\n\n" + languageDirective(lang)
 
 	resp, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeSonnet4_6,
+		Model:     p.model,
 		MaxTokens: 1024,
-		// Stable system prompt — Claude caches this prefix, saving ~$0.30 per call.
+		// Stable system prompt, marked cacheable; it only caches once the prefix passes the model's minimum length.
 		System: []anthropic.TextBlockParam{
 			{
 				Text:         systemPrompt,
@@ -140,7 +143,7 @@ func (p *Planner) Generate(ctx context.Context, uc UserContext, lang string) (*S
 						Properties: map[string]any{
 							"summary": map[string]any{
 								"type":        "string",
-								"description": "One sentence (≤20 words) stating the day's single focus theme.",
+								"description": "One sentence (≤25 words) stating the day's single focus theme.",
 							},
 							"items": map[string]any{
 								"type": "array",
@@ -150,7 +153,7 @@ func (p *Planner) Generate(ctx context.Context, uc UserContext, lang string) (*S
 										"task_id":    map[string]any{"type": "string"},
 										"task_title": map[string]any{"type": "string"},
 										"rank":       map[string]any{"type": "integer", "description": "1 = highest priority"},
-										"rationale":  map[string]any{"type": "string", "description": "≤8 words: why this rank."},
+										"rationale":  map[string]any{"type": "string", "description": "≤15 words: why this rank."},
 									},
 									"required": []string{"task_id", "task_title", "rank", "rationale"},
 								},
@@ -173,6 +176,7 @@ func (p *Planner) Generate(ctx context.Context, uc UserContext, lang string) (*S
 	if err != nil {
 		return nil, fmt.Errorf("claude api: %w", err)
 	}
+	llm.LogUsage(p.log, "plan", resp.Usage)
 
 	// Extract the tool use block.
 	for _, block := range resp.Content {
@@ -202,7 +206,7 @@ func (p *Planner) GenerateStream(ctx context.Context, uc UserContext, lang strin
 	userText := string(userJSON) + "\n\n" + languageDirective(lang)
 
 	stream := p.client.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeSonnet4_6,
+		Model:     p.model,
 		MaxTokens: 1024,
 		System: []anthropic.TextBlockParam{
 			{
@@ -219,7 +223,7 @@ func (p *Planner) GenerateStream(ctx context.Context, uc UserContext, lang strin
 						Properties: map[string]any{
 							"summary": map[string]any{
 								"type":        "string",
-								"description": "One sentence (≤20 words) stating the day's single focus theme.",
+								"description": "One sentence (≤25 words) stating the day's single focus theme.",
 							},
 							"items": map[string]any{
 								"type": "array",
@@ -229,7 +233,7 @@ func (p *Planner) GenerateStream(ctx context.Context, uc UserContext, lang strin
 										"task_id":    map[string]any{"type": "string"},
 										"task_title": map[string]any{"type": "string"},
 										"rank":       map[string]any{"type": "integer", "description": "1 = highest priority"},
-										"rationale":  map[string]any{"type": "string", "description": "≤8 words: why this rank."},
+										"rationale":  map[string]any{"type": "string", "description": "≤15 words: why this rank."},
 									},
 									"required": []string{"task_id", "task_title", "rank", "rationale"},
 								},
@@ -272,6 +276,7 @@ func (p *Planner) GenerateStream(ctx context.Context, uc UserContext, lang strin
 	if err := stream.Err(); err != nil {
 		return nil, fmt.Errorf("claude stream: %w", err)
 	}
+	llm.LogUsage(p.log, "plan_stream", acc.Usage)
 
 	// Extract submit_daily_plan tool use from accumulated message.
 	for _, block := range acc.Content {
@@ -292,13 +297,4 @@ func (p *Planner) GenerateStream(ctx context.Context, uc UserContext, lang strin
 	}
 
 	return nil, fmt.Errorf("claude did not call submit_daily_plan (stop_reason=%s)", acc.StopReason)
-}
-
-// CacheStats holds prompt cache token counters from a response for observability.
-type CacheStats struct {
-	CacheCreationTokens int64
-	CacheReadTokens     int64
-	InputTokens         int64
-	OutputTokens        int64
-	GeneratedAt         time.Time
 }

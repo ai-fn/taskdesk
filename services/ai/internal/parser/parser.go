@@ -87,16 +87,17 @@ func (p *ParsedTask) DueAtTime(loc *time.Location) *time.Time {
 // Parser wraps the Anthropic client for task-parsing calls.
 type Parser struct {
 	client *anthropic.Client
+	model  anthropic.Model
 }
 
 // New creates a Parser. Uses ANTHROPIC_API_KEY env var if apiKey is empty.
-func New(apiKey string) *Parser {
+func New(apiKey, model string) *Parser {
 	opts := []option.RequestOption{}
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}
 	c := anthropic.NewClient(opts...)
-	return &Parser{client: &c}
+	return &Parser{client: &c, model: anthropic.Model(model)}
 }
 
 // languageDirectives steers Claude's output language via the user message.
@@ -124,7 +125,7 @@ func (p *Parser) Parse(ctx context.Context, text, today, zone, lang string, list
 	userMsg := userMessage(text, today, zone, lang, listNames)
 
 	resp, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeSonnet4_6,
+		Model:     p.model,
 		MaxTokens: 512,
 		System: []anthropic.TextBlockParam{
 			{Text: systemPrompt},
