@@ -42,10 +42,17 @@ let isRefreshing = false
 type Subscriber = { onSuccess: (token: string) => void; onFailure: (err: unknown) => void }
 let refreshSubscribers: Subscriber[] = []
 
-// Auth endpoints return 401 for wrong credentials, not for expired tokens.
-// Never attempt a refresh for them — it wastes a round-trip and triggers
-// _onUnauthenticated() which navigates away from the login page.
-const AUTH_ENDPOINTS = ['/api/v1/auth/login', '/api/v1/auth/signup']
+// Credential endpoints return 401 for bad credentials or a missing/expired refresh cookie, not for an
+// expired access token. Refreshing for them is pointless, and the failure path would navigate
+// away from the public page (/signup, /forgot-password) the visitor is on.
+const AUTH_ENDPOINTS = [
+  '/api/v1/auth/login',
+  '/api/v1/auth/signup',
+  '/api/v1/auth/refresh',
+  '/api/v1/auth/logout',
+  '/api/v1/auth/password/forgot',
+  '/api/v1/auth/password/reset',
+]
 
 api.interceptors.response.use(
   (response) => response,
