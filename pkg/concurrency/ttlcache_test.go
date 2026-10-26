@@ -174,3 +174,60 @@ func TestJanitor_EvictsExpired(t *testing.T) {
 		}
 	}
 }
+
+func TestGetOrFetch_FirstCallerCancelDoesNotFailSecond(t *testing.T) {
+	c := NewTTLCache[string, string](time.Minute)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	fetch := func(ctx context.Context) (string, error) {
+		close(started)
+		select {
+		case <-release:
+			return "v", ctx.Err()
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	first := make(chan error, 1)
+	go func() { _, err := c.GetOrFetch(ctx1, "k", fetch); first <- err }()
+	<-started
+
+	second := make(chan string, 1)
+	secondErr := make(chan error, 1)
+	go func() {
+		v, err := c.GetOrFetch(context.Background(), "k", func(context.Context) (string, error) {
+			t.Error("second caller started its own fetch")
+			return "", nil
+		})
+		second <- v
+		secondErr <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // let the second caller join the flight
+
+	cancel1()
+	if err := <-first; !errors.Is(err, context.Canceled) {
+		t.Fatalf("first caller err = %v, want context.Canceled", err)
+	}
+	close(release)
+	if v, err := <-second, <-secondErr; err != nil || v != "v" {
+		t.Fatalf("second caller = %q, %v; want v, nil", v, err)
+	}
+	if v, ok := c.Get("k"); !ok || v != "v" {
+		t.Errorf("value not cached after the first caller left: %q, %v", v, ok)
+	}
+}
+
+func TestGetOrFetch_FetchKeepsCallerContextValues(t *testing.T) {
+	type ctxKey struct{}
+	c := NewTTLCache[string, string](time.Minute)
+	ctx := context.WithValue(context.Background(), ctxKey{}, "trace-1")
+	v, err := c.GetOrFetch(ctx, "k", func(ctx context.Context) (string, error) {
+		s, _ := ctx.Value(ctxKey{}).(string)
+		return s, nil
+	})
+	if err != nil || v != "trace-1" {
+		t.Fatalf("got %q, %v; want the caller's context values preserved", v, err)
+	}
+}
