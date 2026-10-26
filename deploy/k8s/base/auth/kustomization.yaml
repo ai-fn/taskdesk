@@ -32,5 +32,7 @@ configMapGenerator:
       - 000008_promo_codes.down.sql
       - 000009_subscriptions_source_ref_unique.up.sql
       - 000009_subscriptions_source_ref_unique.down.sql
+      - 000010_users_stripe_customer_index.up.sql
+      - 000010_users_stripe_customer_index.down.sql
 generatorOptions:
   disableNameSuffixHash: true

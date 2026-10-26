@@ -14,6 +14,7 @@ import (
 	"github.com/fsociety/todo/services/auth/internal/store"
 	"github.com/fsociety/todo/services/auth/internal/testutil"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -750,5 +751,73 @@ func TestClaimCodeAttempt_OnlyTheLatestLiveCode(t *testing.T) {
 	}
 	if _, err := s.ClaimCodeAttempt(ctx, "u81", "email_verify", 3); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("consumed code: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSetStripeCustomerIDIfUnset_FirstWriterWins(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u90", "stripe@example.com"))
+
+	got, err := s.SetStripeCustomerIDIfUnset(ctx, "u90", "cus_first")
+	if err != nil || got != "cus_first" {
+		t.Fatalf("first = %q, %v", got, err)
+	}
+	got, err = s.SetStripeCustomerIDIfUnset(ctx, "u90", "cus_second")
+	if err != nil || got != "cus_first" {
+		t.Errorf("second = %q, %v; want the first customer kept", got, err)
+	}
+	if _, err := s.SetStripeCustomerIDIfUnset(ctx, "nobody", "cus_x"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown user: err = %v, want ErrNotFound", err)
+	}
+
+	mustCreateUser(t, s, makeUser("u91", "stripe2@example.com"))
+	var pgErr *pgconn.PgError
+	if _, err := s.SetStripeCustomerIDIfUnset(ctx, "u91", "cus_first"); !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Errorf("customer attached to a second user: err = %v, want unique violation", err)
+	}
+}
+
+func TestMoveSubscription_KeepsPlanInSyncAndRespectsOtherSources(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u92", "mix@example.com"))
+	plan := func() string {
+		t.Helper()
+		u, err := s.GetUserByID(ctx, "u92")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u.Plan
+	}
+
+	if err := s.CreateSubscriptionAndSetPlan(ctx, makeSub("sub-m1", "u92", "stripe", "sub_mix"), "pro"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReactivateSubscriptionBySourceRef(ctx, "sub_mix"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("reactivating an active row: err = %v, want ErrNotFound", err)
+	}
+	if uid, err := s.CancelSubscriptionBySourceRef(ctx, "sub_mix"); err != nil || uid != "u92" {
+		t.Fatalf("cancel = %q, %v", uid, err)
+	}
+	if got := plan(); got != "free" {
+		t.Errorf("plan after cancel = %q, want free (updated in the same transaction)", got)
+	}
+	if uid, err := s.ReactivateSubscriptionBySourceRef(ctx, "sub_mix"); err != nil || uid != "u92" {
+		t.Fatalf("reactivate = %q, %v", uid, err)
+	}
+	if got := plan(); got != "pro" {
+		t.Errorf("plan after reactivate = %q, want pro", got)
+	}
+
+	// A promo subscription keeps the user on pro when the Stripe one ends.
+	if err := s.CreateSubscriptionAndSetPlan(ctx, makeSub("sub-m2", "u92", "promo_code", "promo-ref"), "pro"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CancelSubscriptionBySourceRef(ctx, "sub_mix"); err != nil {
+		t.Fatal(err)
+	}
+	if got := plan(); got != "pro" {
+		t.Errorf("plan with a live promo subscription = %q, want pro", got)
 	}
 }

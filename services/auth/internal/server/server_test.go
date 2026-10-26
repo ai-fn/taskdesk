@@ -18,6 +18,7 @@ import (
 	"github.com/fsociety/todo/services/auth/internal/server"
 	"github.com/fsociety/todo/services/auth/internal/store"
 	"github.com/fsociety/todo/services/auth/internal/testutil"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	stripewebhook "github.com/stripe/stripe-go/v82/webhook"
 	"google.golang.org/grpc/codes"
@@ -921,7 +922,7 @@ func TestHandleStripeWebhook_CheckoutIdempotent(t *testing.T) {
 
 	// Use GenerateTestSignedPayload to produce a valid HMAC signature.
 	// api_version mismatch is now ignored (IgnoreAPIVersionMismatch: true).
-	payloadBytes := []byte(`{"id":"evt_test_idem","object":"event","api_version":"2024-06-20","type":"checkout.session.completed","data":{"object":{"id":"cs_test_idem","object":"checkout.session","customer":"cus_test_idempotent","subscription":"sub_test_idempotent"}}}`)
+	payloadBytes := []byte(`{"id":"evt_test_idem","object":"event","api_version":"2024-06-20","type":"checkout.session.completed","data":{"object":{"id":"cs_test_idem","object":"checkout.session","customer":"cus_test_idempotent","subscription":"sub_test_idempotent","payment_status":"paid"}}}`)
 	signed := stripewebhook.GenerateTestSignedPayload(&stripewebhook.UnsignedPayload{
 		Payload: payloadBytes,
 		Secret:  webhookSecret,
@@ -1001,5 +1002,89 @@ func TestConfirmEmail_CorrectCodeWithinCapSucceeds(t *testing.T) {
 	}
 	if _, err := svc.ConfirmEmail(context.Background(), &authv1.ConfirmEmailRequest{UserId: su.UserId, Code: "123456"}); err != nil {
 		t.Fatalf("third attempt with the right code: %v", err)
+	}
+}
+
+// ── Stripe webhook robustness ─────────────────────────────────────────────────
+
+const stripeTestSecret = "whsec_test_robust"
+
+func stripeEvent(t *testing.T, svc *server.Server, eventType, object string) {
+	t.Helper()
+	payload := fmt.Sprintf(`{"id":"evt_%s","object":"event","api_version":"2024-06-20","type":%q,"data":{"object":%s}}`, uuid.NewString(), eventType, object)
+	signed := stripewebhook.GenerateTestSignedPayload(&stripewebhook.UnsignedPayload{Payload: []byte(payload), Secret: stripeTestSecret})
+	if _, err := svc.HandleStripeWebhook(context.Background(), &authv1.HandleStripeWebhookRequest{Payload: signed.Payload, Signature: signed.Header}); err != nil {
+		t.Fatalf("%s: %v", eventType, err)
+	}
+}
+
+func userPlan(t *testing.T, userID string) string {
+	t.Helper()
+	var plan string
+	if err := testPool.QueryRow(context.Background(), `SELECT plan FROM auth.users WHERE id = $1`, userID).Scan(&plan); err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+func TestStripeCheckout_ResolvesUserWithoutStoredCustomerID(t *testing.T) {
+	cases := []struct{ name, userField string }{
+		{"client_reference_id", `"client_reference_id":"%s"`},
+		{"metadata.user_id", `"metadata":{"user_id":"%s"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newServerWithStripe(t, server.StripeConfig{WebhookSecret: stripeTestSecret})
+			su := signUp(t, svc, "paid@test.com", "Passw0rd1", "Pat") // no customer id stored, as after a failed save
+			obj := fmt.Sprintf(`{"id":"cs_1","object":"checkout.session","customer":"cus_lost","subscription":"sub_lost","payment_status":"paid",`+tc.userField+`}`, su.UserId)
+			stripeEvent(t, svc, "checkout.session.completed", obj)
+
+			if got := userPlan(t, su.UserId); got != "pro" {
+				t.Errorf("plan = %q, want pro: the payment must not be lost with the customer id", got)
+			}
+			var cust *string
+			if err := testPool.QueryRow(context.Background(), `SELECT stripe_customer_id FROM auth.users WHERE id = $1`, su.UserId).Scan(&cust); err != nil || cust == nil || *cust != "cus_lost" {
+				t.Errorf("stripe_customer_id = %v, %v; want cus_lost backfilled", cust, err)
+			}
+		})
+	}
+}
+
+func TestStripeCheckout_UnpaidWaitsForAsyncPayment(t *testing.T) {
+	svc := newServerWithStripe(t, server.StripeConfig{WebhookSecret: stripeTestSecret})
+	su := signUp(t, svc, "async@test.com", "Passw0rd1", "Ann")
+	obj := func(paymentStatus string) string {
+		return fmt.Sprintf(`{"id":"cs_2","object":"checkout.session","customer":"cus_async","subscription":"sub_async","payment_status":%q,"client_reference_id":%q}`, paymentStatus, su.UserId)
+	}
+
+	stripeEvent(t, svc, "checkout.session.completed", obj("unpaid"))
+	if got := userPlan(t, su.UserId); got != "free" {
+		t.Fatalf("plan before payment = %q, want free", got)
+	}
+	stripeEvent(t, svc, "checkout.session.async_payment_succeeded", obj("paid"))
+	if got := userPlan(t, su.UserId); got != "pro" {
+		t.Errorf("plan after payment = %q, want pro", got)
+	}
+}
+
+func TestStripeSubscription_PastDueIsGraceAndRecoveryRestoresPro(t *testing.T) {
+	svc := newServerWithStripe(t, server.StripeConfig{WebhookSecret: stripeTestSecret})
+	su := signUp(t, svc, "dunning@test.com", "Passw0rd1", "Dan")
+	stripeEvent(t, svc, "checkout.session.completed", fmt.Sprintf(`{"id":"cs_3","object":"checkout.session","customer":"cus_d","subscription":"sub_d","payment_status":"paid","client_reference_id":%q}`, su.UserId))
+	subEvent := func(status string) {
+		stripeEvent(t, svc, "customer.subscription.updated", fmt.Sprintf(`{"id":"sub_d","object":"subscription","status":%q}`, status))
+	}
+
+	subEvent("past_due")
+	if got := userPlan(t, su.UserId); got != "pro" {
+		t.Errorf("past_due: plan = %q, want pro (grace period)", got)
+	}
+	subEvent("unpaid")
+	if got := userPlan(t, su.UserId); got != "free" {
+		t.Errorf("unpaid: plan = %q, want free", got)
+	}
+	subEvent("active")
+	if got := userPlan(t, su.UserId); got != "pro" {
+		t.Errorf("recovered: plan = %q, want pro", got)
 	}
 }

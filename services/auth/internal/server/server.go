@@ -825,9 +825,13 @@ func (s *Server) CreateStripeCheckoutSession(ctx context.Context, req *authv1.Cr
 			return nil, status.Error(codes.Internal, "checkout failed")
 		}
 		customerID = c.ID
-		if err := s.store.SetStripeCustomerID(ctx, req.UserId, customerID); err != nil {
+		// A parallel checkout may have won; use its customer so the user keeps one.
+		stored, err := s.store.SetStripeCustomerIDIfUnset(ctx, req.UserId, customerID)
+		if err != nil {
+			// Non-fatal: the webhook resolves the user from client_reference_id.
 			s.log.Error("store stripe customer id", "err", err)
-			// Non-fatal: the customer was created in Stripe; we'll find it via webhook.
+		} else {
+			customerID = stored
 		}
 	}
 
@@ -841,6 +845,10 @@ func (s *Server) CreateStripeCheckoutSession(ctx context.Context, req *authv1.Cr
 		},
 		SuccessURL: stripe.String(s.stripe.SuccessURL),
 		CancelURL:  stripe.String(s.stripe.CancelURL),
+		// The webhook finds the user from these even if the customer id was never stored.
+		ClientReferenceID: stripe.String(req.UserId),
+		Metadata:          map[string]string{"user_id": req.UserId},
+		SubscriptionData:  &stripe.CheckoutSessionCreateSubscriptionDataParams{Metadata: map[string]string{"user_id": req.UserId}},
 	}
 	sess, err := s.stripeClient.V1CheckoutSessions.Create(sessionCtx, params)
 	if err != nil {
@@ -865,9 +873,9 @@ func (s *Server) HandleStripeWebhook(ctx context.Context, req *authv1.HandleStri
 	}
 
 	switch event.Type {
-	case "checkout.session.completed":
+	case "checkout.session.completed", "checkout.session.async_payment_succeeded":
 		if err := s.handleCheckoutCompleted(ctx, &event); err != nil {
-			s.log.Error("handle checkout.session.completed", "err", err)
+			s.log.Error("handle checkout session", "type", event.Type, "err", err)
 			return nil, status.Error(codes.Internal, "webhook processing failed")
 		}
 	case "customer.subscription.updated":
@@ -896,10 +904,16 @@ func (s *Server) handleCheckoutCompleted(ctx context.Context, event *stripe.Even
 	if sess.Subscription == nil || sess.Customer == nil {
 		return nil
 	}
+	// Async methods complete the session before the money arrives; async_payment_succeeded follows.
+	if sess.PaymentStatus != stripe.CheckoutSessionPaymentStatusPaid &&
+		sess.PaymentStatus != stripe.CheckoutSessionPaymentStatusNoPaymentRequired {
+		s.log.Info("stripe checkout not paid yet, waiting", "session_id", sess.ID, "payment_status", sess.PaymentStatus)
+		return nil
+	}
 
-	user, err := s.store.GetUserByStripeCustomerID(ctx, sess.Customer.ID)
+	user, err := s.stripeCheckoutUser(ctx, &sess)
 	if err != nil {
-		return fmt.Errorf("get user by stripe customer id %s: %w", sess.Customer.ID, err)
+		return err
 	}
 
 	sub := &domain.Subscription{
@@ -922,16 +936,57 @@ func (s *Server) handleCheckoutCompleted(ctx context.Context, event *stripe.Even
 	return nil
 }
 
+// stripeCheckoutUser resolves the paying user from the id we put on the session, falling back
+// to the customer id for sessions created before that. It backfills a missing customer id.
+func (s *Server) stripeCheckoutUser(ctx context.Context, sess *stripe.CheckoutSession) (*domain.User, error) {
+	userID := sess.ClientReferenceID
+	if userID == "" {
+		userID = sess.Metadata["user_id"]
+	}
+	if userID == "" {
+		user, err := s.store.GetUserByStripeCustomerID(ctx, sess.Customer.ID)
+		if err != nil {
+			return nil, fmt.Errorf("get user by stripe customer id %s: %w", sess.Customer.ID, err)
+		}
+		return user, nil
+	}
+
+	user, err := s.store.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get user %s from checkout reference: %w", userID, err)
+	}
+	if user.StripeCustomerID == nil {
+		if _, err := s.store.SetStripeCustomerIDIfUnset(ctx, user.ID, sess.Customer.ID); err != nil {
+			s.log.Warn("backfill stripe customer id", "user_id", user.ID, "err", err)
+		}
+	}
+	return user, nil
+}
+
 func (s *Server) handleSubscriptionUpdated(ctx context.Context, event *stripe.Event) error {
 	var sub stripe.Subscription
 	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
 		return fmt.Errorf("unmarshal subscription: %w", err)
 	}
-	// Active and trialing statuses keep the user on pro; anything else cancels.
-	if sub.Status == stripe.SubscriptionStatusActive || sub.Status == stripe.SubscriptionStatusTrialing {
-		return nil
+	switch sub.Status {
+	case stripe.SubscriptionStatusActive, stripe.SubscriptionStatusTrialing, stripe.SubscriptionStatusPastDue:
+		// past_due is a grace period: Stripe keeps retrying the charge, and moves to unpaid/canceled if it fails.
+		return s.reactivateStripeSubscription(ctx, sub.ID)
+	default:
+		return s.cancelStripeSubscription(ctx, sub.ID)
 	}
-	return s.cancelStripeSubscription(ctx, sub.ID)
+}
+
+func (s *Server) reactivateStripeSubscription(ctx context.Context, stripeSubID string) error {
+	userID, err := s.store.ReactivateSubscriptionBySourceRef(ctx, stripeSubID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil // already active or unknown
+		}
+		return fmt.Errorf("reactivate subscription %s: %w", stripeSubID, err)
+	}
+	s.log.Info("stripe subscription reactivated", "user_id", userID, "subscription_id", stripeSubID)
+	return nil
 }
 
 func (s *Server) handleSubscriptionDeleted(ctx context.Context, event *stripe.Event) error {
@@ -949,9 +1004,6 @@ func (s *Server) cancelStripeSubscription(ctx context.Context, stripeSubID strin
 			return nil // already cancelled or unknown — safe to ignore
 		}
 		return fmt.Errorf("cancel subscription %s: %w", stripeSubID, err)
-	}
-	if err := s.store.RecalculateUserPlan(ctx, userID); err != nil {
-		return fmt.Errorf("recalculate plan for user %s: %w", userID, err)
 	}
 	s.log.Info("stripe subscription cancelled", "user_id", userID, "subscription_id", stripeSubID)
 	return nil

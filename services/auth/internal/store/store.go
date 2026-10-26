@@ -503,19 +503,22 @@ func (s *Store) RevokeAllSessions(ctx context.Context, userID string) (int64, er
 
 // ── Stripe ────────────────────────────────────────────────────────────────────
 
-// SetStripeCustomerID stores the Stripe customer ID for a user.
-func (s *Store) SetStripeCustomerID(ctx context.Context, userID, customerID string) error {
-	tag, err := s.db.Exec(ctx, `
-		UPDATE auth.users SET stripe_customer_id = $2, updated_at = now() WHERE id = $1`,
+// SetStripeCustomerIDIfUnset stores customerID unless the user already has one, and returns
+// the id in effect. Concurrent checkouts thus converge on a single Stripe customer.
+func (s *Store) SetStripeCustomerIDIfUnset(ctx context.Context, userID, customerID string) (string, error) {
+	var stored string
+	err := s.db.QueryRow(ctx, `
+		UPDATE auth.users SET stripe_customer_id = COALESCE(stripe_customer_id, $2), updated_at = now()
+		WHERE id = $1 RETURNING stripe_customer_id`,
 		userID, customerID,
-	)
+	).Scan(&stored)
 	if err != nil {
-		return fmt.Errorf("set stripe customer id: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("set stripe customer id: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return stored, nil
 }
 
 // GetUserByStripeCustomerID looks up a user by their Stripe customer ID.
@@ -621,20 +624,56 @@ func (s *Store) GetSubscriptionBySourceRef(ctx context.Context, sourceRef string
 	return &sub, nil
 }
 
-// CancelSubscriptionBySourceRef marks a subscription as cancelled by its source_ref.
+const recalculatePlanSQL = `
+	UPDATE auth.users SET
+	  plan = CASE
+	    WHEN EXISTS (
+	      SELECT 1 FROM auth.subscriptions
+	      WHERE user_id = $1 AND status = 'active'
+	    ) THEN 'pro'
+	    ELSE 'free'
+	  END,
+	  updated_at = now()
+	WHERE id = $1`
+
+// CancelSubscriptionBySourceRef cancels a Stripe subscription and recalculates the user's plan
+// in one transaction, so a retried webhook never finds the row changed but the plan stale.
+// Returns the user id, or ErrNotFound if there is no active subscription to cancel.
 func (s *Store) CancelSubscriptionBySourceRef(ctx context.Context, sourceRef string) (string, error) {
+	return s.moveSubscription(ctx, sourceRef, "active", "cancelled")
+}
+
+// ReactivateSubscriptionBySourceRef is the inverse, for a payment that recovers.
+// Returns ErrNotFound if there is no cancelled subscription to reactivate.
+func (s *Store) ReactivateSubscriptionBySourceRef(ctx context.Context, sourceRef string) (string, error) {
+	return s.moveSubscription(ctx, sourceRef, "cancelled", "active")
+}
+
+func (s *Store) moveSubscription(ctx context.Context, sourceRef, from, to string) (string, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+
 	var userID string
-	err := s.db.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE auth.subscriptions
-		SET status = 'cancelled', updated_at = now()
-		WHERE source_ref = $1 AND status = 'active'
-		RETURNING user_id`, sourceRef,
+		SET status = $3, updated_at = now()
+		WHERE source = 'stripe' AND source_ref = $1 AND status = $2
+		RETURNING user_id`, sourceRef, from, to,
 	).Scan(&userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound
 		}
-		return "", fmt.Errorf("cancel subscription: %w", err)
+		return "", fmt.Errorf("move subscription %s -> %s: %w", from, to, err)
+	}
+	if _, err := tx.Exec(ctx, recalculatePlanSQL, userID); err != nil {
+		return "", fmt.Errorf("recalculate user plan: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit: %w", err)
 	}
 	return userID, nil
 }
@@ -643,19 +682,7 @@ func (s *Store) CancelSubscriptionBySourceRef(ctx context.Context, sourceRef str
 // exists for the user, otherwise downgrades to 'free'. Safe to call after any
 // subscription status change.
 func (s *Store) RecalculateUserPlan(ctx context.Context, userID string) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE auth.users SET
-		  plan = CASE
-		    WHEN EXISTS (
-		      SELECT 1 FROM auth.subscriptions
-		      WHERE user_id = $1 AND status = 'active'
-		    ) THEN 'pro'
-		    ELSE 'free'
-		  END,
-		  updated_at = now()
-		WHERE id = $1`, userID,
-	)
-	if err != nil {
+	if _, err := s.db.Exec(ctx, recalculatePlanSQL, userID); err != nil {
 		return fmt.Errorf("recalculate user plan: %w", err)
 	}
 	return nil
