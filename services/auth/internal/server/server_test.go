@@ -1088,3 +1088,28 @@ func TestStripeSubscription_PastDueIsGraceAndRecoveryRestoresPro(t *testing.T) {
 		t.Errorf("recovered: plan = %q, want pro", got)
 	}
 }
+
+func TestLogin_EmailCaseDoesNotMatter(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "Carol@Test.com", "Passw0rd1", "Carol")
+
+	resp, err := svc.Login(context.Background(), &authv1.LoginRequest{Email: "CAROL@test.com", Password: "Passw0rd1",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "1.2.3.4", UserAgent: "Go-test/1.0"}})
+	if err != nil || resp.UserId != su.UserId {
+		t.Fatalf("Login with another case = %v, %v; want the same account", resp, err)
+	}
+	_, err = svc.SignUp(context.Background(), &authv1.SignUpRequest{Email: "carol@test.com", Password: "Passw0rd1", Name: "Dup",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "1.2.3.4", UserAgent: "Go-test/1.0"}})
+	if grpcCode(err) != codes.AlreadyExists {
+		t.Errorf("second signup in another case: want AlreadyExists, got %v", err)
+	}
+}
+
+func TestSignUp_WhitespaceOnlyEmailIsRejected(t *testing.T) {
+	svc, _ := newServer(t)
+	_, err := svc.SignUp(context.Background(), &authv1.SignUpRequest{Email: "   ", Password: "Passw0rd1", Name: "Nobody",
+		ClientInfo: &authv1.ClientInfo{IpAddress: "1.2.3.4", UserAgent: "Go-test/1.0"}})
+	if grpcCode(err) != codes.InvalidArgument {
+		t.Errorf("whitespace-only email: want InvalidArgument, got %v", err)
+	}
+}

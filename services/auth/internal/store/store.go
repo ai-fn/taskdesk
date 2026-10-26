@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fsociety/todo/services/auth/internal/domain"
@@ -17,6 +18,7 @@ import (
 
 var ErrNotFound = errors.New("not found")
 var ErrEmailTaken = errors.New("email already registered")
+var ErrInvalidEmail = errors.New("invalid email")
 var ErrSubscriptionAlreadyExists = errors.New("subscription already exists")
 var ErrPromoCodeNotFound = errors.New("promo code not found")
 var ErrPromoCodeDisabled = errors.New("promo code is disabled")
@@ -33,10 +35,20 @@ func New(db *pgxpool.Pool) *Store {
 	return &Store{db: db}
 }
 
+// NormalizeEmail is the canonical form of an address: accounts are matched case-insensitively.
+func NormalizeEmail(email string) string { return strings.ToLower(strings.TrimSpace(email)) }
+
+// CreateUser stores the user with a lowercased email (u.Email is updated to match). The NOT EXISTS
+// also refuses an address held under another casing by a pre-normalization row.
 func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
-	_, err := s.db.Exec(ctx, `
+	u.Email = NormalizeEmail(u.Email)
+	if u.Email == "" {
+		return ErrInvalidEmail
+	}
+	tag, err := s.db.Exec(ctx, `
 		INSERT INTO auth.users (id, email, name, password_hash, language, email_verified, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8
+		WHERE NOT EXISTS (SELECT 1 FROM auth.users WHERE lower(email) = $2)`,
 		u.ID, u.Email, u.Name, u.PasswordHash, u.Language, u.EmailVerified, u.CreatedAt, u.UpdatedAt,
 	)
 	// plan and stripe_customer_id default to 'free'/NULL via column defaults
@@ -46,14 +58,22 @@ func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
 		}
 		return fmt.Errorf("insert user: %w", err)
 	}
+	if tag.RowsAffected() == 0 {
+		return ErrEmailTaken
+	}
 	return nil
 }
 
+// GetUserByEmail matches case-insensitively; if legacy rows differ only by case, the lowercase
+// row wins, then the oldest. Operators must merge such duplicates (see migration 000012).
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
 	var u domain.User
+	email = NormalizeEmail(email)
 	err := s.db.QueryRow(ctx, `
 		SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at
-		FROM auth.users WHERE email = $1`, email,
+		FROM auth.users WHERE lower(email) = $1
+		ORDER BY (email = $1) DESC, created_at
+		LIMIT 1`, email,
 	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -271,9 +291,14 @@ func (s *Store) UpdateUserLanguage(ctx context.Context, userID, lang string) err
 
 // CreateUserNoPassword inserts an OAuth-only user (password_hash NULL).
 func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error {
-	_, err := s.db.Exec(ctx, `
+	u.Email = NormalizeEmail(u.Email)
+	if u.Email == "" {
+		return ErrInvalidEmail
+	}
+	tag, err := s.db.Exec(ctx, `
 		INSERT INTO auth.users (id, email, name, password_hash, language, email_verified, created_at, updated_at)
-		VALUES ($1, $2, $3, NULL, $4, true, $5, $6)`,
+		SELECT $1, $2, $3, NULL, $4, true, $5, $6
+		WHERE NOT EXISTS (SELECT 1 FROM auth.users WHERE lower(email) = $2)`,
 		u.ID, u.Email, u.Name, u.Language, u.CreatedAt, u.UpdatedAt,
 	)
 	// plan defaults to 'free' via column default
@@ -282,6 +307,9 @@ func (s *Store) CreateUserNoPassword(ctx context.Context, u *domain.User) error 
 			return ErrEmailTaken
 		}
 		return fmt.Errorf("insert oauth user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrEmailTaken
 	}
 	return nil
 }
@@ -313,7 +341,7 @@ func (s *Store) LinkOAuth(ctx context.Context, userID, provider, providerUserID,
 		INSERT INTO auth.oauth_identities (provider, provider_user_id, user_id, email)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (provider, provider_user_id) DO NOTHING`,
-		provider, providerUserID, userID, email,
+		provider, providerUserID, userID, NormalizeEmail(email),
 	)
 	if err != nil {
 		return fmt.Errorf("link oauth: %w", err)
@@ -731,7 +759,7 @@ func (s *Store) RedeemPromoCode(ctx context.Context, pc *domain.PromoCode, userI
 	if locked.Disabled {
 		return ErrPromoCodeDisabled
 	}
-	if locked.AllowedEmail != nil && *locked.AllowedEmail != userEmail {
+	if locked.AllowedEmail != nil && NormalizeEmail(*locked.AllowedEmail) != NormalizeEmail(userEmail) {
 		return ErrPromoCodeEmailMismatch
 	}
 

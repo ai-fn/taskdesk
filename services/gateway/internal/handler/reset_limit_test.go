@@ -14,6 +14,8 @@ import (
 	"github.com/fsociety/todo/services/gateway/internal/handler"
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestResetPassword_GuessesAreCappedPerEmailAcrossIPs(t *testing.T) {
@@ -51,5 +53,31 @@ func TestResetPassword_GuessesAreCappedPerEmailAcrossIPs(t *testing.T) {
 	}
 	if code := post("someone-else@example.com", 51); code != http.StatusNoContent {
 		t.Errorf("other account: status %d, want 204", code)
+	}
+}
+
+func TestLogin_EmailCaseVariantsShareOneLimiter(t *testing.T) {
+	calls := 0
+	fake := &fakeAuthClient{login: func(context.Context, *authv1.LoginRequest, ...grpc.CallOption) (*authv1.LoginResponse, error) {
+		calls++
+		return nil, status.Error(codes.Unauthenticated, "invalid email or password")
+	}}
+	h := handler.NewAuthHandler(fake, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), false)
+	defer h.Stop()
+	r := chi.NewRouter()
+	r.Post("/api/v1/auth/login", h.Login)
+
+	var last int
+	for i := range 6 {
+		email := []string{"Target@X.com", "target@x.com", "TARGET@X.COM"}[i%3]
+		body := fmt.Sprintf(`{"email":%q,"password":"guess%d"}`, email, i)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("10.1.0.%d", i+1))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		last = w.Code
+	}
+	if last != http.StatusTooManyRequests || calls != 5 {
+		t.Errorf("6th guess: status=%d, backend calls=%d; want 429 and 5 (case variants must not dodge the 5/min cap)", last, calls)
 	}
 }

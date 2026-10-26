@@ -73,7 +73,7 @@ func New(st *store.Store, tm *tokens.Maker, log *slog.Logger, producer *pkgkafka
 // ── SignUp ────────────────────────────────────────────────────────────────────
 
 func (s *Server) SignUp(ctx context.Context, req *authv1.SignUpRequest) (*authv1.SignUpResponse, error) {
-	if req.Email == "" || req.Password == "" || req.Name == "" {
+	if store.NormalizeEmail(req.Email) == "" || req.Password == "" || req.Name == "" {
 		return nil, status.Error(codes.InvalidArgument, "email, password and name are required")
 	}
 	if err := password.Validate(req.Password); err != nil {
@@ -125,7 +125,7 @@ func (s *Server) SignUp(ctx context.Context, req *authv1.SignUpRequest) (*authv1
 // ── Login ─────────────────────────────────────────────────────────────────────
 
 func (s *Server) Login(ctx context.Context, req *authv1.LoginRequest) (*authv1.LoginResponse, error) {
-	if req.Email == "" || req.Password == "" {
+	if store.NormalizeEmail(req.Email) == "" || req.Password == "" {
 		return nil, status.Error(codes.InvalidArgument, "email and password are required")
 	}
 
@@ -362,7 +362,7 @@ func (s *Server) GetUserByID(ctx context.Context, req *authv1.GetUserByIDRequest
 //     unverified email is claimed first (see linkExisting).
 //  3. Otherwise → create user (no password) + link identity, created=true.
 func (s *Server) OAuthSignIn(ctx context.Context, req *authv1.OAuthSignInRequest) (*authv1.OAuthSignInResponse, error) {
-	if req.Provider == "" || req.ProviderUserId == "" || req.Email == "" {
+	if req.Provider == "" || req.ProviderUserId == "" || store.NormalizeEmail(req.Email) == "" {
 		return nil, status.Error(codes.InvalidArgument, "provider, provider_user_id, email are required")
 	}
 
@@ -608,7 +608,7 @@ func deviceLabel(parsed ua.UserAgent) string {
 
 // RequestPasswordReset always returns OK to avoid user enumeration via email.
 func (s *Server) RequestPasswordReset(ctx context.Context, req *authv1.RequestPasswordResetRequest) (*authv1.RequestPasswordResetResponse, error) {
-	if req.Email == "" {
+	if store.NormalizeEmail(req.Email) == "" {
 		return nil, status.Error(codes.InvalidArgument, "email is required")
 	}
 
@@ -627,7 +627,7 @@ func (s *Server) RequestPasswordReset(ctx context.Context, req *authv1.RequestPa
 // ── ResetPassword ─────────────────────────────────────────────────────────────
 
 func (s *Server) ResetPassword(ctx context.Context, req *authv1.ResetPasswordRequest) (*authv1.ResetPasswordResponse, error) {
-	if req.Email == "" || req.Code == "" || req.NewPassword == "" {
+	if store.NormalizeEmail(req.Email) == "" || req.Code == "" || req.NewPassword == "" {
 		return nil, status.Error(codes.InvalidArgument, "email, code and new_password are required")
 	}
 	if err := password.Validate(req.NewPassword); err != nil {
@@ -821,7 +821,7 @@ func (s *Server) CreateStripeCheckoutSession(ctx context.Context, req *authv1.Cr
 		customerCtx, customerCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer customerCancel()
 		c, err := s.stripeClient.V1Customers.Create(customerCtx, &stripe.CustomerCreateParams{
-			Email:    stripe.String(req.Email),
+			Email:    stripe.String(user.Email),
 			Metadata: map[string]string{"user_id": req.UserId},
 		})
 		if err != nil {

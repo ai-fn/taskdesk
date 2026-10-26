@@ -821,3 +821,102 @@ func TestMoveSubscription_KeepsPlanInSyncAndRespectsOtherSources(t *testing.T) {
 		t.Errorf("plan with a live promo subscription = %q, want pro", got)
 	}
 }
+
+func TestEmails_AreMatchedCaseInsensitively(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	u := makeUser("u100", "  Alice@Example.COM ")
+	mustCreateUser(t, s, u)
+	if u.Email != "alice@example.com" {
+		t.Errorf("stored email = %q, want lowercased and trimmed", u.Email)
+	}
+
+	for _, probe := range []string{"alice@example.com", "ALICE@EXAMPLE.COM", " Alice@Example.com"} {
+		got, err := s.GetUserByEmail(ctx, probe)
+		if err != nil || got.ID != "u100" {
+			t.Errorf("GetUserByEmail(%q) = %v, %v; want u100", probe, got, err)
+		}
+	}
+	if err := s.CreateUser(ctx, makeUser("u101", "ALICE@example.com")); !errors.Is(err, store.ErrEmailTaken) {
+		t.Errorf("same address in another case: err = %v, want ErrEmailTaken", err)
+	}
+	if err := s.CreateUserNoPassword(ctx, makeUser("u102", "Alice@example.com")); !errors.Is(err, store.ErrEmailTaken) {
+		t.Errorf("oauth signup with another case: err = %v, want ErrEmailTaken", err)
+	}
+}
+
+func TestEmails_LegacyMixedCaseRowIsStillFoundAndBlocksDuplicates(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	// A row written before normalization.
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO auth.users (id, email, name, language) VALUES ('legacy1', 'Bob@Example.com', 'Bob', 'en')`); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetUserByEmail(ctx, "bob@example.com")
+	if err != nil || got.ID != "legacy1" {
+		t.Fatalf("GetUserByEmail = %v, %v; want the legacy row", got, err)
+	}
+	if err := s.CreateUser(ctx, makeUser("u103", "bob@example.com")); !errors.Is(err, store.ErrEmailTaken) {
+		t.Errorf("duplicate of a legacy row: err = %v, want ErrEmailTaken", err)
+	}
+}
+
+func TestRedeemPromoCode_AllowedEmailIgnoresCase(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateUser(t, s, makeUser("u104", "promo@example.com"))
+	allowed, maxUse := "Promo@Example.com", 5
+	pc := &domain.PromoCode{ID: uuid.NewString(), Code: "CASE1", AllowedEmail: &allowed, MaxUsageCount: &maxUse, MaxUsagePerUser: 1}
+	if err := s.CreatePromoCode(ctx, pc); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RedeemPromoCode(ctx, pc, "u104", "PROMO@example.com", uuid.NewString()); err != nil {
+		t.Errorf("redeem with a different case: %v", err)
+	}
+}
+
+func TestMigration000012_LowercasesOnlyWhatCannotCollide(t *testing.T) {
+	_ = newStore(t)
+	ctx := context.Background()
+	sql, err := os.ReadFile("../../../../migrations/auth/000012_users_email_lowercase.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range [][2]string{{"m1", "Zed@Example.com"}, {"m2", "Dup@Example.com"}, {"m3", "dup@example.com"}} {
+		if _, err := testPool.Exec(ctx, `INSERT INTO auth.users (id, email, name, language) VALUES ($1, $2, 'n', 'en')`, r[0], r[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := testPool.Exec(ctx, string(sql)); err != nil {
+		t.Fatalf("migration: %v", err)
+	}
+
+	emails := map[string]string{}
+	rows, err := testPool.Query(ctx, `SELECT id, email FROM auth.users ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, email string
+		if err := rows.Scan(&id, &email); err != nil {
+			t.Fatal(err)
+		}
+		emails[id] = email
+	}
+	if emails["m1"] != "zed@example.com" {
+		t.Errorf("non-colliding row = %q, want lowercased", emails["m1"])
+	}
+	if emails["m2"] != "Dup@Example.com" || emails["m3"] != "dup@example.com" {
+		t.Errorf("colliding rows were rewritten: %q / %q (they need a human merge)", emails["m2"], emails["m3"])
+	}
+}
+
+func TestCreateUser_EmptyEmailAfterNormalizationIsRejected(t *testing.T) {
+	s := newStore(t)
+	if err := s.CreateUser(context.Background(), makeUser("u110", "  ")); !errors.Is(err, store.ErrInvalidEmail) {
+		t.Errorf("err = %v, want ErrInvalidEmail", err)
+	}
+}

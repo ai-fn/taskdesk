@@ -85,8 +85,8 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
-	if !h.emailLimiter.Allow(req.Email) {
-		h.log.Warn("signup rate limited by email", "email", req.Email)
+	if !h.emailLimiter.Allow(normalizeEmail(req.Email)) {
+		h.log.Warn("signup rate limited by email")
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -137,8 +137,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
-	if !h.emailLimiter.Allow(req.Email) {
-		h.log.Warn("login rate limited by email", "email", req.Email)
+	if !h.emailLimiter.Allow(normalizeEmail(req.Email)) {
+		h.log.Warn("login rate limited by email")
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -223,8 +223,8 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
-	if req.Email != "" && !h.resetEmailLimiter.Allow(req.Email) {
-		h.log.Warn("forgot password rate limited by email", "email", req.Email)
+	if req.Email != "" && !h.resetEmailLimiter.Allow(normalizeEmail(req.Email)) {
+		h.log.Warn("forgot password rate limited by email")
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -259,7 +259,7 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Rotating IPs must not lift the per-account cap on code guesses.
-	if req.Email != "" && !h.resetConfirmLimiter.Allow(strings.ToLower(strings.TrimSpace(req.Email))) {
+	if req.Email != "" && !h.resetConfirmLimiter.Allow(normalizeEmail(req.Email)) {
 		h.log.Warn("reset password rate limited by email")
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
@@ -278,6 +278,10 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+// normalizeEmail is the key for per-account limiters: auth treats addresses case-insensitively,
+// so variants must share one budget.
+func normalizeEmail(e string) string { return strings.ToLower(strings.TrimSpace(e)) }
 
 func setRefreshCookie(w http.ResponseWriter, token string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
