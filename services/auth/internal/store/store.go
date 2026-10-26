@@ -230,32 +230,42 @@ func (s *Store) RevokeOtherSessions(ctx context.Context, userID, currentSessionI
 	return tag.RowsAffected(), nil
 }
 
-// ListUsers returns users, optionally filtered by plan ("" = all).
-// Used by scheduler for fan-out (planFilter="pro") and by ListUserIDs RPC.
-func (s *Store) ListUsers(ctx context.Context, planFilter string) ([]*domain.User, error) {
-	q := `SELECT id, email, name, password_hash, language, email_verified, plan, stripe_customer_id, created_at, updated_at FROM auth.users`
-	var args []any
-	if planFilter != "" {
-		q += ` WHERE plan = $1`
-		args = append(args, planFilter)
-	}
-	q += ` ORDER BY created_at`
+// UserSummary is the listing view of a user: no credentials or billing ids.
+type UserSummary struct {
+	ID, Email, Name, Language, Plan string
+	EmailVerified                   bool
+}
 
-	rows, err := s.db.Query(ctx, q, args...)
+// ListUserSummaries returns up to limit users with id > afterID in id order, optionally filtered
+// by plan ("" = all), plus whether more remain. Used by the scheduler and AI backfills.
+func (s *Store) ListUserSummaries(ctx context.Context, planFilter, afterID string, limit int) ([]UserSummary, bool, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, email, name, language, email_verified, plan
+		FROM auth.users
+		WHERE id > $1 AND ($2 = '' OR plan = $2)
+		ORDER BY id
+		LIMIT $3`, afterID, planFilter, limit+1)
 	if err != nil {
-		return nil, fmt.Errorf("list users: %w", err)
+		return nil, false, fmt.Errorf("list users: %w", err)
 	}
 	defer rows.Close()
 
-	var users []*domain.User
+	users := make([]UserSummary, 0, limit)
 	for rows.Next() {
-		var u domain.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Language, &u.EmailVerified, &u.Plan, &u.StripeCustomerID, &u.CreatedAt, &u.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan user: %w", err)
+		var u UserSummary
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Language, &u.EmailVerified, &u.Plan); err != nil {
+			return nil, false, fmt.Errorf("scan user: %w", err)
 		}
-		users = append(users, &u)
+		users = append(users, u)
 	}
-	return users, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(users) > limit
+	if more {
+		users = users[:limit]
+	}
+	return users, more, nil
 }
 
 // GetUserLanguage returns only the language preference for the given user.

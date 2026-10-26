@@ -63,6 +63,7 @@ type fakeAuth struct {
 	plans      map[string]string // user id -> plan
 	getErr     error
 	listFilter string
+	pageSize   int // 0 = everything in one response
 }
 
 func (f *fakeAuth) GetUserByID(_ context.Context, in *authv1.GetUserByIDRequest, _ ...grpc.CallOption) (*authv1.GetUserByIDResponse, error) {
@@ -81,7 +82,20 @@ func (f *fakeAuth) ListUserIDs(_ context.Context, in *authv1.ListUserIDsRequest,
 		}
 	}
 	sort.Slice(users, func(i, j int) bool { return users[i].UserId < users[j].UserId })
-	return &authv1.ListUserIDsResponse{Users: users}, nil
+	if f.pageSize == 0 {
+		return &authv1.ListUserIDsResponse{Users: users}, nil
+	}
+	var page []*authv1.UserSummary // the token is the last id served
+	for _, u := range users {
+		if u.UserId > in.PageToken && len(page) < f.pageSize {
+			page = append(page, u)
+		}
+	}
+	resp := &authv1.ListUserIDsResponse{Users: page}
+	if len(page) == f.pageSize && page[len(page)-1].UserId != users[len(users)-1].UserId {
+		resp.NextPageToken = page[len(page)-1].UserId
+	}
+	return resp, nil
 }
 
 type fakeTodo struct {
@@ -345,5 +359,22 @@ func TestBackfill_StopsQuietlyWhenContextCancelled(t *testing.T) {
 
 	if emb.calls > 1 || todo.upserts != 0 {
 		t.Errorf("voyage requests=%d upserts=%d after cancel, want at most the first request and no work for later users", emb.calls, todo.upserts)
+	}
+}
+
+func TestBackfill_WalksEveryPageOfUsers(t *testing.T) {
+	emb := &fakeEmbedder{}
+	plans, tasks := map[string]string{}, map[string][]string{}
+	for i := 0; i < 7; i++ {
+		id := fmt.Sprintf("u%d", i)
+		plans[id], tasks[id] = "pro", []string{"t-" + id}
+	}
+	todo := &fakeTodo{tasks: tasks, embedded: map[string]bool{}}
+	h := newHandler(emb, &fakeAuth{plans: plans, pageSize: 3}, todo)
+
+	h.Backfill(context.Background())
+
+	if emb.texts != 7 {
+		t.Errorf("embedded %d tasks, want 7: users beyond the first page of 3 were skipped", emb.texts)
 	}
 }

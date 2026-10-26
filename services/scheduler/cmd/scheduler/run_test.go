@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,6 +25,7 @@ type fakeAuth struct {
 	users      []*authv1.UserSummary
 	err        error
 	gotFilters []string
+	pageSize   int // 0 = everything in one response; the token is the next index
 }
 
 func (f *fakeAuth) ListUserIDs(_ context.Context, in *authv1.ListUserIDsRequest, _ ...grpc.CallOption) (*authv1.ListUserIDsResponse, error) {
@@ -31,7 +33,19 @@ func (f *fakeAuth) ListUserIDs(_ context.Context, in *authv1.ListUserIDsRequest,
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &authv1.ListUserIDsResponse{Users: f.users}, nil
+	if f.pageSize == 0 {
+		return &authv1.ListUserIDsResponse{Users: f.users}, nil
+	}
+	start := 0
+	if in.PageToken != "" {
+		start, _ = strconv.Atoi(in.PageToken)
+	}
+	end := min(start+f.pageSize, len(f.users))
+	resp := &authv1.ListUserIDsResponse{Users: f.users[start:end]}
+	if end < len(f.users) {
+		resp.NextPageToken = strconv.Itoa(end)
+	}
+	return resp, nil
 }
 
 // fakeAI keeps plans in memory so a second run sees what the first one generated.
@@ -228,5 +242,16 @@ func TestGenerateAll_EmailsOnlyVerifiedAddresses(t *testing.T) {
 	}
 	if ai.gotEmail["ok"] != "ok@x.com" || ai.gotEmail["unv"] != "" {
 		t.Errorf("emails sent to ai = %v, want ok@x.com only for the verified user", ai.gotEmail)
+	}
+}
+
+func TestGenerateAll_WalksEveryPageOfUsers(t *testing.T) {
+	ai := newFakeAI()
+	res, err := generateAll(context.Background(), quiet(), &fakeAuth{users: users("a", "b", "c", "d", "e"), pageSize: 2}, ai, 2, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Total != 5 || res.Generated != 5 {
+		t.Errorf("result = %+v, want all 5 users across 3 pages", res)
 	}
 }

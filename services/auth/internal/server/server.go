@@ -307,13 +307,24 @@ func (s *Server) ValidateSession(ctx context.Context, req *authv1.ValidateSessio
 
 // ── ListUserIDs ───────────────────────────────────────────────────────────────
 
+const (
+	defaultUserPage = 500
+	maxUserPage     = 1000
+)
+
 func (s *Server) ListUserIDs(ctx context.Context, req *authv1.ListUserIDsRequest) (*authv1.ListUserIDsResponse, error) {
-	users, err := s.store.ListUsers(ctx, req.PlanFilter)
+	limit := int(req.PageSize)
+	if limit <= 0 {
+		limit = defaultUserPage
+	}
+	limit = min(limit, maxUserPage)
+
+	users, more, err := s.store.ListUserSummaries(ctx, req.PlanFilter, req.PageToken, limit)
 	if err != nil {
 		s.log.Error("list users", "err", err)
 		return nil, status.Error(codes.Internal, "list users failed")
 	}
-	resp := &authv1.ListUserIDsResponse{}
+	resp := &authv1.ListUserIDsResponse{Users: make([]*authv1.UserSummary, 0, len(users))}
 	for _, u := range users {
 		resp.Users = append(resp.Users, &authv1.UserSummary{
 			UserId:        u.ID,
@@ -323,6 +334,9 @@ func (s *Server) ListUserIDs(ctx context.Context, req *authv1.ListUserIDsRequest
 			EmailVerified: u.EmailVerified,
 			Plan:          u.Plan,
 		})
+	}
+	if more {
+		resp.NextPageToken = users[len(users)-1].ID
 	}
 	return resp, nil
 }

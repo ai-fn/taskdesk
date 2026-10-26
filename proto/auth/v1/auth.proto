@@ -21,7 +21,7 @@ service AuthService {
   // ValidateSession reports whether a session is still live (not revoked or expired).
   // The gateway's local verifier calls it, cached, so revocation reaches access tokens.
   rpc ValidateSession(ValidateSessionRequest) returns (ValidateSessionResponse);
-  // ListUserIDs returns all registered user IDs and emails.
+  // ListUserIDs returns registered user IDs and emails, one page at a time.
   // Used by the scheduler to fan out daily-plan generation.
   rpc ListUserIDs(ListUserIDsRequest) returns (ListUserIDsResponse);
   // GetUserByID returns a single user's public profile.
@@ -168,10 +168,16 @@ message ListUserIDsRequest {
   // plan_filter restricts results to users on the given plan.
   // Empty string returns all users.
   string plan_filter = 1;
+  // page_size caps users per response (default 500, max 1000).
+  int32  page_size   = 2;
+  // page_token is the previous response's next_page_token; empty starts from the top.
+  string page_token  = 3;
 }
 
 message ListUserIDsResponse {
   repeated UserSummary users = 1;
+  // next_page_token is empty on the last page.
+  string next_page_token = 2;
 }
 
 // ── GetUserByID ───────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/fsociety/todo/pkg/paging"
 	aiv1 "github.com/fsociety/todo/proto/gen/ai/v1"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	"google.golang.org/grpc"
@@ -31,11 +32,17 @@ type result struct{ Total, Generated, Skipped, Failed int }
 // generateAll generates today's plan for every pro user that lacks one. Users with no
 // tasks or an existing plan are skipped, so a job retry only redoes real failures.
 func generateAll(ctx context.Context, log *slog.Logger, auth userLister, ai planService, workers int, now time.Time) (result, error) {
-	usersResp, err := auth.ListUserIDs(ctx, &authv1.ListUserIDsRequest{PlanFilter: proPlan})
+	users, err := paging.All(ctx, func(ctx context.Context, token string) ([]*authv1.UserSummary, string, error) {
+		resp, err := auth.ListUserIDs(ctx, &authv1.ListUserIDsRequest{PlanFilter: proPlan, PageSize: 500, PageToken: token})
+		if err != nil {
+			return nil, "", err
+		}
+		return resp.Users, resp.NextPageToken, nil
+	})
 	if err != nil {
 		return result{}, err
 	}
-	res := result{Total: len(usersResp.Users)}
+	res := result{Total: len(users)}
 	log.Info("generating plans", "user_count", res.Total)
 
 	var generated, skipped, failed atomic.Int32
@@ -43,7 +50,7 @@ func generateAll(ctx context.Context, log *slog.Logger, auth userLister, ai plan
 	var wg sync.WaitGroup
 
 outer:
-	for _, u := range usersResp.Users {
+	for _, u := range users {
 		// A free slot would make the select below pick randomly once ctx is done.
 		if ctx.Err() != nil {
 			log.Warn("context cancelled, stopping dispatch")

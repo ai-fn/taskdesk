@@ -9,6 +9,7 @@ import (
 
 	"github.com/fsociety/todo/pkg/events"
 	pkgkafka "github.com/fsociety/todo/pkg/kafka"
+	"github.com/fsociety/todo/pkg/paging"
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -227,14 +228,20 @@ func (c *Consumer) Backfill(ctx context.Context) {
 	// permanently skip the backfill.
 	bCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	usersResp, err := c.authClient.ListUserIDs(bCtx, &authv1.ListUserIDsRequest{PlanFilter: "pro"}, grpc.WaitForReady(true))
+	users, err := paging.All(bCtx, func(ctx context.Context, token string) ([]*authv1.UserSummary, string, error) {
+		resp, err := c.authClient.ListUserIDs(ctx, &authv1.ListUserIDsRequest{PlanFilter: "pro", PageSize: 500, PageToken: token}, grpc.WaitForReady(true))
+		if err != nil {
+			return nil, "", err
+		}
+		return resp.Users, resp.NextPageToken, nil
+	})
 	if err != nil {
 		c.log.Error("scorer backfill: list users", "err", err)
 		return
 	}
 
 	total, done := 0, 0
-	for _, u := range usersResp.Users {
+	for _, u := range users {
 		userID := u.UserId
 		var pageToken string
 		for {

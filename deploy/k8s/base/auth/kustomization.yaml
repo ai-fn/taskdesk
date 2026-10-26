@@ -38,5 +38,7 @@ configMapGenerator:
       - 000011_users_email_lower_index.down.sql
       - 000012_users_email_lowercase.up.sql
       - 000012_users_email_lowercase.down.sql
+      - 000013_users_plan_id_index.up.sql
+      - 000013_users_plan_id_index.down.sql
 generatorOptions:
   disableNameSuffixHash: true

@@ -1113,3 +1113,40 @@ func TestSignUp_WhitespaceOnlyEmailIsRejected(t *testing.T) {
 		t.Errorf("whitespace-only email: want InvalidArgument, got %v", err)
 	}
 }
+
+func TestListUserIDs_PagesCoverEveryUserOnce(t *testing.T) {
+	svc, _ := newServer(t)
+	want := map[string]bool{}
+	for i := range 5 {
+		want[signUp(t, svc, fmt.Sprintf("page%d@test.com", i), "Passw0rd1", "P").UserId] = true
+	}
+
+	got, token, pages := map[string]bool{}, "", 0
+	for {
+		resp, err := svc.ListUserIDs(context.Background(), &authv1.ListUserIDsRequest{PageSize: 2, PageToken: token})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Users) > 2 {
+			t.Fatalf("page of %d users, want <= 2", len(resp.Users))
+		}
+		for _, u := range resp.Users {
+			if got[u.UserId] {
+				t.Errorf("user %s listed twice", u.UserId)
+			}
+			got[u.UserId] = true
+		}
+		pages++
+		if resp.NextPageToken == "" {
+			break
+		}
+		token = resp.NextPageToken
+	}
+	if len(got) != len(want) || pages != 3 {
+		t.Errorf("listed %d users in %d pages, want 5 in 3", len(got), pages)
+	}
+
+	if resp, err := svc.ListUserIDs(context.Background(), &authv1.ListUserIDsRequest{}); err != nil || len(resp.Users) != 5 || resp.NextPageToken != "" {
+		t.Errorf("default page: %d users, token %q, err %v; want all 5 and no token", len(resp.Users), resp.NextPageToken, err)
+	}
+}
