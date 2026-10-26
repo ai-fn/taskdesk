@@ -635,15 +635,17 @@ func (s *Server) ResetPassword(ctx context.Context, req *authv1.ResetPasswordReq
 		return nil, status.Error(codes.Unauthenticated, "invalid or expired code")
 	}
 
-	// Reject reuse of the current password. Checked before consuming the OTP
-	// code (so a rejected reuse doesn't burn the code); this leaks nothing new
-	// since Login is already an equivalent (email, password) oracle.
+	// The code is checked first so only its holder can learn whether a password is the
+	// current one; a rejected reuse leaves the code unconsumed for a retry.
+	vc, err := s.verifyCode(ctx, user.ID, events.PurposePasswordReset, req.Code)
+	if err != nil {
+		return nil, err
+	}
 	if user.PasswordHash != nil &&
 		bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.NewPassword)) == nil {
 		return nil, status.Error(codes.InvalidArgument, "new password must be different from your current password")
 	}
-
-	if err := s.verifyAndConsumeCode(ctx, user.ID, events.PurposePasswordReset, req.Code); err != nil {
+	if err := s.consumeCode(ctx, vc.ID); err != nil {
 		return nil, err
 	}
 
@@ -1007,36 +1009,48 @@ func (s *Server) issueCode(ctx context.Context, user *domain.User, purpose strin
 	return nil
 }
 
-// verifyAndConsumeCode spends an attempt on the latest live code, then compares the hash,
-// so concurrent guesses cannot exceed MaxAttempts. A wrong final guess burns the code.
-// Returns Unauthenticated on wrong/expired code, ResourceExhausted on the last wrong attempt.
-func (s *Server) verifyAndConsumeCode(ctx context.Context, userID, purpose, submitted string) error {
+// verifyCode spends an attempt on the latest live code, then compares the hash, so concurrent
+// guesses cannot exceed MaxAttempts. A wrong final guess burns the code. It does not consume a
+// correct one. Returns Unauthenticated on wrong/expired code, ResourceExhausted on the last wrong attempt.
+func (s *Server) verifyCode(ctx context.Context, userID, purpose, submitted string) (*domain.VerificationCode, error) {
 	vc, err := s.store.ClaimCodeAttempt(ctx, userID, purpose, s.codeCfg.MaxAttempts)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return status.Error(codes.Unauthenticated, "invalid or expired code")
+			return nil, status.Error(codes.Unauthenticated, "invalid or expired code")
 		}
 		s.log.Error("claim code attempt", "err", err)
-		return status.Error(codes.Internal, "verification failed")
+		return nil, status.Error(codes.Internal, "verification failed")
 	}
 
 	if hashToken(submitted) != vc.CodeHash {
 		if int(vc.Attempts) >= s.codeCfg.MaxAttempts {
 			_ = s.store.ConsumeCode(ctx, vc.ID)
-			return status.Error(codes.ResourceExhausted, "too many incorrect attempts — request a new code")
+			return nil, status.Error(codes.ResourceExhausted, "too many incorrect attempts — request a new code")
 		}
-		return status.Error(codes.Unauthenticated, "invalid or expired code")
+		return nil, status.Error(codes.Unauthenticated, "invalid or expired code")
 	}
+	return vc, nil
+}
 
-	if err := s.store.ConsumeCode(ctx, vc.ID); err != nil {
+// consumeCode marks a verified code used; losing the race to a concurrent request is a bad code.
+func (s *Server) consumeCode(ctx context.Context, codeID string) error {
+	if err := s.store.ConsumeCode(ctx, codeID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			// Another concurrent request already consumed this code.
 			return status.Error(codes.Unauthenticated, "invalid or expired code")
 		}
 		s.log.Error("consume code", "err", err)
 		return status.Error(codes.Internal, "verification failed")
 	}
 	return nil
+}
+
+// verifyAndConsumeCode is verifyCode followed by consumeCode.
+func (s *Server) verifyAndConsumeCode(ctx context.Context, userID, purpose, submitted string) error {
+	vc, err := s.verifyCode(ctx, userID, purpose, submitted)
+	if err != nil {
+		return err
+	}
+	return s.consumeCode(ctx, vc.ID)
 }
 
 // generateOTP returns a zero-padded 6-digit numeric code from crypto/rand.

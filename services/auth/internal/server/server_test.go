@@ -705,8 +705,7 @@ func TestSignUp_WeakPassword(t *testing.T) {
 	}
 }
 
-// Weak-password and reuse checks both run before OTP code verification, so
-// these cases need no seeded code.
+// The weak-password check needs no code: it does not depend on the account.
 
 func TestResetPassword_WeakPassword(t *testing.T) {
 	svc, _ := newServer(t)
@@ -720,18 +719,30 @@ func TestResetPassword_WeakPassword(t *testing.T) {
 	}
 }
 
-func TestResetPassword_RejectsReuse(t *testing.T) {
+func TestResetPassword_ReuseIsOnlyRevealedToTheCodeHolder(t *testing.T) {
 	svc, _ := newServer(t)
-	signUp(t, svc, "reuse@test.com", "Passw0rd1", "Rita")
-
-	_, err := svc.ResetPassword(context.Background(), &authv1.ResetPasswordRequest{
-		Email: "reuse@test.com", Code: "000000", NewPassword: "Passw0rd1",
-	})
-	if grpcCode(err) != codes.InvalidArgument {
-		t.Fatalf("ResetPassword reuse: want InvalidArgument, got %v", err)
+	a := signUp(t, svc, "reuse@test.com", "Passw0rd1", "Rita")
+	b := signUp(t, svc, "reuse2@test.com", "Passw0rd1", "Rob")
+	seedCode(t, a.UserId, "password_reset", "123456")
+	seedCode(t, b.UserId, "password_reset", "123456")
+	reset := func(email, code, pw string) error {
+		_, err := svc.ResetPassword(context.Background(), &authv1.ResetPasswordRequest{Email: email, Code: code, NewPassword: pw})
+		return err
 	}
-	if msg := status.Convert(err).Message(); !strings.Contains(msg, "different") {
-		t.Errorf("expected reuse message, got %q", msg)
+
+	// Wrong code: the answer must not depend on whether the candidate is the current password.
+	errReuse, errFresh := reset("reuse@test.com", "000000", "Passw0rd1"), reset("reuse2@test.com", "000000", "Brand-new-Pw9")
+	if grpcCode(errReuse) != codes.Unauthenticated || errReuse.Error() != errFresh.Error() {
+		t.Fatalf("wrong code: reuse=%v fresh=%v; want identical Unauthenticated errors", errReuse, errFresh)
+	}
+
+	// Right code, current password: rejected, and the code survives for a retry.
+	err := reset("reuse@test.com", "123456", "Passw0rd1")
+	if grpcCode(err) != codes.InvalidArgument || !strings.Contains(status.Convert(err).Message(), "different") {
+		t.Fatalf("right code + reuse: want InvalidArgument 'different', got %v", err)
+	}
+	if err := reset("reuse@test.com", "123456", "Brand-new-Pw9"); err != nil {
+		t.Fatalf("retry with the same code after a rejected reuse: %v", err)
 	}
 }
 
@@ -931,13 +942,15 @@ func TestHandleStripeWebhook_CheckoutIdempotent(t *testing.T) {
 
 // ── OTP attempt limit ─────────────────────────────────────────────────────────
 
-func seedEmailCode(t *testing.T, userID, code string) {
+func seedEmailCode(t *testing.T, userID, code string) { seedCode(t, userID, "email_verify", code) }
+
+func seedCode(t *testing.T, userID, purpose, code string) {
 	t.Helper()
 	sum := sha256.Sum256([]byte(code))
 	_, err := testPool.Exec(context.Background(), `
 		INSERT INTO auth.verification_codes (id, user_id, purpose, code_hash, expires_at)
-		VALUES (gen_random_uuid(), $1, 'email_verify', $2, now() + interval '10 minutes')`,
-		userID, hex.EncodeToString(sum[:]))
+		VALUES (gen_random_uuid(), $1, $2, $3, now() + interval '10 minutes')`,
+		userID, purpose, hex.EncodeToString(sum[:]))
 	if err != nil {
 		t.Fatalf("seed code: %v", err)
 	}

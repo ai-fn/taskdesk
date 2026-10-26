@@ -74,6 +74,7 @@ type fakeAuthClient struct {
 	revokeSession       func(ctx context.Context, req *authv1.RevokeSessionRequest, opts ...grpc.CallOption) (*authv1.RevokeSessionResponse, error)
 	revokeOtherSessions func(ctx context.Context, req *authv1.RevokeOtherSessionsRequest, opts ...grpc.CallOption) (*authv1.RevokeOtherSessionsResponse, error)
 	updateUserLanguage  func(ctx context.Context, req *authv1.UpdateUserLanguageRequest, opts ...grpc.CallOption) (*authv1.UpdateUserLanguageResponse, error)
+	resetPassword       func(ctx context.Context, req *authv1.ResetPasswordRequest, opts ...grpc.CallOption) (*authv1.ResetPasswordResponse, error)
 	getUserByID         func(ctx context.Context, req *authv1.GetUserByIDRequest, opts ...grpc.CallOption) (*authv1.GetUserByIDResponse, error)
 }
 
@@ -159,7 +160,10 @@ func (f *fakeAuthClient) RequestPasswordReset(ctx context.Context, in *authv1.Re
 	panic("not used in handler tests")
 }
 func (f *fakeAuthClient) ResetPassword(ctx context.Context, in *authv1.ResetPasswordRequest, opts ...grpc.CallOption) (*authv1.ResetPasswordResponse, error) {
-	panic("not used in handler tests")
+	if f.resetPassword == nil {
+		panic("not used in handler tests")
+	}
+	return f.resetPassword(ctx, in, opts...)
 }
 func (f *fakeAuthClient) RequestEmailVerification(ctx context.Context, in *authv1.RequestEmailVerificationRequest, opts ...grpc.CallOption) (*authv1.RequestEmailVerificationResponse, error) {
 	panic("not used in handler tests")

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	authv1 "github.com/fsociety/todo/proto/gen/auth/v1"
@@ -27,6 +28,8 @@ type AuthHandler struct {
 	ipLimiter         *RateLimiter // 20 attempts / minute per IP (login/signup)
 	resetEmailLimiter *RateLimiter // 3 attempts / 10 min per email (password reset)
 	resetIPLimiter    *RateLimiter // 10 attempts / 10 min per IP (password reset)
+	// Separate from resetEmailLimiter so requesting a code doesn't spend the guessing budget.
+	resetConfirmLimiter *RateLimiter // 10 attempts / 10 min per email (reset confirm)
 }
 
 func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, log *slog.Logger) *AuthHandler {
@@ -42,6 +45,8 @@ func NewAuthHandler(c authv1.AuthServiceClient, todo todov1.TodoServiceClient, l
 		resetEmailLimiter: NewRateLimiter(rate.Limit(3.0/600.0), 3, 30*time.Minute, 15*time.Minute),
 		// 10 reset attempts per 10 min per IP.
 		resetIPLimiter: NewRateLimiter(rate.Limit(10.0/600.0), 10, 30*time.Minute, 15*time.Minute),
+		// 10 guesses per 10 min per email: about three codes' worth of OTP attempts.
+		resetConfirmLimiter: NewRateLimiter(rate.Limit(10.0/600.0), 10, 30*time.Minute, 15*time.Minute),
 	}
 }
 
@@ -52,6 +57,7 @@ func (h *AuthHandler) Stop() {
 	h.ipLimiter.Stop()
 	h.resetEmailLimiter.Stop()
 	h.resetIPLimiter.Stop()
+	h.resetConfirmLimiter.Stop()
 }
 
 // POST /api/v1/auth/signup
@@ -237,6 +243,12 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	info := clientInfoFromRequest(r)
 	if !h.resetIPLimiter.Allow(info.IpAddress) {
 		h.log.Warn("reset password rate limited by IP", "ip", info.IpAddress)
+		jsonError(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+	// Rotating IPs must not lift the per-account cap on code guesses.
+	if req.Email != "" && !h.resetConfirmLimiter.Allow(strings.ToLower(strings.TrimSpace(req.Email))) {
+		h.log.Warn("reset password rate limited by email")
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
