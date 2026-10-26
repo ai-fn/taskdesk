@@ -36,3 +36,6 @@ dist/
 services/scheduler/scheduler
 /promo-admin
 docs/superpowers/
+
+# Claude Code local settings
+.claude/settings.local.json
