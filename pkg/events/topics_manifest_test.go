@@ -33,7 +33,7 @@ func TestKafkaTopicManifestDeclaresEveryTopic(t *testing.T) {
 	}
 
 	// The daily-plan topic is a private const in ai and notification, so it is spelled out here.
-	for _, topic := range []string{Topic, AuthEmailTopic, "daily-plan.generated.v1"} {
+	for _, topic := range []string{Topic, AuthEmailTopic, FileTopic, "daily-plan.generated.v1"} {
 		for _, name := range []string{topic, topic + ".dlq"} {
 			if !declared[name] {
 				t.Errorf("topic %q is not declared in topics.yaml", name)

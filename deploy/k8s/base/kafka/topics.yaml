@@ -90,3 +90,34 @@ spec:
     retention.ms: "1209600000"  # 14 days: dead letters need human triage
     segment.bytes: "104857600"
     max.message.bytes: "2097152"  # source record plus DLQ headers must fit
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: file-events-v1
+  namespace: data
+  labels:
+    strimzi.io/cluster: todo
+spec:
+  topicName: file.events.v1
+  partitions: 3
+  replicas: 1
+  config:
+    retention.ms: "604800000"   # 7 days
+    segment.bytes: "104857600"  # 100 MiB
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: file-events-v1-dlq
+  namespace: data
+  labels:
+    strimzi.io/cluster: todo
+spec:
+  topicName: file.events.v1.dlq
+  partitions: 1
+  replicas: 1
+  config:
+    retention.ms: "1209600000"  # 14 days: a dead-lettered scan leaves its attachment pending until triaged
+    segment.bytes: "104857600"
+    max.message.bytes: "2097152"  # source record plus DLQ headers must fit

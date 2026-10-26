@@ -145,6 +145,7 @@ func main() {
 			lifecycle.Check{Name: "redis", Fn: func(ctx context.Context) error { return rdb.Ping(ctx).Err() }},
 			lifecycle.Check{Name: "kafka-events", Fn: kafkaConsumer.Ping},
 			lifecycle.Check{Name: "kafka-auth", Fn: authConsumer.Ping},
+			lifecycle.Check{Name: "kafka-scan", Fn: scanConsumer.Ping},
 		))
 		if err := http.ListenAndServe(":9090", mux); err != nil {
 			log.Error("metrics server", "err", err)
