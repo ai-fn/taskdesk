@@ -45,6 +45,7 @@ func mintTestToken(userID, email, sid string) string {
 		UserID:    userID,
 		Email:     email,
 		SessionID: sid,
+		Type:      tokens.TypeAccess,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-time.Minute)),

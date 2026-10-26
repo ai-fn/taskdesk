@@ -124,6 +124,10 @@ func (v *Verifier) Verify(ctx context.Context, tokenStr string) (*Identity, erro
 	if !token.Valid {
 		return nil, fmt.Errorf("%w: claims not valid", ErrInvalidToken)
 	}
+	// Refresh tokens share the key and claims; without this they would work as bearers.
+	if claims.Type != tokens.TypeAccess {
+		return nil, fmt.Errorf("%w: not an access token", ErrInvalidToken)
+	}
 
 	profile, err := v.profile(ctx, claims.UserID)
 	if err != nil {

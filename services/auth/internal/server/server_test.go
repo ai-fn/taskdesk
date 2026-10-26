@@ -270,6 +270,16 @@ func TestValidateToken_Success(t *testing.T) {
 	}
 }
 
+func TestValidateToken_RejectsRefreshToken(t *testing.T) {
+	svc, _ := newServer(t)
+	su := signUp(t, svc, "r@test.com", "Passw0rd1", "Rita")
+
+	_, err := svc.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{AccessToken: su.RefreshToken})
+	if got := grpcCode(err); got != codes.Unauthenticated {
+		t.Errorf("code = %v, want Unauthenticated", got)
+	}
+}
+
 func TestValidateToken_BadToken(t *testing.T) {
 	svc, _ := newServer(t)
 	_, err := svc.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{AccessToken: "garbage"})

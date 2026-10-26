@@ -1,6 +1,7 @@
 package tokens_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,31 @@ func TestCreateRefreshToken_Claims(t *testing.T) {
 
 	if claims.UserID != "u2" || claims.Email != "b@c.com" || claims.SessionID != "sid2" {
 		t.Errorf("unexpected claims: %+v", claims)
+	}
+}
+
+func TestTokenTypes(t *testing.T) {
+	m := newMaker(t)
+	access, err := m.CreateAccessToken("u", "e@x.com", "s")
+	if err != nil {
+		t.Fatalf("CreateAccessToken: %v", err)
+	}
+	refresh, err := m.CreateRefreshToken("u", "e@x.com", "s")
+	if err != nil {
+		t.Fatalf("CreateRefreshToken: %v", err)
+	}
+
+	if c, err := m.Verify(access); err != nil || c.Type != tokens.TypeAccess {
+		t.Errorf("access: type=%v err=%v", c, err)
+	}
+	if c, err := m.Verify(refresh); err != nil || c.Type != tokens.TypeRefresh {
+		t.Errorf("refresh: type=%v err=%v", c, err)
+	}
+	if _, err := m.VerifyAccess(access); err != nil {
+		t.Errorf("VerifyAccess(access): %v", err)
+	}
+	if _, err := m.VerifyAccess(refresh); !errors.Is(err, tokens.ErrWrongTokenType) {
+		t.Errorf("VerifyAccess(refresh) err = %v, want ErrWrongTokenType", err)
 	}
 }
 

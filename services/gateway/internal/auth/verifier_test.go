@@ -37,10 +37,16 @@ func newSigningKey(t *testing.T) (*rsa.PrivateKey, string) {
 
 func mint(t *testing.T, key *rsa.PrivateKey, kid, userID string, exp time.Time) string {
 	t.Helper()
+	return mintTyped(t, key, kid, userID, tokens.TypeAccess, exp)
+}
+
+func mintTyped(t *testing.T, key *rsa.PrivateKey, kid, userID, typ string, exp time.Time) string {
+	t.Helper()
 	claims := tokens.Claims{
 		UserID:    userID,
 		Email:     userID + "@example.com",
 		SessionID: "sess-" + userID,
+		Type:      typ,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-time.Minute)),
@@ -181,6 +187,29 @@ func TestVerify_GarbageToken_NoGRPC(t *testing.T) {
 	}
 	if got := fake.jwksCalls.Load(); got != 0 {
 		t.Fatalf("GetJWKS called %d times for unparseable token, want 0", got)
+	}
+}
+
+func TestVerify_NonAccessTokens_Invalid(t *testing.T) {
+	key, kid := newSigningKey(t)
+	fake := &fakeAuth{
+		jwks: func() (*authv1.GetJWKSResponse, error) {
+			return &authv1.GetJWKSResponse{Keys: []*authv1.JWK{jwkFor(key, kid)}}, nil
+		},
+		user: okProfile("free", "en"),
+	}
+	v := auth.NewVerifier(fake)
+	defer v.Stop()
+
+	for _, typ := range []string{tokens.TypeRefresh, "", "other"} {
+		tok := mintTyped(t, key, kid, "u1", typ, time.Now().Add(time.Hour))
+		_, err := v.Verify(context.Background(), tok)
+		if !errors.Is(err, auth.ErrInvalidToken) {
+			t.Errorf("typ %q: err = %v, want ErrInvalidToken", typ, err)
+		}
+	}
+	if got := fake.userCalls.Load(); got != 0 {
+		t.Errorf("GetUserByID called %d times for non-access tokens, want 0", got)
 	}
 }
 

@@ -36,10 +36,16 @@ func newKey(t *testing.T) (*rsa.PrivateKey, string) {
 
 func mint(t *testing.T, key *rsa.PrivateKey, kid, userID, email, sid string, exp time.Time) string {
 	t.Helper()
+	return mintTyped(t, key, kid, userID, email, sid, tokens.TypeAccess, exp)
+}
+
+func mintTyped(t *testing.T, key *rsa.PrivateKey, kid, userID, email, sid, typ string, exp time.Time) string {
+	t.Helper()
 	claims := tokens.Claims{
 		UserID:    userID,
 		Email:     email,
 		SessionID: sid,
+		Type:      typ,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(time.Now().Add(-time.Minute)),
@@ -204,6 +210,29 @@ func TestAuthenticate_InvalidToken_Returns401(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestAuthenticate_RefreshToken_Returns401(t *testing.T) {
+	key, kid := newKey(t)
+	mw := newMiddleware(t, &fakeAuth{key: key, kid: kid, plan: "free"})
+
+	tok := mintTyped(t, key, kid, "u", "u@x.com", "s", tokens.TypeRefresh, time.Now().Add(time.Hour))
+	for name, req := range map[string]*http.Request{
+		"header": func() *http.Request {
+			r := httptest.NewRequest("GET", "/", nil)
+			r.Header.Set("Authorization", "Bearer "+tok)
+			return r
+		}(),
+		"query": httptest.NewRequest("GET", "/?token="+tok, nil),
+	} {
+		w := httptest.NewRecorder()
+		mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s: status = %d, want 401", name, w.Code)
+		}
 	}
 }
 

@@ -232,7 +232,7 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 	if req.AccessToken == "" {
 		return nil, status.Error(codes.InvalidArgument, "access_token is required")
 	}
-	claims, err := s.tokens.Verify(req.AccessToken)
+	claims, err := s.tokens.VerifyAccess(req.AccessToken)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, fmt.Sprintf("invalid token: %v", err))
 	}
