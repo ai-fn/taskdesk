@@ -363,3 +363,38 @@ func TestUpdateList_OnlyMaskedFieldsChange(t *testing.T) {
 		t.Errorf("empty update = %v, want InvalidArgument", err)
 	}
 }
+
+// A PATCH to status=done completes the parent exactly like CompleteTask does.
+func TestUpdateTask_StatusDoneCompletesTheParent(t *testing.T) {
+	svc, _ := newServer(t)
+	ctx := context.Background()
+	parent, err := svc.CreateTask(ctx, &todov1.CreateTaskRequest{UserId: "u", Title: "parent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := svc.CreateTask(ctx, &todov1.CreateTaskRequest{UserId: "u", Title: "child", ParentTaskId: parent.Task.Id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateTask(ctx, &todov1.UpdateTaskRequest{UserId: "u", TaskId: child.Task.Id, Status: todov1.Status_STATUS_DONE}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetTask(ctx, &todov1.GetTaskRequest{UserId: "u", TaskId: parent.Task.Id})
+	if err != nil || got.Task.Status != todov1.Status_STATUS_DONE {
+		t.Errorf("parent = %v, %v; want done", got.GetTask().GetStatus(), err)
+	}
+}
+
+func TestUpdateTask_DoneWhileBlockedIsFailedPrecondition(t *testing.T) {
+	svc, _ := newServer(t)
+	ctx := context.Background()
+	dep, _ := svc.CreateTask(ctx, &todov1.CreateTaskRequest{UserId: "u", Title: "dep"})
+	task, _ := svc.CreateTask(ctx, &todov1.CreateTaskRequest{UserId: "u", Title: "task"})
+	if _, err := svc.AddDependency(ctx, &todov1.AddDependencyRequest{UserId: "u", TaskId: task.Task.Id, DependsOnId: dep.Task.Id}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.UpdateTask(ctx, &todov1.UpdateTaskRequest{UserId: "u", TaskId: task.Task.Id, Status: todov1.Status_STATUS_DONE})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("PATCH done while blocked = %v, want FailedPrecondition", err)
+	}
+}

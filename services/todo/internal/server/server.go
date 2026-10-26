@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/fsociety/todo/pkg/events"
 	todov1 "github.com/fsociety/todo/proto/gen/todo/v1"
 	"github.com/fsociety/todo/services/todo/internal/domain"
 	"github.com/fsociety/todo/services/todo/internal/store"
@@ -161,19 +160,6 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
 	}
 
-	existing, err := s.store.GetTask(ctx, req.UserId, req.TaskId)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "task not found")
-		}
-		return nil, status.Error(codes.Internal, "get task failed")
-	}
-
-	wasDone := existing.Status == domain.StatusDone
-
-	if req.Title != "" {
-		existing.Title = req.Title
-	}
 	// A masked field is applied as sent, which is how it gets cleared; unmasked fields only change when non-empty.
 	inMask := func(field string) bool {
 		for _, f := range req.UpdateMask {
@@ -183,74 +169,71 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 		}
 		return false
 	}
-	if req.Priority != todov1.Priority_PRIORITY_UNSPECIFIED {
-		existing.Priority = domain.Priority(req.Priority)
-	}
-	if req.Status != todov1.Status_STATUS_UNSPECIFIED {
-		existing.Status = domain.Status(req.Status)
-	}
-	if inMask("description") || req.Description != "" {
-		existing.Description = req.Description
-	}
-	if inMask("tags") {
-		existing.Tags = append([]string{}, req.Tags...)
-	} else if len(req.Tags) > 0 {
-		existing.Tags = req.Tags
-	}
-	switch {
-	case req.DueAt != nil:
-		ts := req.DueAt.AsTime()
-		existing.DueAt = &ts
-	case inMask("due_at"):
-		existing.DueAt = nil
-	}
-	if inMask("flagged") {
-		existing.Flagged = req.Flagged
-	}
-	if inMask("list_id") {
-		if req.ListId == "" {
-			existing.ListID = nil
-		} else {
+	// Runs under the task's row lock, so concurrent edits serialize instead of overwriting each other.
+	apply := func(existing *domain.Task) error {
+		if req.Title != "" {
+			existing.Title = req.Title
+		}
+		if req.Priority != todov1.Priority_PRIORITY_UNSPECIFIED {
+			existing.Priority = domain.Priority(req.Priority)
+		}
+		if req.Status != todov1.Status_STATUS_UNSPECIFIED {
+			existing.Status = domain.Status(req.Status)
+		}
+		if inMask("description") || req.Description != "" {
+			existing.Description = req.Description
+		}
+		if inMask("tags") {
+			existing.Tags = append([]string{}, req.Tags...)
+		} else if len(req.Tags) > 0 {
+			existing.Tags = req.Tags
+		}
+		switch {
+		case req.DueAt != nil:
+			ts := req.DueAt.AsTime()
+			existing.DueAt = &ts
+		case inMask("due_at"):
+			existing.DueAt = nil
+		}
+		if inMask("flagged") {
+			existing.Flagged = req.Flagged
+		}
+		if inMask("list_id") {
+			if req.ListId == "" {
+				existing.ListID = nil
+			} else {
+				existing.ListID = &req.ListId
+			}
+		} else if req.ListId != "" {
 			existing.ListID = &req.ListId
 		}
-	} else if req.ListId != "" {
-		existing.ListID = &req.ListId
+		existing.UpdatedAt = time.Now().UTC()
+		return nil
 	}
 
-	existing.UpdatedAt = time.Now().UTC()
-
-	// Reject Done if any dependency is still open. Applies to direct Status=DONE
-	// updates as well as the CompleteTask RPC (which routes through here).
-	if existing.Status == domain.StatusDone && !wasDone {
-		blocked, err := s.store.HasUnfinishedDependencies(ctx, req.TaskId)
-		if err != nil {
-			s.log.Error("check unfinished deps", "err", err)
-			return nil, status.Error(codes.Internal, "check dependencies failed")
-		}
-		if blocked {
-			return nil, status.Error(codes.FailedPrecondition, "task is blocked by unfinished dependencies")
-		}
-	}
-
-	// Completed only on the transition, or every edit of a done task would re-mail the user.
-	evType, notify := events.TypeTaskUpdated, store.Notify{}
-	if existing.Status == domain.StatusDone && !wasDone {
-		evType, notify = events.TypeTaskCompleted, store.Notify{Language: req.Language, Email: req.Email}
-	}
-
-	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, evType, notify)
+	updated, err := s.store.ModifyTask(ctx, req.UserId, req.TaskId, store.Notify{Language: req.Language, Email: req.Email}, apply)
 	if err != nil {
-		if errors.Is(err, store.ErrRefNotFound) {
-			return nil, status.Error(codes.NotFound, errRefNotFound)
-		}
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "task not found")
-		}
-		s.log.Error("update task", "err", err)
-		return nil, status.Error(codes.Internal, "update task failed")
+		return nil, s.modifyTaskError(err, "update task")
 	}
-
 	return &todov1.UpdateTaskResponse{Task: toProto(updated)}, nil
+}
+
+// modifyTaskError maps ModifyTask failures to gRPC statuses.
+func (s *Server) modifyTaskError(err error, op string) error {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return status.Error(codes.NotFound, "task not found")
+	case errors.Is(err, store.ErrRefNotFound):
+		return status.Error(codes.NotFound, errRefNotFound)
+	case errors.Is(err, store.ErrBlocked):
+		return status.Error(codes.FailedPrecondition, "task is blocked by unfinished dependencies")
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, "request cancelled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, "request timed out")
+	}
+	s.log.Error(op, "err", err)
+	return status.Error(codes.Internal, op+" failed")
 }
 
 // ── DeleteTask ────────────────────────────────────────────────────────────────
@@ -274,49 +257,22 @@ func (s *Server) DeleteTask(ctx context.Context, req *todov1.DeleteTaskRequest) 
 // ── CompleteTask ──────────────────────────────────────────────────────────────
 
 func (s *Server) CompleteTask(ctx context.Context, req *todov1.CompleteTaskRequest) (*todov1.CompleteTaskResponse, error) {
-	existing, err := s.store.GetTask(ctx, req.UserId, req.TaskId)
+	if req.UserId == "" || req.TaskId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id and task_id are required")
+	}
+	complete := func(existing *domain.Task) error {
+		if existing.Status == domain.StatusDone { // idempotent: no second event or email
+			return store.ErrNoChange
+		}
+		existing.Status = domain.StatusDone
+		existing.UpdatedAt = time.Now().UTC()
+		return nil
+	}
+	// The store also completes the parent once every sibling is done.
+	updated, err := s.store.ModifyTask(ctx, req.UserId, req.TaskId, store.Notify{Language: req.Language, Email: req.Email}, complete)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "task not found")
-		}
-		return nil, status.Error(codes.Internal, "get task failed")
+		return nil, s.modifyTaskError(err, "complete task")
 	}
-
-	if existing.Status == domain.StatusDone { // idempotent: no second event or email
-		return &todov1.CompleteTaskResponse{Task: toProto(existing)}, nil
-	}
-
-	blocked, err := s.store.HasUnfinishedDependencies(ctx, req.TaskId)
-	if err != nil {
-		s.log.Error("check unfinished deps", "err", err)
-		return nil, status.Error(codes.Internal, "check dependencies failed")
-	}
-	if blocked {
-		return nil, status.Error(codes.FailedPrecondition, "task is blocked by unfinished dependencies")
-	}
-
-	existing.Status = domain.StatusDone
-	existing.UpdatedAt = time.Now().UTC()
-
-	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, events.TypeTaskCompleted, store.Notify{Language: req.Language, Email: req.Email})
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "task not found")
-		}
-		if errors.Is(err, store.ErrRefNotFound) {
-			return nil, status.Error(codes.NotFound, errRefNotFound)
-		}
-		s.log.Error("complete task", "err", err)
-		return nil, status.Error(codes.Internal, "complete task failed")
-	}
-
-	// If this is a subtask, auto-complete the parent when all siblings are done.
-	if updated.ParentTaskID != nil {
-		if _, err := s.store.AutoCompleteParent(ctx, req.UserId, *updated.ParentTaskID); err != nil {
-			s.log.Warn("auto-complete parent", "parent_id", *updated.ParentTaskID, "err", err)
-		}
-	}
-
 	return &todov1.CompleteTaskResponse{Task: toProto(updated)}, nil
 }
 

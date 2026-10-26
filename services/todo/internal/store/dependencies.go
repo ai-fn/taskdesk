@@ -271,8 +271,12 @@ func (s *Store) walkTree(ctx context.Context, userID, start string, upstream boo
 // (depends_on_id) that is not yet status=DONE (3) and not soft-deleted.
 // Used as a precondition for CompleteTask.
 func (s *Store) HasUnfinishedDependencies(ctx context.Context, taskID string) (bool, error) {
+	return hasUnfinishedDependencies(ctx, s.db, taskID)
+}
+
+func hasUnfinishedDependencies(ctx context.Context, q rowQuerier, taskID string) (bool, error) {
 	var blocked bool
-	err := s.db.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT EXISTS(
 		  SELECT 1 FROM todo.task_dependencies d
 		  JOIN todo.tasks t ON t.id = d.depends_on_id

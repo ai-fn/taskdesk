@@ -72,8 +72,9 @@ func TestForeignListCannotBeAssignedOnUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	task.ListID = ptr("l-victim")
-	if _, err := s.UpdateTaskWithEvent(ctx, task, "task.updated", store.Notify{}); !errors.Is(err, store.ErrRefNotFound) {
-		t.Errorf("UpdateTaskWithEvent = %v, want ErrRefNotFound", err)
+	move := func(c *domain.Task) error { c.ListID = ptr("l-victim"); return nil }
+	if _, err := s.ModifyTask(ctx, "attacker", "t-own", store.Notify{}, move); !errors.Is(err, store.ErrRefNotFound) {
+		t.Errorf("ModifyTask = %v, want ErrRefNotFound", err)
 	}
 	if _, err := s.UpdateTask(ctx, task); !errors.Is(err, store.ErrRefNotFound) {
 		t.Errorf("UpdateTask = %v, want ErrRefNotFound", err)
@@ -127,8 +128,16 @@ func TestForeignSubtaskDoesNotAffectTheVictim(t *testing.T) {
 	if got.SubtaskCount != 1 || got.SubtaskDoneCount != 1 {
 		t.Errorf("subtasks = %d/%d, want 1/1: the planted child inflated the count", got.SubtaskDoneCount, got.SubtaskCount)
 	}
-	if done, err := s.AutoCompleteParent(ctx, "victim", "p"); err != nil || done == nil {
-		t.Errorf("AutoCompleteParent = %v, %v; want the parent completed despite the planted open child", done, err)
+	// Reopen the child, then complete it: the parent must follow despite the planted open child.
+	if _, err := testPool.Exec(ctx, `UPDATE todo.tasks SET status = 1 WHERE id = 'p-child'`); err != nil {
+		t.Fatal(err)
+	}
+	done := func(c *domain.Task) error { c.Status = domain.StatusDone; return nil }
+	if _, err := s.ModifyTask(ctx, "victim", "p-child", store.Notify{}, done); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := s.GetTask(ctx, "victim", "p"); err != nil || p.Status != domain.StatusDone {
+		t.Errorf("parent = %+v, %v; want it completed despite the planted open child", p, err)
 	}
 }
 
@@ -141,16 +150,12 @@ func TestRowsWithAForeignListStayEditableUntilTheListChanges(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `UPDATE todo.tasks SET list_id = 'l-victim' WHERE id = 't-legacy'`); err != nil {
 		t.Fatal(err)
 	}
-	task, err := s.GetTask(ctx, "attacker", "t-legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	task.Title = "renamed"
-	if _, err := s.UpdateTaskWithEvent(ctx, task, "task.updated", store.Notify{}); err != nil {
+	rename := func(c *domain.Task) error { c.Title = "renamed"; return nil }
+	if _, err := s.ModifyTask(ctx, "attacker", "t-legacy", store.Notify{}, rename); err != nil {
 		t.Errorf("title edit on a legacy row: %v", err)
 	}
-	task.ListID = ptr("l-other-victim-list")
-	if _, err := s.UpdateTaskWithEvent(ctx, task, "task.updated", store.Notify{}); !errors.Is(err, store.ErrRefNotFound) {
+	moveElsewhere := func(c *domain.Task) error { c.ListID = ptr("l-other-victim-list"); return nil }
+	if _, err := s.ModifyTask(ctx, "attacker", "t-legacy", store.Notify{}, moveElsewhere); !errors.Is(err, store.ErrRefNotFound) {
 		t.Errorf("moving to another unowned list = %v, want ErrRefNotFound", err)
 	}
 }

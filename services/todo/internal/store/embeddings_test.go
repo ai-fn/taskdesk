@@ -10,6 +10,7 @@ import (
 	"github.com/fsociety/todo/services/todo/internal/domain"
 	"github.com/fsociety/todo/services/todo/internal/store"
 	"github.com/fsociety/todo/services/todo/internal/testutil"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func newStore(t *testing.T) *store.Store {
@@ -110,17 +111,12 @@ func TestListUnembeddedTasks_EmptyOnceEmbedded(t *testing.T) {
 	}
 }
 
-func TestUpdateTaskWithEvent_StampsRecipientOnOutbox(t *testing.T) {
+func TestModifyTask_StampsRecipientOnCompletedEvent(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	mustCreateTask(t, s, "t1", "u1")
-	task, err := s.GetTask(ctx, "u1", "t1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	task.Status = domain.StatusDone
-	task.UpdatedAt = time.Now().UTC()
-	if _, err := s.UpdateTaskWithEvent(ctx, task, "task.completed", store.Notify{Language: "zh", Email: "u@x.com"}); err != nil {
+	done := func(c *domain.Task) error { c.Status = domain.StatusDone; c.UpdatedAt = time.Now().UTC(); return nil }
+	if _, err := s.ModifyTask(ctx, "u1", "t1", store.Notify{Language: "zh", Email: "u@x.com"}, done); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,5 +130,57 @@ func TestUpdateTaskWithEvent_StampsRecipientOnOutbox(t *testing.T) {
 	}
 	if ev.Email != "u@x.com" || ev.Language != "zh" {
 		t.Errorf("outbox payload = %s, want email u@x.com and language zh", payload)
+	}
+}
+
+// unit returns a vector pointing along axis i.
+func unit(i int) []float32 {
+	out := make([]float32, 1024)
+	out[i] = 1
+	return out
+}
+
+func TestSearchTasksByEmbedding_RanksByCosineAndIsolatesUsers(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"near", "far"} {
+		mustCreateTask(t, s, id, "u1")
+	}
+	mustCreateTask(t, s, "theirs", "u2")
+	if err := s.UpsertTaskEmbedding(ctx, "near", "u1", unit(0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTaskEmbedding(ctx, "far", "u1", unit(1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTaskEmbedding(ctx, "theirs", "u2", unit(0)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Goes through the iterative-scan transaction path: fails if the pgvector image rejects the setting
+	// with anything but "unknown parameter".
+	got, err := s.SearchTasksByEmbedding(ctx, "u1", unit(0), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"near", "far"}; fmt.Sprint(ids(got)) != fmt.Sprint(want) {
+		t.Errorf("results = %v, want %v (nearest first, other user's task excluded)", ids(got), want)
+	}
+}
+
+func TestIsUnknownSetting(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{&pgconn.PgError{Code: "42602"}, true},
+		{&pgconn.PgError{Code: "42704"}, true},
+		{fmt.Errorf("wrapped: %w", &pgconn.PgError{Code: "42602"}), true},
+		{&pgconn.PgError{Code: "57014"}, false},
+		{nil, false},
+	} {
+		if got := store.IsUnknownSetting(tc.err); got != tc.want {
+			t.Errorf("IsUnknownSetting(%v) = %v, want %v", tc.err, got, tc.want)
+		}
 	}
 }

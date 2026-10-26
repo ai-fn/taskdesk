@@ -65,37 +65,6 @@ type Notify struct {
 	Email    string // verified address only; empty = no email
 }
 
-// UpdateTaskWithEvent updates the task and writes an outbox event atomically.
-func (s *Store) UpdateTaskWithEvent(ctx context.Context, t *domain.Task, eventType string, n Notify) (*domain.Task, error) {
-	var updated domain.Task
-	err := withTx(ctx, s.db, func(tx pgx.Tx) error {
-		if err := requireListOrUnchanged(ctx, tx, t.UserID, t.ID, t.ListID); err != nil {
-			return err
-		}
-		err := scanTask(tx.QueryRow(ctx, `
-			UPDATE todo.tasks
-			SET title=$3, description=$4, priority=$5, status=$6,
-			    tags=$7, due_at=$8, updated_at=$9, list_id=$10, flagged=$11
-			WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL
-			RETURNING `+taskCols,
-			t.ID, t.UserID, t.Title, t.Description,
-			int32(t.Priority), int32(t.Status), t.Tags,
-			t.DueAt, t.UpdatedAt, t.ListID, t.Flagged,
-		), &updated)
-		if err != nil {
-			if err == pgx.ErrNoRows {
-				return ErrNotFound
-			}
-			return mapRefErr(err)
-		}
-		return insertOutbox(ctx, tx, eventType, updated.UserID, updated.ID, updated.Title, n)
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &updated, nil
-}
-
 // DeleteTaskWithEvent soft-deletes the task and writes an outbox event atomically.
 func (s *Store) DeleteTaskWithEvent(ctx context.Context, userID, taskID string) error {
 	return withTx(ctx, s.db, func(tx pgx.Tx) error {
@@ -223,8 +192,14 @@ func withTx(ctx context.Context, db *pgxpool.Pool, fn func(pgx.Tx) error) error 
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	// Deferred so a panic in fn can't leak the connection (and its row locks), and detached from ctx
+	// so a cancelled request still rolls back; a no-op after Commit.
+	defer func() {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(rctx)
+	}()
 	if err := fn(tx); err != nil {
-		_ = tx.Rollback(ctx)
 		return err
 	}
 	return tx.Commit(ctx)

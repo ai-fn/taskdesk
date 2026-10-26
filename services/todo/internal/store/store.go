@@ -549,31 +549,6 @@ func (s *Store) UpdateTaskScore(ctx context.Context, userID, taskID string, scor
 	return &t, nil
 }
 
-// ── AutoCompleteParent ────────────────────────────────────────────────────────
-
-// AutoCompleteParent marks the parent task as DONE if all its non-deleted
-// subtasks are now done. It is a no-op if any sibling is still incomplete,
-// or if the parent is already done. Returns the updated parent or nil if
-// no update was made.
-func (s *Store) AutoCompleteParent(ctx context.Context, userID, parentTaskID string) (*domain.Task, error) {
-	var t domain.Task
-	err := scanTask(s.db.QueryRow(ctx, `
-		UPDATE todo.tasks SET status=3, updated_at=now()
-		WHERE id=$1 AND user_id=$2 AND status != 3
-		  AND NOT EXISTS (
-		    SELECT 1 FROM todo.tasks
-		    WHERE parent_task_id=$1 AND user_id=$2 AND deleted_at IS NULL AND status != 3
-		  )
-		RETURNING `+taskCols, parentTaskID, userID), &t)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil // nothing to do
-		}
-		return nil, fmt.Errorf("auto-complete parent: %w", err)
-	}
-	return &t, nil
-}
-
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func isUniqueViolation(err error) bool {

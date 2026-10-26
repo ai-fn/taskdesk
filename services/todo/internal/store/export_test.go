@@ -5,3 +5,6 @@ const (
 	TaskListCols  = taskListCols
 	TaskListJoins = taskListJoins
 )
+
+// IsUnknownSetting exposes the helper to the external test package.
+var IsUnknownSetting = isUnknownSetting
