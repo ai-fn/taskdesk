@@ -41,12 +41,13 @@ type fakeAI struct {
 	generateErr map[string]error
 	latestErr   map[string]error
 	genCalls    map[string]int
+	gotEmail    map[string]string
 	inFlight    atomic.Int32
 	maxInFlight atomic.Int32
 }
 
 func newFakeAI() *fakeAI {
-	return &fakeAI{plans: map[string]time.Time{}, generateErr: map[string]error{}, latestErr: map[string]error{}, genCalls: map[string]int{}}
+	return &fakeAI{plans: map[string]time.Time{}, generateErr: map[string]error{}, latestErr: map[string]error{}, genCalls: map[string]int{}, gotEmail: map[string]string{}}
 }
 
 func (f *fakeAI) GetLatestPlan(_ context.Context, in *aiv1.GetLatestPlanRequest, _ ...grpc.CallOption) (*aiv1.GetLatestPlanResponse, error) {
@@ -76,6 +77,7 @@ func (f *fakeAI) GeneratePlan(_ context.Context, in *aiv1.GeneratePlanRequest, _
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.genCalls[in.UserId]++
+	f.gotEmail[in.UserId] = in.Email
 	if err := f.generateErr[in.UserId]; err != nil {
 		return nil, err
 	}
@@ -212,5 +214,19 @@ func TestSameUTCDay(t *testing.T) {
 		if got := sameUTCDay(tc.a, tc.b); got != tc.want {
 			t.Errorf("%s: sameUTCDay = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestGenerateAll_EmailsOnlyVerifiedAddresses(t *testing.T) {
+	ai := newFakeAI()
+	us := []*authv1.UserSummary{
+		{UserId: "ok", Email: "ok@x.com", EmailVerified: true, Plan: "pro"},
+		{UserId: "unv", Email: "unv@x.com", Plan: "pro"},
+	}
+	if _, err := generateAll(context.Background(), quiet(), &fakeAuth{users: us}, ai, 2, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if ai.gotEmail["ok"] != "ok@x.com" || ai.gotEmail["unv"] != "" {
+		t.Errorf("emails sent to ai = %v, want ok@x.com only for the verified user", ai.gotEmail)
 	}
 }

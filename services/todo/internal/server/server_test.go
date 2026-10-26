@@ -134,3 +134,93 @@ func TestListUnembeddedTasks_ExactMultipleEndsWithEmptyPage(t *testing.T) {
 		t.Errorf("third page = %d tasks, token %q; want empty and no token", len(p3.Tasks), p3.NextPageToken)
 	}
 }
+
+func outboxPayload(t *testing.T, eventType string) (email, lang string, n int) {
+	t.Helper()
+	rows, err := testPool.Query(context.Background(), `SELECT payload->>'email', payload->>'language' FROM todo.outbox WHERE event_type=$1`, eventType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var e, l *string
+		if err := rows.Scan(&e, &l); err != nil {
+			t.Fatal(err)
+		}
+		n++
+		email, lang = deref(e), deref(l)
+	}
+	return email, lang, n
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func TestCompleteTask_StampsRecipientOnEvent(t *testing.T) {
+	svc, st := newServer(t)
+	seedTasks(t, st, "u1", 1)
+	_, err := svc.CompleteTask(context.Background(), &todov1.CompleteTaskRequest{UserId: "u1", TaskId: "u1-000", Language: "zh", Email: "a@x.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if email, lang, n := outboxPayload(t, "task.completed"); n != 1 || email != "a@x.com" || lang != "zh" {
+		t.Errorf("task.completed events=%d email=%q lang=%q", n, email, lang)
+	}
+}
+
+func TestUpdateTask_CompletedOnlyOnTransitionToDone(t *testing.T) {
+	svc, st := newServer(t)
+	seedTasks(t, st, "u1", 1)
+	ctx := context.Background()
+	update := func(req *todov1.UpdateTaskRequest) {
+		t.Helper()
+		req.UserId, req.TaskId = "u1", "u1-000"
+		if _, err := svc.UpdateTask(ctx, req); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	update(&todov1.UpdateTaskRequest{Status: todov1.Status_STATUS_DONE, Language: "en", Email: "a@x.com"})
+	if email, _, n := outboxPayload(t, "task.completed"); n != 1 || email != "a@x.com" {
+		t.Fatalf("after completing: task.completed events=%d email=%q, want 1 and a@x.com", n, email)
+	}
+
+	// Editing a task that is already done must not re-mail the user.
+	update(&todov1.UpdateTaskRequest{Title: "renamed", Language: "en", Email: "a@x.com"})
+	update(&todov1.UpdateTaskRequest{Status: todov1.Status_STATUS_DONE, Language: "en", Email: "a@x.com"})
+	if _, _, n := outboxPayload(t, "task.completed"); n != 1 {
+		t.Errorf("task.completed events=%d after re-edits of a done task, want still 1", n)
+	}
+	if email, _, n := outboxPayload(t, "task.updated"); n != 2 || email != "" {
+		t.Errorf("task.updated events=%d email=%q, want 2 without an email", n, email)
+	}
+
+	// Reopening and completing again is a fresh transition.
+	update(&todov1.UpdateTaskRequest{Status: todov1.Status_STATUS_TODO})
+	update(&todov1.UpdateTaskRequest{Status: todov1.Status_STATUS_DONE, Language: "en", Email: "a@x.com"})
+	if _, _, n := outboxPayload(t, "task.completed"); n != 2 {
+		t.Errorf("task.completed events=%d after reopen and complete, want 2", n)
+	}
+}
+
+func TestCompleteTask_AlreadyDoneEmitsNothing(t *testing.T) {
+	svc, st := newServer(t)
+	seedTasks(t, st, "u1", 1)
+	req := &todov1.CompleteTaskRequest{UserId: "u1", TaskId: "u1-000", Language: "en", Email: "a@x.com"}
+	for i := 0; i < 2; i++ {
+		resp, err := svc.CompleteTask(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Task.Status != todov1.Status_STATUS_DONE {
+			t.Fatalf("call %d: status = %v, want DONE", i, resp.Task.Status)
+		}
+	}
+	if _, _, n := outboxPayload(t, "task.completed"); n != 1 {
+		t.Errorf("task.completed events=%d after completing twice, want 1", n)
+	}
+}

@@ -160,6 +160,8 @@ func (h *TodoHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Priority:    todov1.Priority(body.Priority),
 		Status:      todov1.Status(body.Status),
 		Tags:        body.Tags,
+		Language:    mw.LanguageFromContext(r.Context()),
+		Email:       mw.NotifyEmailFromContext(r.Context()),
 	}
 	if body.DueAt != nil {
 		req.DueAt = timestamppb.New(*body.DueAt)
@@ -206,6 +208,7 @@ func (h *TodoHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		UserId:   userID,
 		TaskId:   taskID,
 		Language: mw.LanguageFromContext(r.Context()),
+		Email:    mw.NotifyEmailFromContext(r.Context()),
 	})
 	if err != nil {
 		handleGRPCError(w, err)

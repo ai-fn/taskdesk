@@ -191,6 +191,8 @@ message UpdateTaskRequest {
   repeated string update_mask = 9;
   string list_id = 10;
   bool   flagged = 11;
+  string language = 12; // stamped onto the task.completed outbox event
+  string email    = 13; // verified address to notify on completion; empty = no email
 }
 
 message UpdateTaskResponse {
@@ -212,6 +214,7 @@ message CompleteTaskRequest {
   string user_id  = 1;
   string task_id  = 2;
   string language = 3; // user's preferred language, stamped onto the outbox event
+  string email    = 4; // verified address to notify, stamped onto the outbox event; empty = no email
 }
 
 message CompleteTaskResponse {

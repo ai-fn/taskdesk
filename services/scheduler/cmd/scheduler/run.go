@@ -63,7 +63,7 @@ outer:
 			planCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			defer cancel()
 
-			switch generateOne(planCtx, log, ai, u.UserId, u.Language, now) {
+			switch generateOne(planCtx, log, ai, u.UserId, u.Language, notifyEmail(u), now) {
 			case outcomeGenerated:
 				generated.Add(1)
 			case outcomeSkipped:
@@ -89,7 +89,7 @@ const (
 	outcomeSkipped
 )
 
-func generateOne(ctx context.Context, log *slog.Logger, ai planService, userID, language string, now time.Time) outcome {
+func generateOne(ctx context.Context, log *slog.Logger, ai planService, userID, language, email string, now time.Time) outcome {
 	latest, err := ai.GetLatestPlan(ctx, &aiv1.GetLatestPlanRequest{UserId: userID})
 	if err != nil {
 		log.Error("get latest plan", "user_id", userID, "err", err)
@@ -99,7 +99,7 @@ func generateOne(ctx context.Context, log *slog.Logger, ai planService, userID, 
 		return outcomeSkipped
 	}
 
-	resp, err := ai.GeneratePlan(ctx, &aiv1.GeneratePlanRequest{UserId: userID, Language: language})
+	resp, err := ai.GeneratePlan(ctx, &aiv1.GeneratePlanRequest{UserId: userID, Language: language, Email: email})
 	if err != nil {
 		if status.Code(err) == codes.FailedPrecondition { // no tasks to prioritize
 			return outcomeSkipped
@@ -109,6 +109,14 @@ func generateOne(ctx context.Context, log *slog.Logger, ai planService, userID, 
 	}
 	log.Info("plan generated", "user_id", userID, "plan_id", resp.Plan.GetPlanId(), "tasks", len(resp.Plan.GetItems()))
 	return outcomeGenerated
+}
+
+// notifyEmail is the user's address once verified; signup accepts any address.
+func notifyEmail(u *authv1.UserSummary) string {
+	if u.GetEmailVerified() {
+		return u.GetEmail()
+	}
+	return ""
 }
 
 func sameUTCDay(a, b time.Time) bool {

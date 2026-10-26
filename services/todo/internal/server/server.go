@@ -165,6 +165,8 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 		return nil, status.Error(codes.Internal, "get task failed")
 	}
 
+	wasDone := existing.Status == domain.StatusDone
+
 	if req.Title != "" {
 		existing.Title = req.Title
 	}
@@ -210,7 +212,7 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 
 	// Reject Done if any dependency is still open. Applies to direct Status=DONE
 	// updates as well as the CompleteTask RPC (which routes through here).
-	if existing.Status == domain.StatusDone {
+	if existing.Status == domain.StatusDone && !wasDone {
 		blocked, err := s.store.HasUnfinishedDependencies(ctx, req.TaskId)
 		if err != nil {
 			s.log.Error("check unfinished deps", "err", err)
@@ -221,12 +223,13 @@ func (s *Server) UpdateTask(ctx context.Context, req *todov1.UpdateTaskRequest) 
 		}
 	}
 
-	evType := events.TypeTaskUpdated
-	if existing.Status == domain.StatusDone {
-		evType = events.TypeTaskCompleted
+	// Completed only on the transition, or every edit of a done task would re-mail the user.
+	evType, notify := events.TypeTaskUpdated, store.Notify{}
+	if existing.Status == domain.StatusDone && !wasDone {
+		evType, notify = events.TypeTaskCompleted, store.Notify{Language: req.Language, Email: req.Email}
 	}
 
-	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, evType, "")
+	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, evType, notify)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "task not found")
@@ -267,6 +270,10 @@ func (s *Server) CompleteTask(ctx context.Context, req *todov1.CompleteTaskReque
 		return nil, status.Error(codes.Internal, "get task failed")
 	}
 
+	if existing.Status == domain.StatusDone { // idempotent: no second event or email
+		return &todov1.CompleteTaskResponse{Task: toProto(existing)}, nil
+	}
+
 	blocked, err := s.store.HasUnfinishedDependencies(ctx, req.TaskId)
 	if err != nil {
 		s.log.Error("check unfinished deps", "err", err)
@@ -279,7 +286,7 @@ func (s *Server) CompleteTask(ctx context.Context, req *todov1.CompleteTaskReque
 	existing.Status = domain.StatusDone
 	existing.UpdatedAt = time.Now().UTC()
 
-	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, events.TypeTaskCompleted, req.Language)
+	updated, err := s.store.UpdateTaskWithEvent(ctx, existing, events.TypeTaskCompleted, store.Notify{Language: req.Language, Email: req.Email})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "task not found")

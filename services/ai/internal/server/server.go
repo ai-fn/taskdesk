@@ -124,7 +124,7 @@ func (s *Server) GeneratePlan(ctx context.Context, req *aiv1.GeneratePlanRequest
 	}
 
 	// Publish to Kafka.
-	if err := s.publish(ctx, planID, req.UserId, lang, dp); err != nil {
+	if err := s.publish(ctx, planID, req.UserId, lang, req.Email, dp); err != nil {
 		s.log.Error("publish plan event", "plan_id", planID, "err", err)
 	}
 
@@ -217,7 +217,7 @@ func (s *Server) GeneratePlanStream(req *aiv1.GeneratePlanRequest, stream aiv1.A
 		s.log.Error("save plan (stream)", "plan_id", planID, "err", err)
 	}
 
-	if err := s.publish(ctx, planID, req.UserId, lang, dp); err != nil {
+	if err := s.publish(ctx, planID, req.UserId, lang, req.Email, dp); err != nil {
 		s.log.Error("publish plan event (stream)", "plan_id", planID, "err", err)
 	}
 
@@ -272,9 +272,14 @@ type DailyPlanEvent struct {
 	Items       []planner.PlanItem `json:"items"`
 	GeneratedAt time.Time          `json:"generated_at"`
 	Language    string             `json:"language"`
+	Email       string             `json:"email,omitempty"` // verified address only
 }
 
-func (s *Server) publish(ctx context.Context, planID, userID, lang string, dp *aiv1.DailyPlan) error {
+func (s *Server) publish(ctx context.Context, planID, userID, lang, email string, dp *aiv1.DailyPlan) error {
+	return s.kafka.Publish(ctx, DailyPlanTopic, userID, newPlanEvent(planID, userID, lang, email, dp))
+}
+
+func newPlanEvent(planID, userID, lang, email string, dp *aiv1.DailyPlan) DailyPlanEvent {
 	items := make([]planner.PlanItem, len(dp.Items))
 	for i, it := range dp.Items {
 		items[i] = planner.PlanItem{
@@ -284,7 +289,7 @@ func (s *Server) publish(ctx context.Context, planID, userID, lang string, dp *a
 			Rationale: it.Rationale,
 		}
 	}
-	ev := DailyPlanEvent{
+	return DailyPlanEvent{
 		EventID:     uuid.New().String(),
 		UserID:      userID,
 		PlanID:      planID,
@@ -292,8 +297,8 @@ func (s *Server) publish(ctx context.Context, planID, userID, lang string, dp *a
 		Items:       items,
 		GeneratedAt: dp.GeneratedAt.AsTime(),
 		Language:    lang,
+		Email:       email,
 	}
-	return s.kafka.Publish(ctx, DailyPlanTopic, userID, ev)
 }
 
 // tasksToInput converts proto tasks to the planner input shape.

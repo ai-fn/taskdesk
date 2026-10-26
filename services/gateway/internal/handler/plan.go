@@ -70,6 +70,7 @@ func (h *PlanHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	grpcStream, err := h.client.GeneratePlanStream(ctx, &aiv1.GeneratePlanRequest{
 		UserId:   userID,
 		Language: mw.LanguageFromContext(r.Context()),
+		Email:    mw.NotifyEmailFromContext(r.Context()),
 	})
 	if err != nil {
 		writeSSEError(w, flusher, "could not start generation: "+err.Error())

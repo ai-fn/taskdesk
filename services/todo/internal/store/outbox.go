@@ -49,14 +49,19 @@ func (s *Store) CreateTaskWithEvent(ctx context.Context, t *domain.Task) error {
 				return err
 			}
 		}
-		return insertOutbox(ctx, tx, events.TypeTaskCreated, t.UserID, t.ID, t.Title, "")
+		return insertOutbox(ctx, tx, events.TypeTaskCreated, t.UserID, t.ID, t.Title, Notify{})
 	})
 }
 
+// Notify is the recipient data stamped on an outbox event; the zero value is fine
+// for events nobody is emailed about.
+type Notify struct {
+	Language string
+	Email    string // verified address only; empty = no email
+}
+
 // UpdateTaskWithEvent updates the task and writes an outbox event atomically.
-// language is stamped on the outbox event (used for email localisation); pass ""
-// for non-complete events where language is not relevant.
-func (s *Store) UpdateTaskWithEvent(ctx context.Context, t *domain.Task, eventType, language string) (*domain.Task, error) {
+func (s *Store) UpdateTaskWithEvent(ctx context.Context, t *domain.Task, eventType string, n Notify) (*domain.Task, error) {
 	var updated domain.Task
 	err := withTx(ctx, s.db, func(tx pgx.Tx) error {
 		err := scanTask(tx.QueryRow(ctx, `
@@ -75,7 +80,7 @@ func (s *Store) UpdateTaskWithEvent(ctx context.Context, t *domain.Task, eventTy
 			}
 			return err
 		}
-		return insertOutbox(ctx, tx, eventType, updated.UserID, updated.ID, updated.Title, language)
+		return insertOutbox(ctx, tx, eventType, updated.UserID, updated.ID, updated.Title, n)
 	})
 	if err != nil {
 		return nil, err
@@ -98,7 +103,7 @@ func (s *Store) DeleteTaskWithEvent(ctx context.Context, userID, taskID string) 
 			}
 			return fmt.Errorf("delete task: %w", err)
 		}
-		return insertOutbox(ctx, tx, events.TypeTaskDeleted, userID, taskID, title, "")
+		return insertOutbox(ctx, tx, events.TypeTaskDeleted, userID, taskID, title, Notify{})
 	})
 }
 
@@ -141,7 +146,7 @@ func (s *Store) MarkPublished(ctx context.Context, ids []string) error {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func insertOutbox(ctx context.Context, tx pgx.Tx, eventType, userID, taskID, title, language string) error {
+func insertOutbox(ctx context.Context, tx pgx.Tx, eventType, userID, taskID, title string, n Notify) error {
 	ev := events.TaskEvent{
 		EventID:    uuid.New().String(),
 		EventType:  eventType,
@@ -149,7 +154,8 @@ func insertOutbox(ctx context.Context, tx pgx.Tx, eventType, userID, taskID, tit
 		TaskID:     taskID,
 		TaskTitle:  title,
 		OccurredAt: time.Now().UTC(),
-		Language:   language,
+		Language:   n.Language,
+		Email:      n.Email,
 	}
 	payload, err := json.Marshal(ev)
 	if err != nil {

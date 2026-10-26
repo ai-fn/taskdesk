@@ -41,6 +41,7 @@ type AuthEmailEvent struct {
 // Key is always the user_id so events for one user land on the same partition.
 // Language is denormalized from the user's preference at production time so that
 // notification-service can localize emails without a synchronous auth lookup.
+// Email is set only for a verified address; empty means "do not email".
 type TaskEvent struct {
 	EventID    string    `json:"event_id"`
 	EventType  string    `json:"event_type"`
@@ -49,4 +50,5 @@ type TaskEvent struct {
 	TaskTitle  string    `json:"task_title"`
 	OccurredAt time.Time `json:"occurred_at"`
 	Language   string    `json:"language"`
+	Email      string    `json:"email,omitempty"`
 }

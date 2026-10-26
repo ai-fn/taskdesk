@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -106,5 +107,32 @@ func TestListUnembeddedTasks_EmptyOnceEmbedded(t *testing.T) {
 	got, err := s.ListUnembeddedTasks(ctx, "u1", "", 50)
 	if err != nil || len(got) != 0 {
 		t.Errorf("got %v, %v; want no tasks", ids(got), err)
+	}
+}
+
+func TestUpdateTaskWithEvent_StampsRecipientOnOutbox(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	mustCreateTask(t, s, "t1", "u1")
+	task, err := s.GetTask(ctx, "u1", "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Status = domain.StatusDone
+	task.UpdatedAt = time.Now().UTC()
+	if _, err := s.UpdateTaskWithEvent(ctx, task, "task.completed", store.Notify{Language: "zh", Email: "u@x.com"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var payload []byte
+	if err := testPool.QueryRow(ctx, `SELECT payload FROM todo.outbox WHERE event_type='task.completed'`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var ev struct{ Email, Language string }
+	if err := json.Unmarshal(payload, &ev); err != nil {
+		t.Fatal(err)
+	}
+	if ev.Email != "u@x.com" || ev.Language != "zh" {
+		t.Errorf("outbox payload = %s, want email u@x.com and language zh", payload)
 	}
 }

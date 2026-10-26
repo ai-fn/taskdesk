@@ -25,6 +25,7 @@ service AIService {
 message GeneratePlanRequest {
   string user_id  = 1;
   string language = 2;
+  string email    = 3; // verified address to notify; empty = no email
 }
 
 message GeneratePlanResponse {

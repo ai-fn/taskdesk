@@ -24,18 +24,33 @@ const DailyPlanTopic = "daily-plan.generated.v1"
 // Handler consumes task.events.v1 and daily-plan.generated.v1, sends email,
 // and publishes in-app notifications to Redis pub/sub.
 type Handler struct {
-	mailer      *mailer.Mailer
-	redis       *redis.Client
-	notifyEmail func(userID string) string
-	log         *slog.Logger
+	mailer sender
+	redis  publisher
+	log    *slog.Logger
+}
+
+// sender and publisher are the parts of *mailer.Mailer and *redis.Client used here; faked in tests.
+type sender interface {
+	Send(to, subject, body string) error
+}
+
+type publisher interface {
+	Publish(ctx context.Context, channel string, message any) *redis.IntCmd
 }
 
 func New(m *mailer.Mailer, rdb *redis.Client, log *slog.Logger) *Handler {
-	return &Handler{
-		mailer:      m,
-		redis:       rdb,
-		notifyEmail: stubEmail,
-		log:         log,
+	return &Handler{mailer: m, redis: rdb, log: log}
+}
+
+// sendTo mails a verified address stamped on the event by its producer; empty means
+// the user has none, so only the in-app notification goes out.
+func (h *Handler) sendTo(email, userID, subject, body string) {
+	if email == "" {
+		h.log.Info("no verified email, skipping email", "user_id", userID)
+		return
+	}
+	if err := h.mailer.Send(email, subject, body); err != nil {
+		h.log.Error("send email", "user_id", userID, "err", err)
 	}
 }
 
@@ -109,12 +124,10 @@ func (h *Handler) handleTaskEvent(ctx context.Context, r *kgo.Record) error {
 	_ = tmpl.Subject.Execute(&subjectBuf, data)
 	_ = tmpl.Body.Execute(&bodyBuf, data)
 
-	email := h.notifyEmail(ev.UserID)
-	if err := h.mailer.Send(email, subjectBuf.String(), bodyBuf.String()); err != nil {
-		h.log.Error("send email", "user_id", ev.UserID, "err", err)
-	}
+	h.sendTo(ev.Email, ev.UserID, subjectBuf.String(), bodyBuf.String())
 
 	// Push to Redis pub/sub so gateway WebSocket picks it up.
+	ev.Email = "" // the browser doesn't need it
 	payload, _ := json.Marshal(ev)
 	channel := fmt.Sprintf("user:%s", ev.UserID)
 	if err := h.redis.Publish(ctx, channel, payload).Err(); err != nil {
@@ -138,6 +151,7 @@ type DailyPlanEvent struct {
 	Items       []DailyPlanItem `json:"items"`
 	GeneratedAt time.Time       `json:"generated_at"`
 	Language    string          `json:"language"`
+	Email       string          `json:"email"` // verified address; empty = no email
 }
 
 type DailyPlanItem struct {
@@ -181,11 +195,8 @@ func (h *Handler) handleDailyPlan(ctx context.Context, r *kgo.Record) error {
 		return nil
 	}
 
-	email := h.notifyEmail(ev.UserID)
 	subject, body := buildPlanEmail(ev)
-	if err := h.mailer.Send(email, subject, body); err != nil {
-		h.log.Error("send plan email", "user_id", ev.UserID, "err", err)
-	}
+	h.sendTo(ev.Email, ev.UserID, subject, body)
 
 	// Push to Redis pub/sub so the SPA shows an in-app notification.
 	type wsNotification struct {
@@ -308,8 +319,4 @@ func (h *Handler) handleAuthEmail(ctx context.Context, r *kgo.Record) error {
 // Run starts the Kafka consumer loop until ctx is cancelled.
 func Run(ctx context.Context, brokers []string, consumer *pkgkafka.Consumer, h *Handler) error {
 	return consumer.Run(ctx, h.Handle)
-}
-
-func stubEmail(userID string) string {
-	return "dev@todo.local"
 }

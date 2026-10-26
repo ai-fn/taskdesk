@@ -15,6 +15,7 @@ type contextKey string
 const (
 	ctxUserID           contextKey = "user_id"
 	ctxEmail            contextKey = "email"
+	ctxEmailVerified    contextKey = "email_verified"
 	ctxSessionID        contextKey = "session_id"
 	ctxLanguage         contextKey = "language"
 	ctxSubscriptionPlan contextKey = "subscription_plan"
@@ -54,6 +55,7 @@ func Authenticate(verifier *auth.Verifier) func(http.Handler) http.Handler {
 			}
 			ctx := context.WithValue(r.Context(), ctxUserID, id.UserID)
 			ctx = context.WithValue(ctx, ctxEmail, id.Email)
+			ctx = context.WithValue(ctx, ctxEmailVerified, id.EmailVerified)
 			ctx = context.WithValue(ctx, ctxSessionID, id.SessionID)
 			ctx = context.WithValue(ctx, ctxLanguage, id.Language)
 			ctx = context.WithValue(ctx, ctxSubscriptionPlan, plan)
@@ -72,6 +74,15 @@ func UserIDFromContext(ctx context.Context) string {
 func EmailFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(ctxEmail).(string)
 	return v
+}
+
+// NotifyEmailFromContext returns the address to email the user at, or "" while it is
+// unverified: signup accepts any address, so mailing it would reach a third party.
+func NotifyEmailFromContext(ctx context.Context) string {
+	if v, _ := ctx.Value(ctxEmailVerified).(bool); v {
+		return EmailFromContext(ctx)
+	}
+	return ""
 }
 
 // SessionIDFromContext returns the authenticated user's current session ID.
