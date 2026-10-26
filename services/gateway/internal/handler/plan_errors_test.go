@@ -23,9 +23,8 @@ type failingPlanStream struct {
 	chunk *aiv1.PlanStreamChunk
 }
 
-func (s failingPlanStream) Recv() (*aiv1.PlanStreamChunk, error) {
-	if s.chunk != nil {
-		c := s.chunk
+func (s *failingPlanStream) Recv() (*aiv1.PlanStreamChunk, error) {
+	if c := s.chunk; c != nil {
 		s.chunk = nil
 		return c, nil
 	}
@@ -42,7 +41,7 @@ func (p planAI) GeneratePlanStream(context.Context, *aiv1.GeneratePlanRequest, .
 	if p.start != nil {
 		return nil, p.start
 	}
-	return failingPlanStream{err: p.recv, chunk: p.chunk}, nil
+	return &failingPlanStream{err: p.recv, chunk: p.chunk}, nil
 }
 
 func TestGeneratePlan_SSEErrorsDoNotLeakUpstreamText(t *testing.T) {
